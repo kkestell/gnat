@@ -34,16 +34,11 @@ export function PullRequests() {
     };
   }, []);
 
-  const open = pulls?.filter(pull => pull.state === "open").length ?? 0;
   return (
     <aside className="flex w-80 shrink-0 flex-col border-r border-white/15 bg-sidebar">
-      <div className="flex items-baseline gap-2 px-4 py-3">
-        <h2 className="font-semibold text-zinc-100">Pull requests</h2>
-        {pulls && <span className="text-xs text-zinc-500">{open} open</span>}
-      </div>
       <ul className="min-h-0 flex-1 overflow-y-auto">
-        {error && !pulls && <li className="px-4 text-xs italic text-zinc-600">couldn't load pull requests</li>}
-        {pulls?.length === 0 && <li className="px-4 text-xs italic text-zinc-600">none yet</li>}
+        {error && !pulls && <li className="px-4 py-2.5 text-xs italic text-zinc-600">couldn't load pull requests</li>}
+        {pulls?.length === 0 && <li className="px-4 py-2.5 text-xs italic text-zinc-600">none yet</li>}
         {pulls &&
           sorted(pulls).map(pull => (
             <li key={pull.number} className="border-t border-white/5 first:border-t-0">

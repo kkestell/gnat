@@ -22,7 +22,7 @@ test("each kind of event goes in the transcript", () => {
     { type: "swarm_done", exit: 2, stopped: false },
   ]);
   expect(agent.items).toEqual([
-    { kind: "notice", text: "new session" },
+    { kind: "session" },
     { kind: "message", text: "**go**", sender: "beta", midTurn: false },
     { kind: "text", text: "Let me *look*." },
     {
@@ -48,7 +48,7 @@ test("the card keeps the transcript's latest entries", () => {
     { type: "swarm_done", stopped: true },
   ]);
   expect(agent.recent).toEqual([
-    { item: { kind: "notice", text: "new session" }, nested: false },
+    { item: { kind: "session" }, nested: false },
     { item: { kind: "message", text: "fix it", sender: "beta", midTurn: false }, nested: false },
     { item: { kind: "text", text: "On it." }, nested: false },
     { item: agent.items[3]!, nested: false },

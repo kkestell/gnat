@@ -23,6 +23,8 @@ export type Item =
   | { kind: "text"; text: string }
   // A tool call, with any subagent's events inside it, and its output once it's done.
   | { kind: "tool"; summary: string; items: Item[]; output?: string; error: boolean }
+  // Where a new session started.
+  | { kind: "session" }
   | { kind: "notice"; text: string };
 
 // One of a transcript's latest entries, as a card shows them.
@@ -64,7 +66,7 @@ export class AgentState {
         }
         break;
       case "swarm_message": {
-        if (e.new) this.notice("new session");
+        if (e.new) this.add(this.items, { kind: "session" }, false);
         this.add(this.items, { kind: "message", text: String(e.text ?? ""), sender: e.sender || undefined, midTurn: Boolean(e.mid_turn) }, false);
         break;
       }

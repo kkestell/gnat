@@ -1,12 +1,12 @@
 @import "tailwindcss";
 
-/* The page's surfaces, darkest to lightest: the cards, the header across the top, the
+/* The page's surfaces, darkest to lightest: the header across the top, the cards, the
    canvas behind the cards, and the sidebar. */
 @theme {
-  --color-card: #0a0a0c;
   --color-header: #0f0f12;
-  --color-canvas: #17171b;
-  --color-sidebar: #1c1c20;
+  --color-card: #121215;
+  --color-canvas: #1e1e23;
+  --color-sidebar: #232328;
 }
 
 @layer base {

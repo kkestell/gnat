@@ -54,7 +54,7 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-baseline gap-3 border-b border-white/10 bg-header px-6 py-3">
+      <header className="flex items-baseline gap-3 border-b border-white/10 bg-header px-4 py-3">
         <SwarmInfo />
         {costs.length > 0 && (
           <span className="ml-auto tabular-nums text-zinc-400">
@@ -170,9 +170,9 @@ function TranscriptDialog({ agent, state, onClose }: { agent: Agent; state: Agen
       ref={dialog}
       onClose={onClose}
       onClick={event => event.target === dialog.current && dialog.current.close()}
-      className="m-auto flex h-[90vh] max-h-none w-[min(64rem,95vw)] max-w-none flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 p-0 text-sm text-zinc-300 shadow-2xl backdrop:bg-black/60"
+      className="m-auto flex h-[90vh] max-h-none w-[min(64rem,95vw)] max-w-none flex-col overflow-hidden rounded-xl bg-card p-0 ring-1 ring-white/10 text-sm text-zinc-300 shadow-2xl backdrop:bg-black/60"
     >
-      <div className="flex items-center gap-3 border-b border-zinc-800 px-5 py-3">
+      <div className="flex items-center gap-3 bg-zinc-800/70 px-5 py-3">
         <h2 className="font-semibold text-zinc-100">{agent.name}</h2>
         <span className="truncate text-xs text-zinc-500">{setupLine(agent)}</span>
         <span className="ml-auto whitespace-nowrap text-xs tabular-nums text-zinc-400">{usageSummary(state.usage)}</span>
@@ -239,6 +239,8 @@ function ItemView({ item }: { item: Item }) {
           )}
         </details>
       );
+    case "session":
+      return <hr className="my-3 border-dashed border-zinc-700" />;
     case "notice":
       return <div className="whitespace-pre-wrap text-red-400 italic [overflow-wrap:anywhere]">{item.text}</div>;
   }
