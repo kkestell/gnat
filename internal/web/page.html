@@ -1,0 +1,199 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>gnat</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; height: 100vh; display: flex; font: 14px system-ui, sans-serif; background: #16181d; color: #d4d4d8; }
+  section { flex: 1; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid #2e3138; }
+  h2 { margin: 0; padding: 6px 10px; font-size: 14px; background: #22252b; color: #f4f4f5; }
+  section > h2 { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  section > h2 .setup, section > h2 .usage { font-size: 12px; font-weight: normal; color: #8b8f98; }
+  section > h2 .setup { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  section > h2 .usage { margin-left: auto; }
+  .chat { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .message { align-self: flex-end; max-width: 85%; padding: 6px 10px; border-radius: 10px; background: #1e3a5f; color: #e0ecff; }
+  .message.mid-turn::before { content: "mid-turn"; display: block; font-size: 12px; font-weight: bold; }
+  .message, .text { overflow-wrap: anywhere; }
+  .notice, .tool pre, .plain { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .sender { font-weight: bold; }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md blockquote, .md pre, .md .table, .md hr { margin: 0 0 0.6em; }
+  .md li > ul, .md li > ol { margin: 0.2em 0 0; }
+  .md li p { margin: 0 0 0.3em; }
+  .md ul, .md ol { padding-left: 1.5em; }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 0.8em 0 0.4em; font-size: 1em; color: #f4f4f5; }
+  .md h1 { font-size: 1.3em; }
+  .md h2 { font-size: 1.15em; padding: 0; background: none; }
+  .md h3 { font-size: 1.05em; }
+  .md a { color: #7cb7ff; }
+  .md code { font: 12px ui-monospace, monospace; padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); }
+  .md pre { max-width: 100%; overflow-x: auto; padding: 6px 8px; border-radius: 6px; background: #0f1115; }
+  .md pre code { padding: 0; background: none; white-space: pre; }
+  .md blockquote { padding-left: 10px; border-left: 3px solid #3f434b; color: #a1a5ad; }
+  .md hr { border: 0; border-top: 1px solid #3f434b; }
+  .md .table { max-width: 100%; overflow-x: auto; }
+  .md table { border-collapse: collapse; }
+  .md th, .md td { padding: 3px 8px; border: 1px solid #3f434b; }
+  .md th { background: #22252b; }
+  .md .right { text-align: right; }
+  .md .center { text-align: center; }
+  .tool { font: 12px ui-monospace, monospace; color: #8b8f98; }
+  .tool summary { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tool:not(.done) > summary::after { content: " …"; }
+  .tool.error > summary { color: #f87171; }
+  .tool pre { margin: 4px 0 0 16px; max-height: 300px; overflow-y: auto; font: inherit; color: #a1a5ad; }
+  .tool > :not(summary, pre) { margin: 4px 0 0 16px; }
+  .notice { color: #f87171; font-style: italic; }
+</style>
+<body>
+<script>
+__MARKDOWN__
+// The input field that best describes a call, for tools that have one.
+const SUMMARY_KEYS = ["command", "file_path", "path", "pattern", "url", "query", "description"];
+const MAX_WIDTH = 200;
+const USAGE_FIELDS = ["input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "cost"];
+const columns = {};
+// Each agent's usage events totalled, and the part of its heading that shows them.
+const totals = {};
+const usageLabels = {};
+// Each tool call's element, by id, so its result and any subagent's events can go in it.
+const tools = new Map();
+
+// Each agent's name, and its harness, model, and effort (null for the harness's default).
+for (const { name: agent, harness, model, effort } of __AGENTS__) {
+  const section = document.createElement("section");
+  const heading = document.createElement("h2");
+  add(heading, "span", "", agent);
+  add(heading, "span", "setup", [harness, model, effort && `${effort} effort`].filter(Boolean).join(" · "));
+  usageLabels[agent] = add(heading, "span", "usage", "");
+  columns[agent] = document.createElement("div");
+  columns[agent].className = "chat";
+  section.append(heading, columns[agent]);
+  document.body.append(section);
+  totals[agent] = {};
+}
+
+function add(parent, tag, className, text) {
+  const element = document.createElement(tag);
+  element.className = className;
+  element.textContent = text;
+  parent.append(element);
+  return element;
+}
+
+function markdown(parent, className, text) {
+  const element = add(parent, "div", className, "");
+  try {
+    renderMarkdown(element, text);
+  } catch {
+    element.textContent = text;  // show it as plain text rather than lose it
+  }
+  return element;
+}
+
+function clip(text) {
+  const lines = text.split("\n");
+  const first = lines[0] + (lines.length > 1 ? " …" : "");
+  return first.length <= MAX_WIDTH ? first : first.slice(0, MAX_WIDTH - 1) + "…";
+}
+
+// One line describing a tool call: its most telling input, else its title.
+function summarize(event) {
+  const input = event.input && typeof event.input === "object" ? event.input : {};
+  const key = SUMMARY_KEYS.find(key => typeof input[key] === "string");
+  return clip(key ? input[key] : event.title ? String(event.title) : JSON.stringify(input));
+}
+
+// A token count, such as 950, 12.3k, or 1.2M.
+function tokens(count) {
+  if (count < 1000) return String(count);
+  if (count < 999950) return (count / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+  return (count / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
+}
+
+// One line of usage, such as "1.2M in (1.1M cached), 34k out, $1.23"; the fields the
+// harness reported, empty if none.
+function usageSummary(usage) {
+  const parts = [];
+  const counts = [usage.input_tokens, usage.cache_read_tokens, usage.cache_write_tokens];
+  if (counts.some(count => typeof count === "number")) {
+    const cached = usage.cache_read_tokens ? ` (${tokens(usage.cache_read_tokens)} cached)` : "";
+    parts.push(`${tokens(counts.reduce((sum, count) => sum + (count || 0), 0))} in${cached}`);
+  }
+  if (typeof usage.output_tokens === "number") parts.push(`${tokens(usage.output_tokens)} out`);
+  if (typeof usage.cost === "number") parts.push("$" + usage.cost.toFixed(usage.cost >= 1 ? 2 : 4));
+  return parts.join(", ");
+}
+
+function addUsage(agent, event) {
+  for (const field of USAGE_FIELDS) {
+    if (typeof event[field] === "number") totals[agent][field] = (totals[agent][field] ?? 0) + event[field];
+  }
+  usageLabels[agent].textContent = usageSummary(totals[agent]);
+}
+
+// Shows one of gnat's events (see gnat.events, and the control plane's swarm_message
+// and swarm_done). Records in other formats, from older versions of gnat, are skipped.
+function show(column, event) {
+  if (typeof event !== "object" || event === null) return;
+  // A subagent's events go inside the tool call that started it.
+  const parent = tools.get(event.parent) ?? column;
+  switch (event.type) {
+    case "swarm_message": {
+      if (event.new) add(column, "div", "notice", "new session");
+      const bubble = add(column, "div", event.mid_turn ? "message mid-turn" : "message", "");
+      if (event.sender) add(bubble, "div", "sender", `from ${event.sender}:`);
+      markdown(bubble, "md", String(event.text ?? ""));
+      break;
+    }
+    case "message":
+      markdown(parent, "text md", String(event.text ?? "").trim());
+      break;
+    case "tool_call": {
+      const tool = add(parent, "details", "tool", "");
+      add(tool, "summary", "", `${event.name}: ${summarize(event)}`);
+      tools.set(event.id, tool);
+      break;
+    }
+    case "tool_result": {
+      const tool = tools.get(event.id);
+      if (!tool) break;
+      add(tool, "pre", "", String(event.output ?? "").trim() || "(no output)");
+      tool.classList.add("done");
+      if (event.error) tool.classList.add("error");
+      break;
+    }
+    case "turn_end":
+      if (event.error) add(column, "div", "notice", `error: ${event.error}`);
+      break;
+    case "error":
+      add(column, "div", "notice", String(event.text ?? ""));
+      break;
+    case "swarm_done":
+      if (event.stopped) add(column, "div", "notice", "the turn was stopped");
+      else if (event.exit === null) add(column, "div", "notice", "the agent restarted; its turn was interrupted");
+      else if (event.exit) add(column, "div", "notice", `the turn failed with status ${event.exit}`);
+      break;
+  }
+}
+
+const source = new EventSource("/events");
+// Each connection replays every event from the start, so drop what an earlier one showed.
+source.onopen = () => {
+  Object.values(columns).forEach(column => column.replaceChildren());
+  tools.clear();
+  for (const agent in columns) {
+    totals[agent] = {};
+    usageLabels[agent].textContent = "";
+  }
+};
+source.onmessage = message => {
+  const { agent, event } = JSON.parse(message.data);
+  const column = columns[agent];
+  const atBottom = column.scrollTop + column.clientHeight >= column.scrollHeight - 4;
+  if (event?.type === "usage") addUsage(agent, event);
+  show(column, event);
+  if (atBottom) column.scrollTop = column.scrollHeight;
+};
+</script>
