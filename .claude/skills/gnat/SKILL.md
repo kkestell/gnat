@@ -5,7 +5,7 @@ description: Operate `gnat`, which runs coding agents (Claude Code or Ox) in Doc
 
 # Operating gnat
 
-`gnat` runs a set of coding agents, one Docker container each, on separate clones of one GitHub repository. Each agent runs Claude Code or Ox (`--harness`), and a swarm can mix them. You drive it from the developer's machine; the agents commit, push, and open pull requests. Assume `gnat` is on PATH (`make install` in the gnat checkout; rerun it after pulling gnat to update). `gnat COMMAND -h` is authoritative on flags; the gnat checkout's README.md has the full reference.
+`gnat` runs a set of coding agents, one Docker container each, on separate clones of one GitHub repository. Each agent runs Claude Code or Ox (`--harness`), and a swarm can mix them. You drive it from the developer's machine; the agents commit, push, and open pull requests. Assume `gnat` is on PATH (`make install` in the gnat checkout; rerun it after pulling gnat to update). `gnat COMMAND -h` is authoritative on flags; the gnat checkout's docs/ has the full reference.
 
 gnat is in active development, and every run is also a test of it. When you finish using it, file a feedback report as a GitHub issue (see [Feedback](#feedback)).
 
@@ -135,7 +135,7 @@ After the run, whether the task succeeded, failed, or was abandoned, evaluate ho
 - The task, the swarm's setup (agents, harnesses, models, effort, Dockerfile, files), and the outcome: what was delivered, what wasn't, and whether the PRs were correct and mergeable.
 - How the work was divided and whether that worked: merge conflicts, duplicated or idle agents, dependency waits, agent-to-agent messaging.
 - Where time and turns went, and anything that stalled, failed, crashed, restarted, or needed `gnat stop`.
-- Every point where you had to intervene, guess, retry, or work around gnat, including confusing CLI output, missing commands or flags, and gaps or errors in this skill or the README.
+- Every point where you had to intervene, guess, retry, or work around gnat, including confusing CLI output, missing commands or flags, and gaps or errors in this skill or the docs.
 - Whether a single agent, or no swarm at all, would have done the job as well.
 
 End with concrete recommendations, each naming the change (a command, flag, control-plane or agent behavior, default instructions, or a section of this skill), the problem from this run it addresses, and the expected effect. Rank them by impact. Leave out generic advice that this run's evidence doesn't support.
