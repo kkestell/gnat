@@ -10,6 +10,7 @@ import (
 
 	"github.com/kkestell/gnat/internal/events"
 	"github.com/kkestell/gnat/internal/layout"
+	"github.com/kkestell/gnat/internal/state"
 )
 
 func TestMain(m *testing.M) {
@@ -135,8 +136,8 @@ func TestEveryHarnessFillsInTheInterface(t *testing.T) {
 	}
 }
 
-func TestTheDefaultHarnessExists(t *testing.T) {
-	if _, err := Get(Default); err != nil {
+func TestTheDefaultHarnessIsRegistered(t *testing.T) {
+	if _, err := Get(state.DefaultHarness); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Get("nope"); err == nil {

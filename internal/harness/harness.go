@@ -72,9 +72,6 @@ func (i info) Efforts() []string        { return i.efforts }
 func (i info) ConfigDir() string        { return i.configDir }
 func (i info) StateDirs() []string      { return i.stateDirs }
 
-// Default is the harness an agent gets without --harness.
-const Default = "claude"
-
 var all = []Harness{newClaude(), newOx()}
 
 // All returns every harness, in the order `gnat agent create --help` lists them.
