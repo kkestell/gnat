@@ -15,6 +15,7 @@ import (
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/state"
+	"github.com/kkestell/gnat/internal/web"
 	"github.com/kkestell/gnat/internal/workspace"
 )
 
@@ -35,8 +36,6 @@ const (
 	controlLogDir = "/var/log/gnat"
 	// timeoutStatus is `wait`'s exit status when it gives up, as timeout(1)'s.
 	timeoutStatus = 124
-	// TODO(web): use web.Port once that package is on main.
-	webPort = 8080
 )
 
 // controlDockerfile is the control image: the control plane is the gnat binary alone.
@@ -221,7 +220,7 @@ func waitUntilReady(container, agent string) error {
 
 // webURL is where the host reaches the web UI that the control container publishes.
 func webURL(container string) (string, error) {
-	out, err := dockerOutput("port", container, strconv.Itoa(webPort))
+	out, err := dockerOutput("port", container, strconv.Itoa(web.Port))
 	if err != nil {
 		return "", err
 	}
@@ -482,7 +481,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	args := []string{"create", "--name", controlName, "--label", label,
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-v", logs + ":" + controlLogDir,
 		"--network", network, "--network-alias", state.Control,
-		"-p", "127.0.0.1::" + strconv.Itoa(webPort), controlImage}
+		"-p", "127.0.0.1::" + strconv.Itoa(web.Port), controlImage}
 	if err := dockerQuiet(append(args, serve...)...); err != nil {
 		return err
 	}

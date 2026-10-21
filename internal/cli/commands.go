@@ -209,7 +209,7 @@ func webCommand() *cobra.Command {
 	var noOpen bool
 	c := &cobra.Command{
 		Use: "web SWARM", Short: "print a swarm's web UI URL and open it in the browser", Args: cobra.ExactArgs(1),
-		RunE: action(func(_ *cobra.Command, args []string) error { return web(args[0], !noOpen) }).run,
+		RunE: action(func(_ *cobra.Command, args []string) error { return showWeb(args[0], !noOpen) }).run,
 	}
 	c.Flags().BoolVar(&noOpen, "no-open", false, "print the URL only")
 	return c
@@ -880,7 +880,7 @@ func logs(swarmName string, agentArgs []string, lines string, follow bool) error
 	return err
 }
 
-func web(swarmName string, open bool) error {
+func showWeb(swarmName string, open bool) error {
 	if _, err := state.Load(swarmName); err != nil {
 		return err
 	}

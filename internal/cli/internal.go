@@ -6,18 +6,20 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+
+	daemon "github.com/kkestell/gnat/internal/agent"
+	"github.com/kkestell/gnat/internal/hook"
 )
 
 // The hidden subcommands the containers run, `gnat internal NAME ...`. Each takes the
 // arguments after its name as they are, flags included, and returns the exit status.
 //
-// TODO(control, agent, hook): call control.Main, agent.Main, and hook.Main (hook's also
-// does `send`) once those packages are on main.
+// TODO(control): call control.Main once that package is on main.
 var internalMains = map[string]func(args []string) int{
 	"control": notYet("control"),
-	"agent":   notYet("agent"),
-	"hook":    notYet("hook"),
-	"send":    notYet("send"),
+	"agent":   daemon.Main,
+	"hook":    hook.Main,
+	"send":    hook.SendMain,
 }
 
 func notYet(name string) func([]string) int {
