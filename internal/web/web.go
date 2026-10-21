@@ -1,16 +1,18 @@
-// Package web serves the web UI: a live chat transcript for each agent.
+// Package web serves the web UI, a live dashboard of the swarm's agents with each
+// one's full transcript; the UI itself is built from ui/.
 package web
 
 import (
-	"bytes"
 	"context"
-	_ "embed"
-	"encoding/json"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/state"
 )
 
@@ -24,7 +26,7 @@ const Port = 8080
 // Watch returns wrap internal/events' events with the agent's name, plus the
 // control plane's own swarm_message and swarm_done events.
 type Events interface {
-	// Agents are the swarm's agents, in order, one column each.
+	// Agents are the swarm's agents, in order, one card each.
 	Agents() []string
 	// Setups is each agent's harness, model, and effort (internal/state's
 	// Agent), by name.
@@ -35,47 +37,40 @@ type Events interface {
 	Watch() (<-chan string, func())
 }
 
-//go:embed page.html
-var pageHTML string
+// dist is the built UI (ui/, `make ui`): the page, its script, and its styles.
+//
+//go:embed dist
+var dist embed.FS
 
-//go:embed markdown.js
-var markdownJS string
+// UI is the built UI's files, by name, such as index.html.
+var UI, _ = fs.Sub(dist, "dist")
 
-// MarkdownJS is the page's hand-written Markdown renderer.
-var MarkdownJS = markdownJS
-
-// Page is the page's HTML, with the Markdown renderer inlined. The agents it
-// shows are filled in by page.
-var Page = strings.Replace(pageHTML, "__MARKDOWN__", MarkdownJS, 1)
-
-// page is the page, for the swarm's agents.
-func page(events Events) string {
+// agents is the JSON of the swarm's agents, each with its harness, model, and
+// effort, for the UI.
+func agents(events Events) []byte {
 	setups := events.Setups()
-	agents := events.Agents()
-	columns := make([]map[string]any, 0, len(agents))
-	for _, agent := range agents {
+	names := events.Agents()
+	agents := make([]map[string]any, 0, len(names))
+	for _, agent := range names {
 		// An agent without a setup is named alone, as the Python swarm's page
 		// did; an empty model or effort is the harness's default, null.
 		setup, ok := setups[agent]
 		if !ok {
-			columns = append(columns, map[string]any{"name": agent})
+			agents = append(agents, map[string]any{"name": agent})
 			continue
 		}
-		columns = append(columns, map[string]any{
+		agents = append(agents, map[string]any{
 			"name":    agent,
 			"harness": setup.Harness,
 			"model":   optional(setup.Model),
 			"effort":  optional(setup.Effort),
 		})
 	}
-	var encoded bytes.Buffer
-	encoder := json.NewEncoder(&encoded)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(columns); err != nil {
-		encoded.Reset()
-		encoded.WriteString("[]")
+	encoded, err := protocol.Encode(agents)
+	if err != nil {
+		return []byte("[]\n")
 	}
-	return strings.Replace(Page, "__AGENTS__", strings.TrimSuffix(encoded.String(), "\n"), 1)
+	return encoded
 }
 
 // optional is s, or nil for the empty string, which json encodes as null.
@@ -86,21 +81,67 @@ func optional(s string) *string {
 	return &s
 }
 
-// Handler serves the page and its event stream for the given events.
-func Handler(events Events) http.Handler {
+// Swarm is what the UI shows of the swarm itself.
+type Swarm struct {
+	// Repo is the swarm's repository, OWNER/NAME.
+	Repo string
+	// Started is when the control plane started, at `gnat up`.
+	Started time.Time
+	// Token authenticates the requests for the repository's pull requests; empty
+	// for none.
+	Token string
+	// GitHub is GitHub's API, GitHubAPI if empty.
+	GitHub string
+}
+
+// Handler serves the UI, the swarm, its agents and their event stream, and the
+// repository's pull requests.
+func Handler(events Events, swarm Swarm) http.Handler {
+	files := http.FileServerFS(UI)
+	pulls := &pulls{swarm: swarm, client: &http.Client{Timeout: 20 * time.Second}}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/":
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprint(w, page(events))
+		case "/agents":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(agents(events))
+		case "/swarm":
+			writeJSON(w, map[string]string{"repo": swarm.Repo, "started_at": swarm.Started.UTC().Format(time.RFC3339)})
+		case "/pulls":
+			found, err := pulls.get(r.Context())
+			if err != nil {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusBadGateway)
+				fmt.Fprintf(w, "%s\n", err)
+				return
+			}
+			writeJSON(w, found)
 		case "/events":
 			stream(events, w, r)
 		default:
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, "not found\n")
+			name := strings.TrimPrefix(r.URL.Path, "/")
+			if name == "" {
+				name = "index.html"
+			}
+			if _, err := fs.Stat(UI, name); err != nil {
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, "not found\n")
+				return
+			}
+			files.ServeHTTP(w, r)
 		}
 	})
+}
+
+// writeJSON sends value as JSON.
+func writeJSON(w http.ResponseWriter, value any) {
+	encoded, err := protocol.Encode(value)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(encoded)
 }
 
 // stream sends every event so far, then each new one, until the browser
@@ -135,8 +176,8 @@ func stream(events Events, w http.ResponseWriter, r *http.Request) {
 
 // Serve runs the UI on addr until ctx is cancelled. It returns nil when ctx
 // ends the server, and any error that stops it first.
-func Serve(ctx context.Context, addr string, events Events) error {
-	server := &http.Server{Addr: addr, Handler: Handler(events)}
+func Serve(ctx context.Context, addr string, events Events, swarm Swarm) error {
+	server := &http.Server{Addr: addr, Handler: Handler(events, swarm)}
 	stop := context.AfterFunc(ctx, func() { server.Close() })
 	defer stop()
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

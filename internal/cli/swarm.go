@@ -472,13 +472,17 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	if err != nil {
 		return err
 	}
-	serve := controlCommand(append(append([]string{"serve"}, names...), "--setups", string(setupsJSON))...)
-	// Publish the web UI on a free host port, reachable only from this machine.
+	serve := controlCommand(append(append([]string{"serve"}, names...),
+		"--setups", string(setupsJSON), "--repo", swarm.Repo)...)
+	// Publish the web UI on a free host port, reachable only from this machine. The
+	// UI lists the repository's pull requests with the GitHub token, passed by name
+	// so its value stays out of the docker argv.
 	args := []string{"create", "--name", controlName, "--label", label,
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-v", logs + ":" + control.LogDir,
 		"--network", network, "--network-alias", state.Control,
-		"-p", "127.0.0.1::" + strconv.Itoa(web.Port), controlImage}
-	if err := dockerQuiet(append(args, serve...)...); err != nil {
+		"-p", "127.0.0.1::" + strconv.Itoa(web.Port), "-e", githubTokenVar, controlImage}
+	if _, err := execute(command{name: "docker", args: append(args, serve...), quiet: true,
+		env: []string{githubTokenVar + "=" + githubToken}}); err != nil {
 		return err
 	}
 	if err := dockerInput(binaryTar, "cp", "-a", "-", controlName+":/"); err != nil {

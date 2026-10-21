@@ -17,6 +17,9 @@ import (
 	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/state"
 	"github.com/kkestell/gnat/internal/web"
+	// The control image has no CA certificates; the web UI's pull requests come
+	// from GitHub over TLS.
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 // TimeoutStatus is `wait`'s exit status when it gives up, as timeout(1)'s.
@@ -212,7 +215,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 	command, args := args[0], args[1:]
 	switch command {
 	case "serve":
-		p, err := parseArgs(args, nil, []string{"setups"})
+		p, err := parseArgs(args, nil, []string{"setups", "repo"})
 		if err != nil {
 			return err
 		}
@@ -225,7 +228,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 				return usageError(fmt.Sprintf("argument --setups: invalid JSON value: %v", err))
 			}
 		}
-		return serve(p.positional, setups)
+		return serve(p.positional, setups, p.values["repo"])
 	case "send":
 		p, err := parseArgs(args, []string{"now", "new", "wait"}, []string{"timeout"})
 		if err != nil {
@@ -350,8 +353,10 @@ func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) 
 	return nil
 }
 
-// serve runs the control plane and the web UI until the container is stopped.
-func serve(agents []string, setups map[string]state.Agent) error {
+// serve runs the control plane and the web UI until the container is stopped. The
+// UI shows the repository's pull requests with GH_TOKEN, if it's set.
+func serve(agents []string, setups map[string]state.Agent, repo string) error {
+	swarm := web.Swarm{Repo: repo, Started: time.Now(), Token: os.Getenv("GH_TOKEN")}
 	db, err := Prepare(LogDir, agents)
 	if err != nil {
 		return err
@@ -370,7 +375,7 @@ func serve(agents []string, setups map[string]state.Agent) error {
 	var wg sync.WaitGroup
 	for _, run := range []func() error{
 		func() error { return c.Serve(ctx, ln) },
-		func() error { return web.Serve(ctx, fmt.Sprintf("0.0.0.0:%d", web.Port), c) },
+		func() error { return web.Serve(ctx, fmt.Sprintf("0.0.0.0:%d", web.Port), c, swarm) },
 	} {
 		wg.Add(1)
 		go func() {

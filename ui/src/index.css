@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply min-h-screen bg-zinc-950 font-sans text-sm text-zinc-300;
+  }
+}
+
+/* What the Markdown renderer (markdown.js) builds. */
+@layer components {
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md blockquote, .md pre, .md .table, .md hr { margin: 0 0 0.6em; }
+  .md li > ul, .md li > ol { margin: 0.2em 0 0; }
+  .md li p { margin: 0 0 0.3em; }
+  .md ul, .md ol { padding-left: 1.5em; }
+  .md ul { list-style: disc; }
+  .md ol { list-style: decimal; }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 0.8em 0 0.4em; font-size: 1em; font-weight: bold; color: var(--color-zinc-100); }
+  .md h1 { font-size: 1.3em; }
+  .md h2 { font-size: 1.15em; }
+  .md h3 { font-size: 1.05em; }
+  .md a { color: var(--color-sky-400); text-decoration: underline; }
+  .md code { font-family: var(--font-mono); font-size: 12px; padding: 1px 4px; border-radius: 4px; background: rgb(0 0 0 / 0.3); }
+  .md pre { max-width: 100%; overflow-x: auto; padding: 6px 8px; border-radius: 6px; background: var(--color-zinc-950); }
+  .md pre code { padding: 0; background: none; white-space: pre; }
+  .md blockquote { padding-left: 10px; border-left: 3px solid var(--color-zinc-700); color: var(--color-zinc-400); }
+  .md hr { border: 0; border-top: 1px solid var(--color-zinc-700); }
+  .md .table { display: block; max-width: 100%; overflow-x: auto; }
+  .md table { border-collapse: collapse; }
+  .md th, .md td { padding: 3px 8px; border: 1px solid var(--color-zinc-700); }
+  .md th { background: var(--color-zinc-800); }
+  .md .right { text-align: right; }
+  .md .center { text-align: center; }
+  .md .plain { white-space: pre-wrap; overflow-wrap: anywhere; }
+}

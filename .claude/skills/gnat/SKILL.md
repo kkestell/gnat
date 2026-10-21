@@ -70,7 +70,7 @@ echo "long task" | gnat send NAME AGENT    # message from stdin when -m is omitt
 gnat status NAME [AGENT...]   # state, queued, turns, time since last event, usage, how the last turn ended
 gnat wait NAME [AGENT...] [--timeout SECONDS]   # block until idle, print final replies
 gnat logs NAME [AGENT...] [-n LINES] [-f]       # messages and agents' output; works while down
-gnat web NAME [--no-open]     # print the web UI URL (a column per agent: setup, usage, events)
+gnat web NAME [--no-open]     # print the web UI URL (a card per agent: setup, cost, latest output; maximize for the full transcript)
 ```
 
 - `gnat status` shows, for a busy agent, how long since its last event (`last event 3m12s ago`). Agents think for minutes at high effort, but a long silence is worth a look with `gnat logs NAME AGENT -n 20`; `gnat stop` it if it's stuck.

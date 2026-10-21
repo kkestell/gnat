@@ -354,7 +354,7 @@ function renderInline(parent, text, depth, inLink) {
   flush();
 }
 
-function renderMarkdown(parent, text) {
+export function renderMarkdown(parent, text) {
   if (text.length > MAX_LENGTH) {
     child(parent, "div", text).className = "plain";
     return;

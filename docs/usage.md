@@ -47,6 +47,8 @@ An agent whose daemon crashes restarts in the same container with its clone and 
 
 Usage totals in `gnat status` and the web UI come from what each harness reports. Claude Code's cost is at API list prices and isn't reported for stopped or crashed turns.
 
+The web UI lists the repository's pull requests, which the control plane fetches from GitHub with `GH_TOKEN`.
+
 ## Examples
 
 These use [kkestell/swarm-test](https://github.com/kkestell/swarm-test). Run `gnat logs demo -f` or `gnat web demo` alongside to watch.
