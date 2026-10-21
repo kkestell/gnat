@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"github.com/kkestell/gnat/internal/control"
 	"reflect"
 	"strings"
 	"testing"
@@ -49,10 +50,10 @@ func TestFailuresExit1WithTheMessage(t *testing.T) {
 func TestACommandsOwnStatusIsPassedThrough(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"))
 	useExec(t, listing([]string{"gnat-demo-control"}, nil, func(c command) (result, error) {
-		return result{}, &exitError{Code: timeoutStatus}
+		return result{}, &exitError{Code: control.TimeoutStatus}
 	}))
 	status, _, errs := runGnat(t, "wait", "demo", "--timeout", "5")
-	if status != timeoutStatus || errs != "" {
+	if status != control.TimeoutStatus || errs != "" {
 		t.Errorf("status %d, stderr %q", status, errs)
 	}
 }

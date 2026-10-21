@@ -1,32 +1,23 @@
 package cli
 
 import (
-	"fmt"
 	"os/exec"
 	"runtime"
 
 	"github.com/spf13/cobra"
 
 	daemon "github.com/kkestell/gnat/internal/agent"
+	"github.com/kkestell/gnat/internal/control"
 	"github.com/kkestell/gnat/internal/hook"
 )
 
 // The hidden subcommands the containers run, `gnat internal NAME ...`. Each takes the
 // arguments after its name as they are, flags included, and returns the exit status.
-//
-// TODO(control): call control.Main once that package is on main.
 var internalMains = map[string]func(args []string) int{
-	"control": notYet("control"),
+	"control": control.Main,
 	"agent":   daemon.Main,
 	"hook":    hook.Main,
 	"send":    hook.SendMain,
-}
-
-func notYet(name string) func([]string) int {
-	return func([]string) int {
-		fmt.Fprintf(stderr, "gnat internal %s: not implemented yet\n", name)
-		return 1
-	}
 }
 
 // internalCommand is `gnat internal`, which `gnat --help` doesn't list.

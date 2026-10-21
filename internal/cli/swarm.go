@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kkestell/gnat/internal/control"
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/state"
@@ -31,11 +32,6 @@ const (
 	// How long `gnat up` waits for the control plane to answer, and how often it asks.
 	readyTimeout  = 30 * time.Second
 	readyInterval = 250 * time.Millisecond
-
-	// TODO(control): use control's own constants once that package is on main.
-	controlLogDir = "/var/log/gnat"
-	// timeoutStatus is `wait`'s exit status when it gives up, as timeout(1)'s.
-	timeoutStatus = 124
 )
 
 // controlDockerfile is the control image: the control plane is the gnat binary alone.
@@ -479,7 +475,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	serve := controlCommand(append(append([]string{"serve"}, names...), "--setups", string(setupsJSON))...)
 	// Publish the web UI on a free host port, reachable only from this machine.
 	args := []string{"create", "--name", controlName, "--label", label,
-		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-v", logs + ":" + controlLogDir,
+		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-v", logs + ":" + control.LogDir,
 		"--network", network, "--network-alias", state.Control,
 		"-p", "127.0.0.1::" + strconv.Itoa(web.Port), controlImage}
 	if err := dockerQuiet(append(args, serve...)...); err != nil {

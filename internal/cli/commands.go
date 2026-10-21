@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kkestell/gnat/internal/control"
 	"github.com/kkestell/gnat/internal/events"
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/layout"
@@ -71,7 +72,7 @@ func group(use, short string, subcommands ...*cobra.Command) *cobra.Command {
 
 func timeoutFlag(c *cobra.Command, timeout *float64) {
 	c.Flags().Float64Var(timeout, "timeout", 0, fmt.Sprintf(
-		"give up waiting after `SECONDS`, with exit status %d", timeoutStatus))
+		"give up waiting after `SECONDS`, with exit status %d", control.TimeoutStatus))
 }
 
 const agentsUsage = " [AGENT...]"

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kkestell/gnat/internal/control"
 	"github.com/kkestell/gnat/internal/state"
 )
 
@@ -404,12 +405,12 @@ func TestSendReadsStdinWhenThereIsNoMessage(t *testing.T) {
 func TestSendWaitPassesTheControlPlanesStatusThrough(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"))
 	f := useExec(t, listing([]string{"gnat-demo-control"}, nil, func(c command) (result, error) {
-		return result{}, &exitError{Code: timeoutStatus}
+		return result{}, &exitError{Code: control.TimeoutStatus}
 	}))
 	useOutput(t)
 	text := "hi"
 	err := send("demo", nil, sendOptions{message: &text, wait: true, timeout: ptr(600.0)})
-	if exitStatus(err) != timeoutStatus {
+	if exitStatus(err) != control.TimeoutStatus {
 		t.Fatalf("got %v", err)
 	}
 	last := f.lines()[len(f.lines())-1]
