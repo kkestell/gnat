@@ -164,12 +164,17 @@ func (m *Mailbox) pop() (msg Message, urgent, ok bool, err error) {
 
 // Get is the next message to start a turn with, and whether it was sent with now. It
 // waits for one until done is closed; the error is then ErrCancelled. A message it
-// returns has been taken even if done closed meanwhile.
-func (m *Mailbox) Get(done <-chan struct{}) (Message, bool, error) {
+// returns has been taken even if done closed meanwhile. If taken isn't nil it runs once
+// the message is out of the queue, before anything can see the queue without it, so the
+// caller can show the message in progress with no moment when it is nowhere.
+func (m *Mailbox) Get(done <-chan struct{}, taken func()) (Message, bool, error) {
 	for {
 		m.mu.Lock()
 		changed := m.changed
 		msg, urgent, ok, err := m.pop()
+		if ok && taken != nil {
+			taken()
+		}
 		m.mu.Unlock()
 		if err != nil {
 			return Message{}, false, err

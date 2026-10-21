@@ -256,7 +256,7 @@ func TestMailboxPutsUrgentMessagesFirst(t *testing.T) {
 	}
 	var order []got
 	for range 4 {
-		msg, urgent, err := m.Get(nil)
+		msg, urgent, err := m.Get(nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -273,12 +273,12 @@ func TestMailboxGetWaitsForAMessage(t *testing.T) {
 	m := NewMailbox(db, "alpha")
 	cancel := make(chan struct{})
 	close(cancel)
-	if _, _, err := m.Get(cancel); !errors.Is(err, ErrCancelled) {
+	if _, _, err := m.Get(cancel, nil); !errors.Is(err, ErrCancelled) {
 		t.Fatalf("got %v", err)
 	}
 	got := make(chan Message)
 	go func() {
-		msg, _, _ := m.Get(nil)
+		msg, _, _ := m.Get(nil, nil)
 		got <- msg
 	}()
 	time.Sleep(20 * time.Millisecond)
@@ -301,7 +301,7 @@ func TestTakeUrgentLeavesRegularMessages(t *testing.T) {
 	m.Put(Message{Text: "b"}, true, false)
 	first, _ := m.TakeUrgent()
 	second, _ := m.TakeUrgent()
-	msg, urgent, _ := m.Get(nil)
+	msg, urgent, _ := m.Get(nil, nil)
 	if !reflect.DeepEqual(first, []Message{{Text: "a"}, {Text: "b"}}) || len(second) != 0 || msg.Text != "later" || urgent {
 		t.Fatalf("got %v, %v, %v, %v", first, second, msg, urgent)
 	}
@@ -851,6 +851,80 @@ func TestMainRejectsBadCommandLines(t *testing.T) {
 		var out, errOut strings.Builder
 		if code := run(args, &out, &errOut); code != 2 {
 			t.Errorf("%v: exit %d", args, code)
+		}
+	}
+}
+
+// A message that has been sent keeps its agent busy until its turn ends: there is no
+// moment between the mailbox giving the message up and the status showing the turn
+// when a wait would find the agent idle.
+func TestAnAgentIsNeverIdleBetweenAMessageBeingSentAndItsTurnEnding(t *testing.T) {
+	p := startPlane(t, t.TempDir())
+	daemon := p.attach("alpha")
+	p.waitUntil("attached", func() bool { return p.hasDaemon("alpha") })
+	for i := range 100 {
+		stop := make(chan struct{})
+		seen := make(chan bool)
+		p.send("alpha", "one")
+		go func() {
+			for {
+				select {
+				case <-stop:
+					seen <- false
+					return
+				default:
+					if p.control.idle("alpha") {
+						seen <- true
+						return
+					}
+				}
+			}
+		}()
+		daemon.receive()
+		close(stop)
+		if <-seen {
+			t.Fatalf("round %d: idle with a turn running", i)
+		}
+		daemon.done(0, false)
+		p.wait("alpha")
+	}
+}
+
+// wait reports idle when it returned because the agent was idle, even if a message
+// reaches the agent right after: the next pass of `gnat wait` handles that one.
+func TestWaitWithoutATimeoutAlwaysReportsTheAgentIdle(t *testing.T) {
+	p := startPlane(t, t.TempDir())
+	daemon := p.attach("alpha")
+	p.waitUntil("attached", func() bool { return p.hasDaemon("alpha") })
+	finished := make(chan struct{})
+	defer func() { daemon.conn.Close(); <-finished }()
+	go func() { // The daemon: finishes every turn at once.
+		defer close(finished)
+		for {
+			line, err := daemon.r.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			if strings.Contains(string(line), `"turn"`) {
+				exit := 0
+				data, _ := protocol.Encode(protocol.Line{Type: protocol.LineDone, Exit: &exit})
+				daemon.conn.Write(data)
+			}
+		}
+	}()
+	for i := range 100 {
+		// Another agent's message arrives about when the wait looks.
+		go func() {
+			time.Sleep(time.Duration(i%7) * 50 * time.Microsecond)
+			p.request(protocol.Request{Op: protocol.OpSend, Agent: "alpha", Text: "x"})
+		}()
+		// The database syncs to disk on every change, which can be slow.
+		r, err := protocol.CallAddr(p.addr, protocol.Request{Op: protocol.OpWait, Agent: "alpha"}, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Idle == nil || !*r.Idle {
+			t.Fatalf("round %d: wait without a timeout returned with the agent not idle", i)
 		}
 	}
 }
