@@ -131,9 +131,9 @@ export function tokens(count: number): string {
   return (count / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
 }
 
-// A cost in US dollars, such as $0.0421 or $1.23.
+// A cost in US dollars, to the cent, such as $0.00, $0.04, or $1.23.
 export function dollars(cost: number): string {
-  return "$" + cost.toFixed(cost >= 1 ? 2 : 4);
+  return "$" + cost.toFixed(2);
 }
 
 // One line of usage, such as "1.2M in (1.1M cached), 34k out, $1.23"; the fields the

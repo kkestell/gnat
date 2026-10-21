@@ -54,7 +54,7 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-baseline gap-3 border-b border-white/5 bg-zinc-900/60 px-6 py-3">
+      <header className="flex items-baseline gap-3 border-b border-white/10 bg-header px-6 py-3">
         <SwarmInfo />
         {costs.length > 0 && (
           <span className="ml-auto tabular-nums text-zinc-400">
@@ -63,6 +63,7 @@ export function App() {
         )}
       </header>
       <div className="flex min-h-0 flex-1">
+        <PullRequests />
         <main className="flex min-w-0 flex-1 gap-4 p-6">
           {columns(agents).map((column, i) => (
             <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
@@ -72,7 +73,6 @@ export function App() {
             </div>
           ))}
         </main>
-        <PullRequests />
       </div>
       {shownAgent && <TranscriptDialog agent={shownAgent} state={state(shownAgent.name)} onClose={() => setShown(null)} />}
     </div>
@@ -115,7 +115,7 @@ const BUTTON = "rounded px-1.5 text-zinc-500 hover:bg-white/10 hover:text-zinc-1
 function Card({ agent, state, onMaximize }: { agent: Agent; state: AgentState; onMaximize: () => void }) {
   const cost = state.usage.cost;
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-zinc-900 shadow-xl shadow-black/60 ring-1 ring-white/10">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-card shadow-xl shadow-black/60 ring-1 ring-white/10">
       <div className="flex items-baseline gap-3 bg-zinc-800/70 px-4 py-2">
         <h2 className="shrink-0 font-semibold text-zinc-100">{agent.name}</h2>
         <span className="min-w-0 truncate text-xs text-zinc-400">{setupLine(agent)}</span>
@@ -136,7 +136,7 @@ function Preview({ recent }: { recent: Recent[] }) {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden border-t border-white/5 px-4 py-2 text-xs leading-5">
       {/* Fades out the entries cut off at the top. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-10 bg-linear-to-b from-zinc-900 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-10 bg-linear-to-b from-card to-transparent" />
       {recent.length === 0 && <div className="mb-auto italic text-zinc-600">no activity yet</div>}
       {recent.map(({ item, nested }, i) => (
         <div key={i} className={`shrink-0 ${nested ? "pl-4" : ""}`}>

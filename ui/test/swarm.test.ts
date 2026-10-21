@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { AgentState, RECENT_ITEMS, columns, setupLine, uptime, usageSummary } from "../src/swarm";
+import { AgentState, RECENT_ITEMS, columns, dollars, setupLine, uptime, usageSummary } from "../src/swarm";
 
 function state(events: unknown[]): AgentState {
   const agent = new AgentState();
@@ -112,4 +112,10 @@ test("uptime is in the two largest units", () => {
   expect(uptime("2026-10-21T09:46:00Z", now)).toBe("2h 14m");
   expect(uptime("2026-10-18T08:00:00Z", now)).toBe("3d 4h");
   expect(uptime("not a time", now)).toBe("");
+});
+
+test("costs are to the cent", () => {
+  expect(dollars(0.0022)).toBe("$0.00");
+  expect(dollars(0.0421)).toBe("$0.04");
+  expect(dollars(1.2345)).toBe("$1.23");
 });

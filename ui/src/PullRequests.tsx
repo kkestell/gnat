@@ -36,7 +36,7 @@ export function PullRequests() {
 
   const open = pulls?.filter(pull => pull.state === "open").length ?? 0;
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-white/5 bg-zinc-900/60">
+    <aside className="flex w-80 shrink-0 flex-col border-r border-white/15 bg-sidebar">
       <div className="flex items-baseline gap-2 px-4 py-3">
         <h2 className="font-semibold text-zinc-100">Pull requests</h2>
         {pulls && <span className="text-xs text-zinc-500">{open} open</span>}
@@ -64,12 +64,11 @@ function Pull({ pull, now }: { pull: PullRequest; now: number }) {
       rel="noopener noreferrer"
       className={`block px-4 py-2.5 hover:bg-white/5 ${pull.state === "open" ? "" : "opacity-60"}`}
     >
-      <div className="flex gap-1.5 text-sm leading-snug">
-        <span className="shrink-0 tabular-nums text-zinc-500">#{pull.number}</span>
-        <span className="line-clamp-2 text-zinc-200">{pull.title}</span>
-      </div>
+      <div className="line-clamp-2 text-sm leading-snug text-zinc-200">{pull.title}</div>
       <div className="mt-1.5 flex items-center gap-2 text-xs">
-        <span className={`shrink-0 rounded px-1.5 py-px font-medium ${BADGES[badge]}`}>{badge}</span>
+        <span className={`shrink-0 rounded px-1.5 py-px font-medium tabular-nums ${BADGES[badge]}`}>
+          #{pull.number} {badge}
+        </span>
         {pull.agent ? (
           <span className="shrink-0 font-medium text-zinc-300">{pull.agent}</span>
         ) : (
