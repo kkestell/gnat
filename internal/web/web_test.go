@@ -25,7 +25,14 @@ var fakeDOM string
 var pageDOM string
 
 // runJS runs JavaScript that leaves its result in OUT, with node, as the Python
-// tests did, and returns what it printed. It skips the test without node.
+// tests did, and returns what it printed.
+//
+// node is required to exercise the page and its Markdown renderer. Like the
+// Python suite, which also skipped without a JavaScript engine, every such test
+// skips when node isn't installed; a node-less `go test ./...` covers only the
+// pure-Go tests (the page's static checks, the agents' JSON, and the HTTP
+// handler) and still reports ok. Run these under node to check the renderer and
+// its XSS cases.
 func runJS(t *testing.T, script string) string {
 	t.Helper()
 	node, err := exec.LookPath("node")
