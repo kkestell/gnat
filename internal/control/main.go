@@ -1,0 +1,387 @@
+package control
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/kkestell/gnat/internal/protocol"
+	"github.com/kkestell/gnat/internal/state"
+	"github.com/kkestell/gnat/internal/web"
+)
+
+// TimeoutStatus is `wait`'s exit status when it gives up, as timeout(1)'s.
+const TimeoutStatus = 124
+
+// call sends one request to the control plane in this container; tests replace it.
+var call = func(req protocol.Request) (*protocol.Response, error) {
+	return protocol.Call("localhost", req, 0)
+}
+
+// An AgentResult is an agent's status from a wait.
+type AgentResult struct {
+	Agent string
+	*protocol.Response
+}
+
+// WaitFor waits for every agent to be idle at once, within one overall timeout in
+// seconds (nil for none), and returns each agent's status.
+//
+// Agents wake each other with messages, so one pass that finds each idle in turn isn't
+// enough: pass again until one finds every agent idle with no turn finished since the
+// pass before.
+func WaitFor(agents []string, timeout *float64) ([]AgentResult, error) {
+	var deadline time.Time
+	if timeout != nil {
+		deadline = time.Now().Add(time.Duration(*timeout * float64(time.Second)))
+	}
+	var previous []int
+	for {
+		results := make([]AgentResult, 0, len(agents))
+		for _, agent := range agents {
+			req := protocol.Request{Op: protocol.OpWait, Agent: agent}
+			if timeout != nil {
+				remaining := max(time.Until(deadline).Seconds(), 0)
+				req.Timeout = &remaining
+			}
+			resp, err := call(req)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, AgentResult{agent, resp})
+		}
+		turns := make([]int, len(results))
+		for i, r := range results {
+			if r.Idle == nil || !*r.Idle {
+				return results, nil
+			}
+			turns[i] = r.Turns
+		}
+		if equalInts(turns, previous) {
+			return results, nil
+		}
+		previous = turns
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Report is each agent's final reply, headed by its name when there are several, and a
+// line for each agent whose last turn failed.
+func Report(results []AgentResult) (string, []string) {
+	var out strings.Builder
+	var failures []string
+	for _, r := range results {
+		if len(results) > 1 {
+			fmt.Fprintf(&out, "==> %s <==\n", r.Agent)
+		}
+		if r.Reply != nil && *r.Reply != "" {
+			out.WriteString(trimNewlines(*r.Reply) + "\n")
+		}
+		switch {
+		case r.Stopped:
+			failures = append(failures, fmt.Sprintf("%s: its last turn was stopped", r.Agent))
+		case r.Turns != 0 && r.Exit == nil:
+			failures = append(failures, fmt.Sprintf("%s: its last turn was interrupted by a restart or `gnat down`", r.Agent))
+		case r.Exit != nil && *r.Exit != 0:
+			reason := ""
+			if r.Error != nil && *r.Error != "" {
+				reason = ": " + *r.Error
+			}
+			failures = append(failures, fmt.Sprintf("%s: its last turn failed with status %d%s", r.Agent, *r.Exit, reason))
+		}
+	}
+	return out.String(), failures
+}
+
+// A usageError is a bad command line, which exits with status 2.
+type usageError string
+
+func (e usageError) Error() string { return string(e) }
+
+// parsed is a subcommand's arguments: flags may come before, between, and after the
+// positionals, as with argparse.
+type parsed struct {
+	positional []string
+	bools      map[string]bool
+	values     map[string]string
+}
+
+func parseArgs(args []string, bools, values []string) (*parsed, error) {
+	p := &parsed{bools: map[string]bool{}, values: map[string]string{}}
+	has := func(set []string, name string) bool {
+		for _, s := range set {
+			if s == name {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			p.positional = append(p.positional, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "--") {
+			p.positional = append(p.positional, arg)
+			continue
+		}
+		name, value, hasValue := strings.Cut(arg[2:], "=")
+		switch {
+		case has(bools, name) && !hasValue:
+			p.bools[name] = true
+		case has(values, name):
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, usageError(fmt.Sprintf("argument --%s: expected one argument", name))
+				}
+				i++
+				value = args[i]
+			}
+			p.values[name] = value
+		default:
+			return nil, usageError(fmt.Sprintf("unrecognized arguments: %s", arg))
+		}
+	}
+	return p, nil
+}
+
+func (p *parsed) timeout() (*float64, error) {
+	v, ok := p.values["timeout"]
+	if !ok {
+		return nil, nil
+	}
+	t, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return nil, usageError(fmt.Sprintf("argument --timeout: invalid float value: '%s'", v))
+	}
+	return &t, nil
+}
+
+// Main runs `gnat internal control`: serve, the control plane itself, or one of the
+// commands the host runs in its container (send, stop, wait, status). It returns the
+// exit status.
+func Main(args []string) int {
+	return run(args, os.Stdout, os.Stderr)
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	err := dispatchCommand(args, stdout, stderr)
+	switch e := err.(type) {
+	case nil:
+		return 0
+	case exitError:
+		return int(e)
+	case usageError:
+		fmt.Fprintf(stderr, "gnat internal control: error: %s\n", e)
+		return 2
+	}
+	fmt.Fprintf(stderr, "error: %s\n", err)
+	return 1
+}
+
+// An exitError ends the command with that status, its message already printed.
+type exitError int
+
+func (e exitError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
+func dispatchCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return usageError("a command is required: serve, send, stop, wait, or status")
+	}
+	command, args := args[0], args[1:]
+	switch command {
+	case "serve":
+		p, err := parseArgs(args, nil, []string{"setups"})
+		if err != nil {
+			return err
+		}
+		if len(p.positional) == 0 {
+			return usageError("serve needs the names of the swarm's agents")
+		}
+		setups := map[string]state.Agent{}
+		if v, ok := p.values["setups"]; ok {
+			if err := json.Unmarshal([]byte(v), &setups); err != nil {
+				return usageError(fmt.Sprintf("argument --setups: invalid JSON value: %v", err))
+			}
+		}
+		return serve(p.positional, setups)
+	case "send":
+		p, err := parseArgs(args, []string{"now", "new", "wait"}, []string{"timeout"})
+		if err != nil {
+			return err
+		}
+		if len(p.positional) < 2 {
+			return usageError("send needs a message and at least one agent")
+		}
+		timeout, err := p.timeout()
+		if err != nil {
+			return err
+		}
+		text, agents := p.positional[0], p.positional[1:]
+		for _, agent := range agents {
+			if _, err := call(protocol.Request{Op: protocol.OpSend, Agent: agent, Text: text,
+				Now: p.bools["now"], New: p.bools["new"]}); err != nil {
+				return err
+			}
+		}
+		if !p.bools["wait"] {
+			return nil
+		}
+		return waitAndReport(agents, timeout, stdout, stderr)
+	case "stop":
+		p, err := parseArgs(args, nil, nil)
+		if err != nil {
+			return err
+		}
+		if len(p.positional) == 0 {
+			return usageError("stop needs at least one agent")
+		}
+		for _, agent := range p.positional {
+			resp, err := call(protocol.Request{Op: protocol.OpStop, Agent: agent})
+			if err != nil {
+				return err
+			}
+			state := "not running a turn"
+			if resp.Stopping != nil && *resp.Stopping {
+				state = "stopping its turn"
+			}
+			fmt.Fprintf(stdout, "%s: %s\n", agent, state)
+		}
+		return nil
+	case "wait":
+		p, err := parseArgs(args, nil, []string{"timeout"})
+		if err != nil {
+			return err
+		}
+		if len(p.positional) == 0 {
+			return usageError("wait needs at least one agent")
+		}
+		timeout, err := p.timeout()
+		if err != nil {
+			return err
+		}
+		return waitAndReport(p.positional, timeout, stdout, stderr)
+	case "status":
+		p, err := parseArgs(args, nil, nil)
+		if err != nil {
+			return err
+		}
+		if len(p.positional) == 0 {
+			return usageError("status needs at least one agent")
+		}
+		for _, agent := range p.positional {
+			resp, err := call(protocol.Request{Op: protocol.OpStatus, Agent: agent})
+			if err != nil {
+				return err
+			}
+			line, err := protocol.Encode(statusLine(agent, resp))
+			if err != nil {
+				return err
+			}
+			stdout.Write(line)
+		}
+		return nil
+	}
+	return usageError(fmt.Sprintf("unknown command '%s': use serve, send, stop, wait, or status", command))
+}
+
+// statusLine is an agent's status as `status` prints it: every field, as the response
+// carries them all.
+func statusLine(agent string, r *protocol.Response) any {
+	return struct {
+		Agent       string   `json:"agent"`
+		OK          bool     `json:"ok"`
+		State       string   `json:"state"`
+		Queued      int      `json:"queued"`
+		Turns       int      `json:"turns"`
+		Exit        *int     `json:"exit"`
+		Stopped     bool     `json:"stopped"`
+		Reply       *string  `json:"reply"`
+		Error       *string  `json:"error"`
+		Usage       any      `json:"usage"`
+		SinceActive *float64 `json:"since_active"`
+	}{agent, true, r.State, r.Queued, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
+}
+
+func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) error {
+	results, err := WaitFor(agents, timeout)
+	if err != nil {
+		return err
+	}
+	var busy []string
+	for _, r := range results {
+		if r.Idle == nil || !*r.Idle {
+			busy = append(busy, r.Agent)
+		}
+	}
+	if len(busy) > 0 {
+		fmt.Fprintf(stderr, "error: timed out waiting for %s\n", strings.Join(busy, ", "))
+		return exitError(TimeoutStatus)
+	}
+	out, failures := Report(results)
+	io.WriteString(stdout, out)
+	for _, failure := range failures {
+		fmt.Fprintln(stderr, failure)
+	}
+	if len(failures) > 0 {
+		return exitError(1)
+	}
+	return nil
+}
+
+// serve runs the control plane and the web UI until the container is stopped.
+func serve(agents []string, setups map[string]state.Agent) error {
+	db, err := Prepare(LogDir, agents)
+	if err != nil {
+		return err
+	}
+	c, err := New(agents, db, setups, LogDir)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", protocol.Port))
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, run := range []func() error{
+		func() error { return c.Serve(ctx, ln) },
+		func() error { return web.Serve(ctx, fmt.Sprintf("0.0.0.0:%d", web.Port), c) },
+	} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := run(); err != nil {
+				errs <- err
+				stop()
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	return <-errs
+}
