@@ -669,6 +669,60 @@ func TestUsageIsTotalledPerAgent(t *testing.T) {
 	}
 }
 
+func TestWriteRecordedReadsTheStatusOfADownSwarm(t *testing.T) {
+	dir := t.TempDir()
+	p := startPlane(t, dir, "alpha", "beta")
+	alpha, beta := p.attach("alpha"), p.attach("beta")
+	p.send("alpha", "one")
+	alpha.receive()
+	alpha.event(events.NewUsage(events.UsageTotals{InputTokens: i64(10), OutputTokens: i64(5), Cost: f64(0.25)}))
+	alpha.done(0, false)
+	p.wait("alpha")
+	p.send("beta", "one")
+	beta.receive()
+	p.send("beta", "queued")
+	p.close()
+
+	var out strings.Builder
+	if err := WriteRecorded(dir, []string{"alpha", "beta", "gamma"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var got []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, map[string]any{"agent": m["agent"], "state": m["state"], "queued": m["queued"],
+			"turns": m["turns"], "exit": m["exit"], "usage": m["usage"]})
+	}
+	none := map[string]any{"input_tokens": nil, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": nil, "cost": nil}
+	want := []map[string]any{
+		{"agent": "alpha", "state": "down", "queued": 0.0, "turns": 1.0, "exit": 0.0,
+			"usage": map[string]any{"input_tokens": 10.0, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": 5.0, "cost": 0.25}},
+		// Beta went down mid-turn, which coming back up reports as interrupted.
+		{"agent": "beta", "state": "down", "queued": 1.0, "turns": 1.0, "exit": nil, "usage": none},
+		{"agent": "gamma", "state": "down", "queued": 0.0, "turns": 0.0, "exit": nil, "usage": none},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestWriteRecordedWithoutADatabase(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "never-up")
+	var out strings.Builder
+	if err := WriteRecorded(dir, []string{"alpha"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"turns":0`) {
+		t.Fatalf("got %s", out.String())
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("created %s: %v", dir, err)
+	}
+}
+
 func TestStatusTellsHowLongSinceTheAgentWasLastActive(t *testing.T) {
 	p := startPlane(t, t.TempDir())
 	if p.status("alpha").SinceActive != nil {

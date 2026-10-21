@@ -749,15 +749,20 @@ func status(swarmName string, agentArgs []string) error {
 	if err != nil {
 		return err
 	}
-	container, err := requireUp(swarm.Name)
-	if err != nil {
-		return err
-	}
-	out, err := dockerOutput(append([]string{"exec", container}, controlCommand(append([]string{"status"}, agentNames(agents)...)...)...)...)
-	if err != nil {
-		return err
-	}
 	states, err := containerStates(swarm.Name)
+	if err != nil {
+		return err
+	}
+	// While the swarm is down, its logs directory on the host has what the control plane
+	// last recorded.
+	controlName := containerName(swarm.Name, state.Control)
+	_, up := states[controlName]
+	var out string
+	if up {
+		out, err = dockerOutput(append([]string{"exec", controlName}, controlCommand(append([]string{"status"}, agentNames(agents)...)...)...)...)
+	} else {
+		out, err = recordedStatus(swarm.Name, agentNames(agents))
+	}
 	if err != nil {
 		return err
 	}
@@ -769,9 +774,25 @@ func status(swarmName string, agentArgs []string) error {
 		if err := json.Unmarshal([]byte(line), &s); err != nil {
 			return fmt.Errorf("the control plane's status isn't JSON: %s", line)
 		}
-		fmt.Fprintln(stdout, statusLine(s.Agent, s, states[containerName(swarm.Name, s.Agent)]))
+		containerState := states[containerName(swarm.Name, s.Agent)]
+		if !up && containerState == "" {
+			containerState = "down"
+		}
+		fmt.Fprintln(stdout, statusLine(s.Agent, s, containerState))
 	}
 	return nil
+}
+
+// recordedStatus is the agents' status lines from what the swarm's control plane last
+// recorded on the host.
+func recordedStatus(swarm string, agents []string) (string, error) {
+	dir, err := state.LogsDirectory(swarm)
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	err = control.WriteRecorded(dir, agents, &out)
+	return out.String(), err
 }
 
 func copyOut(swarmName, source, destination string) error {

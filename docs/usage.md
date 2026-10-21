@@ -14,7 +14,7 @@ Every command takes the swarm first. Commands that address agents take their nam
 | `gnat send SWARM [AGENT...] [-m TEXT] [--now \| --new] [--wait [--timeout SECONDS]]` | Queue a message. Reads stdin without `-m`. |
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
 | `gnat wait SWARM [AGENT...] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. |
-| `gnat status SWARM [AGENT...]` | Show each agent's state, queue, time since its last event, usage, and how its last turn ended. |
+| `gnat status SWARM [AGENT...]` | Show each agent's state, queue, time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |

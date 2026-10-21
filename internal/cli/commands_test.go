@@ -444,6 +444,42 @@ func TestStatusMergesContainerStates(t *testing.T) {
 	}
 }
 
+func TestStatusOfADownSwarmReadsWhatTheControlPlaneRecorded(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"), agent("beta", "claude"))
+	dir, err := state.LogsDirectory("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := control.Prepare(dir, []string{"alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		"INSERT INTO statuses (agent, turns, exit) VALUES ('alpha', 3, 0)",
+		"INSERT INTO usage (agent, input_tokens, output_tokens, cost) VALUES ('alpha', 1200, 340, 1.23)",
+		"INSERT INTO messages (agent, urgent, text, new) VALUES ('alpha', 0, 'next', 0)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	exec := useExec(t, nil)
+	out, _ := useOutput(t)
+	if err := status("demo", nil); err != nil {
+		t.Fatal(err)
+	}
+	want := "alpha\tdown\t1 queued\t3 turns\t1.2k in, 340 out, $1.23\nbeta\tdown\t0 queued\t0 turns\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	for _, line := range exec.lines() {
+		if strings.HasPrefix(line, "docker exec") {
+			t.Errorf("ran %s", line)
+		}
+	}
+}
+
 func TestSwarmFiles(t *testing.T) {
 	useSwarm(t)
 	useExec(t, nil)

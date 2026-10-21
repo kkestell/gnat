@@ -74,7 +74,7 @@ gnat web NAME [--no-open]     # print the web UI URL (a column per agent: setup,
 ```
 
 - `gnat status` shows, for a busy agent, how long since its last event (`last event 3m12s ago`). Agents think for minutes at high effort, but a long silence is worth a look with `gnat logs NAME AGENT -n 20`; `gnat stop` it if it's stuck.
-- `gnat status` and the web UI also show each agent's usage so far: tokens and cost in US dollars (Claude's at API list prices). Use them to answer questions about cost or to compare models.
+- `gnat status` and the web UI also show each agent's usage so far: tokens and cost in US dollars (Claude's at API list prices). Use them to answer questions about cost or to compare models. They're still there after `gnat down`.
 - `gnat wait` exits 1 if an agent's last turn failed or was stopped, and 124 on timeout. A timeout isn't a failure: the agents keep working; check `gnat status` and wait again.
 - `gnat logs -f` never exits; don't run it in the foreground. Use `-n 50` for a snapshot, or run it in the background.
 - Foreground commands time out in your shell: for turns that take many minutes, run `gnat wait` with `--timeout` in a loop or in the background.
