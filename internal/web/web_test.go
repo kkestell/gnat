@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kkestell/gnat/internal/state"
 )
 
 //go:embed testdata/fake_dom.js
@@ -309,18 +311,17 @@ func TestPageHeadsEachColumnWithTheAgentsHarnessModelAndEffort(t *testing.T) {
 
 type fakeEvents struct {
 	agents []string
-	setups map[string]Setup
+	setups map[string]state.Agent
 }
 
 func (f fakeEvents) Agents() []string               { return f.agents }
-func (f fakeEvents) Setups() map[string]Setup       { return f.setups }
+func (f fakeEvents) Setups() map[string]state.Agent { return f.setups }
 func (f fakeEvents) Watch() (<-chan string, func()) { return nil, func() {} }
 
 func TestPageIsServedWithEachAgentsSetup(t *testing.T) {
-	model := "haiku"
 	events := fakeEvents{
 		agents: []string{"alpha", "beta"},
-		setups: map[string]Setup{"alpha": {Harness: "claude", Model: &model}},
+		setups: map[string]state.Agent{"alpha": {Harness: "claude", Model: "haiku"}},
 	}
 	served := page(events)
 	prefix := Page[:strings.Index(Page, "__AGENTS__")]
@@ -341,10 +342,9 @@ func TestPageIsServedWithEachAgentsSetup(t *testing.T) {
 
 func TestPageDoesNotEscapeHTMLInSetups(t *testing.T) {
 	// json.dumps, which the Python page used, does not escape HTML.
-	model := "a<b>&c"
 	events := fakeEvents{
 		agents: []string{"alpha"},
-		setups: map[string]Setup{"alpha": {Harness: "claude", Model: &model}},
+		setups: map[string]state.Agent{"alpha": {Harness: "claude", Model: "a<b>&c"}},
 	}
 	if served := page(events); !strings.Contains(served, `"model":"a<b>&c"`) {
 		t.Error("the page's agents escaped HTML")
@@ -367,22 +367,21 @@ func TestPageSkipsRecordsFromOlderVersions(t *testing.T) {
 // watchingEvents is Events with a hand-fed stream, for the HTTP tests.
 type watchingEvents struct {
 	agents  []string
-	setups  map[string]Setup
+	setups  map[string]state.Agent
 	records chan string
 	stopped chan struct{}
 }
 
-func (w *watchingEvents) Agents() []string         { return w.agents }
-func (w *watchingEvents) Setups() map[string]Setup { return w.setups }
+func (w *watchingEvents) Agents() []string               { return w.agents }
+func (w *watchingEvents) Setups() map[string]state.Agent { return w.setups }
 func (w *watchingEvents) Watch() (<-chan string, func()) {
 	return w.records, func() { close(w.stopped) }
 }
 
 func TestHandlerServesThePageAndTheEventStream(t *testing.T) {
-	model := "haiku"
 	events := &watchingEvents{
 		agents:  []string{"alpha"},
-		setups:  map[string]Setup{"alpha": {Harness: "claude", Model: &model}},
+		setups:  map[string]state.Agent{"alpha": {Harness: "claude", Model: "haiku"}},
 		records: make(chan string, 1),
 		stopped: make(chan struct{}),
 	}

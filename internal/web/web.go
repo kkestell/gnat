@@ -10,37 +10,28 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/kkestell/gnat/internal/state"
 )
 
 // Port is the port the UI is served on inside the control container.
 const Port = 8080
 
-// Setup is each agent's harness, model, and effort, for its column heading.
-// Model and Effort are nil for the harness's defaults.
-//
-// TODO(core): this mirrors an agent's settings in internal/state; use that
-// package's type once it exists.
-type Setup struct {
-	Harness string  `json:"harness"`
-	Model   *string `json:"model"`
-	Effort  *string `json:"effort"`
-}
-
 // Events is what the UI needs from the control plane.
 //
-// TODO(core): internal/control's control plane should implement this; it owns
-// the swarm's agents, their setups, and the recorded events.
+// TODO(control): internal/control's control plane should implement this; it
+// owns the swarm's agents, their setups, and the recorded events: the records
+// Watch returns wrap internal/events' events with the agent's name, plus the
+// control plane's own swarm_message and swarm_done events.
 type Events interface {
 	// Agents are the swarm's agents, in order, one column each.
 	Agents() []string
-	// Setups is each agent's harness, model, and effort, by name.
-	Setups() map[string]Setup
+	// Setups is each agent's harness, model, and effort (internal/state's
+	// Agent), by name.
+	Setups() map[string]state.Agent
 	// Watch returns a channel of event records, each a JSON object of an agent
 	// name and one event: every record for the swarm's agents so far, then
 	// each new one. The returned function stops watching.
-	//
-	// TODO(core): the event format is internal/events'; the control plane adds
-	// its swarm_message and swarm_done events.
 	Watch() (<-chan string, func())
 }
 
@@ -57,25 +48,25 @@ var MarkdownJS = markdownJS
 // shows are filled in by page.
 var Page = strings.Replace(pageHTML, "__MARKDOWN__", MarkdownJS, 1)
 
-// column is one agent's entry in the page's __AGENTS__, embedding Setup so an
-// agent without a setup is named alone, as the Python swarm's page did.
-type column struct {
-	*Setup
-	Name string `json:"name"`
-}
-
 // page is the page, for the swarm's agents.
 func page(events Events) string {
 	setups := events.Setups()
 	agents := events.Agents()
-	columns := make([]column, 0, len(agents))
+	columns := make([]map[string]any, 0, len(agents))
 	for _, agent := range agents {
+		// An agent without a setup is named alone, as the Python swarm's page
+		// did; an empty model or effort is the harness's default, null.
 		setup, ok := setups[agent]
 		if !ok {
-			columns = append(columns, column{Name: agent})
+			columns = append(columns, map[string]any{"name": agent})
 			continue
 		}
-		columns = append(columns, column{Setup: &setup, Name: agent})
+		columns = append(columns, map[string]any{
+			"name":    agent,
+			"harness": setup.Harness,
+			"model":   optional(setup.Model),
+			"effort":  optional(setup.Effort),
+		})
 	}
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
@@ -85,6 +76,14 @@ func page(events Events) string {
 		encoded.WriteString("[]")
 	}
 	return strings.Replace(Page, "__AGENTS__", strings.TrimSuffix(encoded.String(), "\n"), 1)
+}
+
+// optional is s, or nil for the empty string, which json encodes as null.
+func optional(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // Handler serves the page and its event stream for the given events.
