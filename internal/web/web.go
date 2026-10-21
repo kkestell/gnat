@@ -2,6 +2,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -76,11 +77,14 @@ func page(events Events) string {
 		}
 		columns = append(columns, column{Setup: &setup, Name: agent})
 	}
-	encoded, err := json.Marshal(columns)
-	if err != nil {
-		encoded = []byte("[]")
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(columns); err != nil {
+		encoded.Reset()
+		encoded.WriteString("[]")
 	}
-	return strings.Replace(Page, "__AGENTS__", string(encoded), 1)
+	return strings.Replace(Page, "__AGENTS__", strings.TrimSuffix(encoded.String(), "\n"), 1)
 }
 
 // Handler serves the page and its event stream for the given events.

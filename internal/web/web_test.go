@@ -339,6 +339,18 @@ func TestPageIsServedWithEachAgentsSetup(t *testing.T) {
 	}
 }
 
+func TestPageDoesNotEscapeHTMLInSetups(t *testing.T) {
+	// json.dumps, which the Python page used, does not escape HTML.
+	model := "a<b>&c"
+	events := fakeEvents{
+		agents: []string{"alpha"},
+		setups: map[string]Setup{"alpha": {Harness: "claude", Model: &model}},
+	}
+	if served := page(events); !strings.Contains(served, `"model":"a<b>&c"`) {
+		t.Error("the page's agents escaped HTML")
+	}
+}
+
 func TestPageSkipsRecordsFromOlderVersions(t *testing.T) {
 	got := show(t, []any{
 		"a line Claude printed",
