@@ -2,3 +2,6 @@
 /bin/
 /dist/
 .ref/
+# Linux binaries `make install` builds for containers and embeds in the host binary.
+/internal/workspace/bin/*
+!/internal/workspace/bin/.gitkeep
