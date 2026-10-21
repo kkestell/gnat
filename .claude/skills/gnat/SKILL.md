@@ -7,7 +7,7 @@ description: Operate `gnat`, which runs coding agents (Claude Code or Ox) in Doc
 
 `gnat` runs a set of coding agents, one Docker container each, on separate clones of one GitHub repository. Each agent runs Claude Code or Ox (`--harness`), and a swarm can mix them. You drive it from the developer's machine; the agents commit, push, and open pull requests. Assume `gnat` is on PATH (`make install` in the gnat checkout; rerun it after pulling gnat to update). `gnat COMMAND -h` is authoritative on flags; the gnat checkout's README.md has the full reference.
 
-gnat is in active development, and every run is also a test of it. When you finish using it, write a feedback report (see [Feedback](#feedback)).
+gnat is in active development, and every run is also a test of it. When you finish using it, file a feedback report as a GitHub issue (see [Feedback](#feedback)).
 
 ## Before anything
 
@@ -130,7 +130,7 @@ When the agents' job is to review, investigate, or measure rather than change th
 
 ## Feedback
 
-After the run, whether the task succeeded, failed, or was abandoned, evaluate how well the swarm solved the problem and write a report to a new file, `~/src/gnat/feedback/YYYY-MM-DD-HHMM-NAME.md` (local time, swarm name; create the directory if needed). Write it before `gnat delete`, which removes the logs. Base it on evidence: the agents' final replies, `gnat logs`, `gnat status`, the PRs, and what you had to do as the operator. Cover:
+After the run, whether the task succeeded, failed, or was abandoned, evaluate how well the swarm solved the problem and file the report as a new issue on the gnat repository: `gh issue create --repo kkestell/gnat --title "Feedback: NAME, YYYY-MM-DD HH:MM" --body-file REPORT.md` (swarm name, local time). The issue is public: leave out secrets, tokens, and anything from the target repo that isn't already public. Write it before `gnat delete`, which removes the logs. Base it on evidence: the agents' final replies, `gnat logs`, `gnat status`, the PRs, and what you had to do as the operator. Cover:
 
 - The task, the swarm's setup (agents, harnesses, models, effort, Dockerfile, files), and the outcome: what was delivered, what wasn't, and whether the PRs were correct and mergeable.
 - How the work was divided and whether that worked: merge conflicts, duplicated or idle agents, dependency waits, agent-to-agent messaging.
