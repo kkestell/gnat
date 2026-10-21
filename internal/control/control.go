@@ -179,10 +179,13 @@ func (c *Control) Setups() map[string]state.Agent { return c.setups }
 
 // Idle is whether the agent has finished every message sent to it.
 func (c *Control) idle(agent string) bool {
+	// Look at the queue first: a message leaves it only as its agent turns busy (see
+	// pushTurns), so a queue found empty means the busy flag that follows is current.
+	pending := c.mailboxes[agent].Pending()
 	c.mu.Lock()
 	busy := c.statuses[agent].Busy
 	c.mu.Unlock()
-	return !busy && c.mailboxes[agent].Pending() == 0
+	return pending == 0 && !busy
 }
 
 // describe is the agent's status as a successful response.

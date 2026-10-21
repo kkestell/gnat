@@ -206,10 +206,14 @@ func (c *Control) wait(agent string, timeout *float64, caller io.Reader) *protoc
 		expired = timer.C
 	}
 	var gone chan struct{}
-	for !c.idle(agent) {
+	// Whether the agent was idle when the wait ended. It is what the wait saw, not
+	// looked up again afterwards: a message can reach the agent in between, and the
+	// caller (see WaitFor) passes again for those.
+	var idle bool
+	for {
 		// Take the channel before looking, so an end of turn in between isn't missed.
 		ended := c.turnEnded.wait()
-		if c.idle(agent) {
+		if idle = c.idle(agent); idle {
 			break
 		}
 		if gone == nil {
@@ -223,13 +227,13 @@ func (c *Control) wait(agent string, timeout *float64, caller io.Reader) *protoc
 		case <-ended:
 			continue
 		case <-expired:
+			idle = c.idle(agent)
 		case <-gone:
 			return nil
 		}
 		break
 	}
 	r := c.describe(agent)
-	idle := c.idle(agent)
 	r.Idle = &idle
 	return r
 }
@@ -291,10 +295,31 @@ func (c *Control) pushTurns(agent string, daemon *Daemon, reading <-chan struct{
 		err    error
 	}
 	for {
+		// The turn starts the moment the mailbox gives the message up, so that no
+		// wait finds the agent idle with its message nowhere.
+		var before Status
+		start := func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			s := c.statuses[agent]
+			before = Status{Busy: s.Busy, Reply: s.Reply, Error: s.Error}
+			s.Busy, s.Reply, s.Error = true, nil, nil
+			logErr(s.save())
+			c.active[agent] = time.Now()
+		}
+		// putBack keeps a message the daemon hung up on for the next, and undoes start.
+		putBack := func(g got) {
+			logErr(mailbox.Put(g.msg, g.urgent, true))
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			s := c.statuses[agent]
+			s.Busy, s.Reply, s.Error = before.Busy, before.Reply, before.Error
+			logErr(s.save())
+		}
 		cancel := make(chan struct{})
 		result := make(chan got, 1)
 		go func() {
-			msg, urgent, err := mailbox.Get(cancel)
+			msg, urgent, err := mailbox.Get(cancel, start)
 			result <- got{msg, urgent, err}
 		}()
 		var g got
@@ -304,8 +329,8 @@ func (c *Control) pushTurns(agent string, daemon *Daemon, reading <-chan struct{
 			close(cancel)
 			g = <-result
 			if g.err == nil {
-				// The daemon hung up just as its message came: keep it for the next.
-				logErr(mailbox.Put(g.msg, g.urgent, true))
+				// The daemon hung up just as its message came.
+				putBack(g)
 			}
 			return
 		}
@@ -315,17 +340,11 @@ func (c *Control) pushTurns(agent string, daemon *Daemon, reading <-chan struct{
 		}
 		select {
 		case <-reading:
-			logErr(mailbox.Put(g.msg, g.urgent, true))
+			putBack(g)
 			return
 		default:
 		}
 
-		c.mu.Lock()
-		s := c.statuses[agent]
-		s.Busy, s.Reply, s.Error = true, nil, nil
-		logErr(s.save())
-		c.active[agent] = time.Now()
-		c.mu.Unlock()
 		select { // Forget a turn end left over from the last turn.
 		case <-daemon.turnOver:
 		default:
