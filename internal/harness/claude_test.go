@@ -184,3 +184,12 @@ func TestClaudeReadsLinesLongerThanAPipeBuffer(t *testing.T) {
 	}
 	assertEvents(t, c.all(), []events.Event{events.NewTurnEnd(strings.Repeat("x", 1<<20), "")})
 }
+
+func TestClaudeIsErrorIsATruthinessTest(t *testing.T) {
+	failed := j(m{"type": "result", "is_error": 1, "result": "x"})
+	assertEvents(t, Translate(failed), []events.Event{events.NewTurnEnd("", "x")})
+	got := Translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 1, "content": "x"}))
+	assertEvents(t, got, []events.Event{events.NewToolResult("t", "x", true)})
+	got = Translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 0, "content": "x"}))
+	assertEvents(t, got, []events.Event{events.NewToolResult("t", "x", false)})
+}

@@ -129,7 +129,8 @@ func (r *claudeRunner) Run(text string, new bool, stop <-chan struct{}) (int, er
 			break
 		}
 	}
-	return exitStatus(cmd.Wait()), nil
+	err = cmd.Wait()
+	return exitStatus(cmd, err), nil
 }
 
 func (r *claudeRunner) Stop() {
@@ -145,18 +146,20 @@ func killGroup(proc *os.Process) {
 	_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
 }
 
-// exitStatus is the process's exit status, or minus the signal that killed it.
-func exitStatus(err error) int {
-	if err == nil {
-		return 0
-	}
-	if exit, ok := err.(*exec.ExitError); ok {
-		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+// exitStatus is the exit status of a process that has been waited for, or minus the
+// signal that killed it. A wait that failed only because something kept its output open
+// past the wait delay still has the process's own status.
+func exitStatus(cmd *exec.Cmd, err error) int {
+	if state := cmd.ProcessState; state != nil {
+		if status, ok := state.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 			return -int(status.Signal())
 		}
-		return exit.ExitCode()
+		return state.ExitCode()
 	}
-	return 1
+	if err != nil {
+		return 1
+	}
+	return 0
 }
 
 // Translate returns gnat's events for one line of `claude -p --output-format stream-json`
@@ -196,12 +199,12 @@ func Translate(line string) []events.Event {
 		for _, block := range content {
 			if block, ok := block.(map[string]any); ok && block["type"] == "tool_result" {
 				out = append(out, events.NewToolResult(
-					str(block["tool_use_id"]), toolOutput(block["content"]), block["is_error"] == true).WithParent(parent))
+					str(block["tool_use_id"]), toolOutput(block["content"]), truthy(block["is_error"])).WithParent(parent))
 			}
 		}
 		return out
 	case "result":
-		if event["is_error"] == true {
+		if truthy(event["is_error"]) {
 			reason := str(event["result"])
 			if reason == "" {
 				reason = str(event["subtype"])
@@ -286,6 +289,23 @@ func toolOutput(content any) string {
 		return strings.Join(parts, "\n")
 	}
 	return ""
+}
+
+// truthy is whether Python would take v as true, since Claude's own JSON is read as it was.
+func truthy(v any) bool {
+	switch v := v.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	case string:
+		return v != ""
+	case []any:
+		return len(v) > 0
+	case map[string]any:
+		return len(v) > 0
+	}
+	return false
 }
 
 // str is v if it's a string, else "".

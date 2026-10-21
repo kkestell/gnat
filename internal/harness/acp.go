@@ -254,7 +254,8 @@ func (r *acpRunner) start() error {
 		done: make(chan struct{}), proc: cmd.Process,
 	}
 	go func() {
-		server.status = exitStatus(cmd.Wait())
+		err := cmd.Wait()
+		server.status = exitStatus(cmd, err)
 		stderr.flush()
 		close(server.done)
 	}()
