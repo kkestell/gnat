@@ -3,6 +3,7 @@ package cli
 import (
 	"os/exec"
 	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -54,6 +55,16 @@ func openBrowser(url string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	// An opener that finds no browser fails at once; one that has started one may run
+	// for as long as it stays open, so a few seconds is long enough to wait.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(openerPatience):
+		return nil
+	}
 }
+
+const openerPatience = 3 * time.Second

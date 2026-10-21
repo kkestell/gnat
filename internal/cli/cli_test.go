@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"github.com/kkestell/gnat/internal/control"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,5 +181,39 @@ func TestDeleteRemovesTheSwarmItsVolumesAndImage(t *testing.T) {
 	}
 	if _, out, _ := runGnat(t, "list"); out != "" {
 		t.Errorf("the swarm is still listed: %q", out)
+	}
+}
+
+func TestThereIsNoHelpSubcommand(t *testing.T) {
+	useSwarm(t)
+	if status, _, errs := runGnat(t, "help", "create"); status != 2 || !strings.Contains(errs, "unknown command") {
+		t.Errorf("status %d, stderr %q", status, errs)
+	}
+	status, out, _ := runGnat(t, "--help")
+	if status != 0 || strings.Contains(out, "Help about any command") {
+		t.Errorf("status %d, help:\n%s", status, out)
+	}
+	if status, out, _ := runGnat(t, "create", "-h"); status != 0 || !strings.Contains(out, "--repo") {
+		t.Errorf("create -h: status %d:\n%s", status, out)
+	}
+}
+
+func TestAnEmptyStdinIsAMessageNotATerminal(t *testing.T) {
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	saved := os.Stdin
+	os.Stdin = devnull
+	t.Cleanup(func() { os.Stdin = saved })
+	if stdinIsTerminal() {
+		t.Fatal("/dev/null is a terminal")
+	}
+	savedReader := stdin
+	stdin = devnull
+	t.Cleanup(func() { stdin = savedReader })
+	if _, err := readMessage(nil); err == nil || err.Error() != "message is empty" {
+		t.Errorf("got %v", err)
 	}
 }

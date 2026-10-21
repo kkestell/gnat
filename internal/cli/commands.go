@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/kkestell/gnat/internal/control"
@@ -48,6 +49,9 @@ func newRoot() *cobra.Command {
 		RunE: needSubcommand,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
+	// Replace the `help` command, which the Python CLI doesn't have, with one nothing can
+	// run or see; -h still works.
+	root.SetHelpCommand(&cobra.Command{Use: "no-help", Hidden: true})
 	root.AddCommand(
 		createCommand(), deleteCommand(), listCommand(), upCommand(), downCommand(),
 		sendCommand(), stopCommand(), waitCommand(), statusCommand(), copyCommand(),
@@ -565,10 +569,10 @@ type sendOptions struct {
 	timeout          *float64
 }
 
-// stdinIsTerminal reports whether there's nothing piped to read.
+// stdinIsTerminal reports whether there's nothing piped to read: stdin is a terminal,
+// not a pipe, a file, or /dev/null.
 var stdinIsTerminal = func() bool {
-	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
 }
 
 // readMessage is the message from -m, or else from stdin.
