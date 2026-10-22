@@ -26,6 +26,12 @@ const (
 	// AgentVar is the agent's name, in the environment of its daemon and everything the
 	// daemon runs.
 	AgentVar = "GNAT_AGENT"
+	// SecretVar is an agent's secret, which proves who it is to the control plane, in the
+	// environment of its daemon and everything the daemon runs.
+	SecretVar = "GNAT_SECRET"
+	// SecretsVar is every agent's secret, by name, as a JSON object, in the control
+	// plane's environment.
+	SecretsVar = "GNAT_SECRETS"
 	// DefaultHarness runs the turns of an agent saved without one.
 	DefaultHarness = "claude"
 )
@@ -46,6 +52,9 @@ type Agent struct {
 	Effort       string
 	// Harness is the program it runs its turns with; see the harness package.
 	Harness string
+	// Merge is whether the agent may merge pull requests. A definition saved without it
+	// has none.
+	Merge bool
 }
 
 type agentJSON struct {
@@ -54,10 +63,11 @@ type agentJSON struct {
 	Model        *string `json:"model"`
 	Effort       *string `json:"effort"`
 	Harness      string  `json:"harness"`
+	Merge        bool    `json:"merge"`
 }
 
 func (a Agent) MarshalJSON() ([]byte, error) {
-	return json.Marshal(agentJSON{a.Name, a.Instructions, optional(a.Model), optional(a.Effort), a.Harness})
+	return json.Marshal(agentJSON{a.Name, a.Instructions, optional(a.Model), optional(a.Effort), a.Harness, a.Merge})
 }
 
 func (a *Agent) UnmarshalJSON(data []byte) error {
@@ -65,7 +75,7 @@ func (a *Agent) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
-	*a = Agent{Name: j.Name, Instructions: j.Instructions, Harness: j.Harness}
+	*a = Agent{Name: j.Name, Instructions: j.Instructions, Harness: j.Harness, Merge: j.Merge}
 	if j.Model != nil {
 		a.Model = *j.Model
 	}

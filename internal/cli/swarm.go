@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -310,11 +312,24 @@ func teardown(swarm string) ([]string, error) {
 	return names, nil
 }
 
-// setup is what the control container is told about each agent, for its web UI.
+// setup is what the control container is told about each agent: its harness, model, and
+// effort for its web UI, and whether it may merge pull requests, which the control plane
+// enforces.
 type setup struct {
 	Harness string  `json:"harness"`
 	Model   *string `json:"model"`
 	Effort  *string `json:"effort"`
+	Merge   bool    `json:"merge"`
+}
+
+// newSecret is a secret for an agent to prove who it is to the control plane with; tests
+// replace it.
+var newSecret = func() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func optional(s string) *string {
@@ -336,6 +351,12 @@ func up(name string) (err error) {
 	}
 	if err := requireDown(swarm.Name); err != nil {
 		return err
+	}
+	// Agents are known to GitHub by their branches' names, so they must make valid refs.
+	for _, a := range swarm.Agents {
+		if _, err := state.BranchPrefix(swarm.Name, a.Name); err != nil {
+			return err
+		}
 	}
 	if swarm.Dockerfile != "" && !isFile(swarm.Dockerfile) {
 		return fmt.Errorf("dockerfile not found: %s", swarm.Dockerfile)
@@ -420,7 +441,14 @@ func up(name string) (err error) {
 			}
 		}
 	}()
-	return start(swarm, credentials, githubToken, binaryTar, filesTar)
+	// Each agent gets a fresh secret at every `up`, known only to it and the control plane.
+	secrets := map[string]string{}
+	for _, a := range swarm.Agents {
+		if secrets[a.Name], err = newSecret(); err != nil {
+			return err
+		}
+	}
+	return start(swarm, credentials, githubToken, secrets, binaryTar, filesTar)
 }
 
 func isFile(p string) bool {
@@ -429,7 +457,7 @@ func isFile(p string) bool {
 }
 
 // start creates the network, the control container and the agents', and starts them.
-func start(swarm *state.Swarm, credentials map[string]string, githubToken string, binaryTar, filesTar []byte) error {
+func start(swarm *state.Swarm, credentials map[string]string, githubToken string, secrets map[string]string, binaryTar, filesTar []byte) error {
 	label := swarmLabel + "=" + swarm.Name
 	network := networkName(swarm.Name)
 	if err := dockerQuiet("network", "create", "--label", label, network); err != nil {
@@ -449,24 +477,28 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	setups := map[string]setup{}
 	var names []string
 	for _, a := range swarm.Agents {
-		setups[a.Name] = setup{a.Harness, optional(a.Model), optional(a.Effort)}
+		setups[a.Name] = setup{a.Harness, optional(a.Model), optional(a.Effort), a.Merge}
 		names = append(names, a.Name)
 	}
 	setupsJSON, err := json.Marshal(setups)
 	if err != nil {
 		return err
 	}
+	secretsJSON, err := json.Marshal(secrets)
+	if err != nil {
+		return err
+	}
 	serve := controlCommand(append(append([]string{"serve"}, names...),
-		"--setups", string(setupsJSON), "--repo", swarm.Repo)...)
+		"--setups", string(setupsJSON), "--swarm", swarm.Name, "--repo", swarm.Repo)...)
 	// Publish the web UI on a free host port, reachable only from this machine. The
-	// UI lists the repository's pull requests with the GitHub token, passed by name
-	// so its value stays out of the docker argv.
+	// control plane holds the GitHub token, and the agents' secrets, passed by name so
+	// their values stay out of the docker argv.
 	args := []string{"create", "--name", controlName, "--label", label,
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-v", logs + ":" + layout.LogDir,
 		"--network", network, "--network-alias", state.Control,
-		"-p", "127.0.0.1::" + strconv.Itoa(layout.WebPort), "-e", githubTokenVar, controlImage}
+		"-p", "127.0.0.1::" + strconv.Itoa(layout.WebPort), "-e", githubTokenVar, "-e", state.SecretsVar, controlImage}
 	if _, err := execute(command{name: "docker", args: append(args, serve...), quiet: true,
-		env: []string{githubTokenVar + "=" + githubToken}}); err != nil {
+		env: []string{githubTokenVar + "=" + githubToken, state.SecretsVar + "=" + string(secretsJSON)}}); err != nil {
 		return err
 	}
 	if err := dockerInput(binaryTar, "cp", "-a", "-", controlName+":/"); err != nil {
@@ -482,7 +514,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	}
 
 	for _, agent := range swarm.Agents {
-		if err := startAgent(swarm, agent, label, network, credentials, githubToken, binaryTar, filesTar); err != nil {
+		if err := startAgent(swarm, agent, label, network, credentials, githubToken, secrets[agent.Name], binaryTar, filesTar); err != nil {
 			return err
 		}
 	}
@@ -495,7 +527,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 }
 
 func startAgent(swarm *state.Swarm, agent state.Agent, label, network string, credentials map[string]string,
-	githubToken string, binaryTar, filesTar []byte) error {
+	githubToken, secret string, binaryTar, filesTar []byte) error {
 	name := containerName(swarm.Name, agent.Name)
 	h, err := harness.Get(agent.Harness)
 	if err != nil {
@@ -525,16 +557,16 @@ func startAgent(swarm *state.Swarm, agent state.Agent, label, network string, cr
 		mountArgs = append(mountArgs, "-v", m.volume+":"+m.path)
 	}
 	// Pass the tokens by name so their values stay out of the docker argv; each agent
-	// gets only its own harness's credential. A daemon that crashes restarts in the same
+	// gets only its own harness's credential and its own secret. A daemon that crashes restarts in the same
 	// container, keeping its clone and session.
 	args := []string{"create", "--name", name, "--label", label, "--restart", "on-failure"}
 	args = append(args, agentUserOptions()...)
 	args = append(args, "--network", network, "--network-alias", agent.Name)
 	args = append(args, mountArgs...)
-	args = append(args, "-e", h.Credential(), "-e", githubTokenVar, "--entrypoint", cmd[0], agentImageFor(swarm))
+	args = append(args, "-e", h.Credential(), "-e", githubTokenVar, "-e", state.SecretVar, "--entrypoint", cmd[0], agentImageFor(swarm))
 	args = append(args, cmd[1:]...)
 	_, err = execute(command{name: "docker", args: args, quiet: true, env: []string{
-		h.Credential() + "=" + credentials[h.Credential()], githubTokenVar + "=" + githubToken}})
+		h.Credential() + "=" + credentials[h.Credential()], githubTokenVar + "=" + githubToken, state.SecretVar + "=" + secret}})
 	if err != nil {
 		return err
 	}

@@ -31,6 +31,35 @@ const (
 	OpWait   = "wait"
 	OpStop   = "stop"
 	OpOutput = "output"
+	// OpGitHub is a GitHub operation (see GitHubRequest), which the control plane carries
+	// out with its own token for the agent the request's Secret belongs to.
+	OpGitHub = "github"
+)
+
+// The actions of a GitHubRequest, each on the swarm's repository.
+const (
+	PRCreate  = "pr_create"
+	PRList    = "pr_list"
+	PRView    = "pr_view"
+	PRDiff    = "pr_diff"
+	PRChecks  = "pr_checks"
+	PRComment = "pr_comment"
+	PRReview  = "pr_review"
+	PRMerge   = "pr_merge"
+)
+
+// The kinds of review a pr_review gives.
+const (
+	ReviewApprove        = "approve"
+	ReviewRequestChanges = "request_changes"
+	ReviewComment        = "comment"
+)
+
+// The ways a pr_merge merges.
+const (
+	MergeMerge  = "merge"
+	MergeSquash = "squash"
+	MergeRebase = "rebase"
 )
 
 // The types of a Line.
@@ -55,6 +84,33 @@ type Request struct {
 	New bool `json:"new,omitempty"`
 	// Timeout (wait) is in seconds; nil waits as long as it takes.
 	Timeout *float64 `json:"timeout,omitempty"`
+	// Secret (github) is the agent's secret, which alone says who is asking; Agent is
+	// ignored for it.
+	Secret string `json:"secret,omitempty"`
+	// GitHub (github) is the operation.
+	GitHub *GitHubRequest `json:"github,omitempty"`
+}
+
+// A GitHubRequest is an operation on the swarm's repository; each action uses some of the
+// fields. It names no repository: it is always the swarm's.
+type GitHubRequest struct {
+	Action string `json:"action"`
+	// Number is the pull request (every action but create and list).
+	Number int `json:"number,omitempty"`
+	// Title, Body, Head, Base, and Draft are the pull request to create; Head is a
+	// branch name, and an empty Base is the repository's default branch. Body is also a
+	// comment's or review's text.
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
+	Head  string `json:"head,omitempty"`
+	Base  string `json:"base,omitempty"`
+	Draft bool   `json:"draft,omitempty"`
+	// State (list) is open, closed, merged, or all; Limit is how many to list.
+	State string `json:"state,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+	// Review (review) is one of the Review kinds; Method (merge) one of the Merge ones.
+	Review string `json:"review,omitempty"`
+	Method string `json:"method,omitempty"`
 }
 
 // A TakenMessage is one message `take` hands the hook.
@@ -86,6 +142,9 @@ type Response struct {
 	Reply       *string             `json:"reply,omitempty"`
 	Usage       *events.UsageTotals `json:"usage,omitempty"`
 	SinceActive *float64            `json:"since_active,omitempty"`
+
+	// github: the result, as text for an agent to read.
+	Output string `json:"output,omitempty"`
 }
 
 // A Line is one message on an attached daemon's connection. The control plane pushes

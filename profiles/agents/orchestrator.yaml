@@ -17,3 +17,4 @@ instructions: |
 harness: claude
 model: claude-opus-5-5
 effort: high
+merge: true

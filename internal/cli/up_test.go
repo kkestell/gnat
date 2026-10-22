@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +18,11 @@ func useUp(t *testing.T, respond func(c command) (result, error)) *fakeExec {
 	t.Helper()
 	useSecrets(t, map[string]string{"claude": "claude-secret", "ox": "ox-secret"})
 	t.Setenv("GH_TOKEN", "gh-secret")
+	// Secrets that read as nothing but the order they were made in.
+	n := 0
+	savedSecret := newSecret
+	newSecret = func() (string, error) { n++; return "pw-" + strconv.Itoa(n), nil }
+	t.Cleanup(func() { newSecret = savedSecret })
 	saved := binaryFor
 	binaryFor = func(arch string) ([]byte, error) { return []byte("ELF-" + arch), nil }
 	t.Cleanup(func() { binaryFor = saved })
@@ -36,7 +42,7 @@ func useUp(t *testing.T, respond func(c command) (result, error)) *fakeExec {
 }
 
 func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
-	useSwarm(t, agent("alpha", "claude"), state.Agent{Name: "beta", Instructions: "x", Harness: "ox", Model: "m", Effort: "high"})
+	useSwarm(t, agent("alpha", "claude"), state.Agent{Name: "beta", Instructions: "x", Harness: "ox", Model: "m", Effort: "high", Merge: true})
 	host := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(host, []byte("K=1"), 0o600); err != nil {
 		t.Fatal(err)
@@ -73,9 +79,9 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"build -q -t gnat-agent:latest -",
 		"network create --label gnat.name=demo gnat-demo",
 		"create --name gnat-demo-control --label gnat.name=demo --user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) +
-			" -v " + logs + ":/var/log/gnat --network gnat-demo --network-alias control -p 127.0.0.1::8080 -e GH_TOKEN gnat-control:latest" +
-			` /opt/gnat/gnat-container control serve alpha beta --setups {"alpha":{"harness":"claude","model":null,"effort":null},` +
-			`"beta":{"harness":"ox","model":"m","effort":"high"}} --repo o/r`,
+			" -v " + logs + ":/var/log/gnat --network gnat-demo --network-alias control -p 127.0.0.1::8080 -e GH_TOKEN -e GNAT_SECRETS gnat-control:latest" +
+			` /opt/gnat/gnat-container control serve alpha beta --setups {"alpha":{"harness":"claude","model":null,"effort":null,"merge":false},` +
+			`"beta":{"harness":"ox","model":"m","effort":"high","merge":true}} --swarm demo --repo o/r`,
 		"cp -a - gnat-demo-control:/",
 		"start gnat-demo-control",
 		"exec gnat-demo-control /opt/gnat/gnat-container control status alpha",
@@ -83,7 +89,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"volume create --label gnat.name=demo --label gnat.agent=alpha gnat-demo-alpha-claude",
 		"create --name gnat-demo-alpha --label gnat.name=demo --restart on-failure --user 1000 --workdir /workspace " +
 			"--network gnat-demo --network-alias alpha -v gnat-demo-alpha-workspace:/workspace " +
-			"-v gnat-demo-alpha-claude:/home/agent/.claude -e CLAUDE_CODE_OAUTH_TOKEN -e GH_TOKEN " +
+			"-v gnat-demo-alpha-claude:/home/agent/.claude -e CLAUDE_CODE_OAUTH_TOKEN -e GH_TOKEN -e GNAT_SECRET " +
 			"--entrypoint /opt/gnat/gnat-container gnat-agent:latest agent alpha --repo o/r --harness claude " +
 			"--file /opt/gnat-files/0:config/.env",
 		"cp -a - gnat-demo-alpha:/",
@@ -96,7 +102,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"create --name gnat-demo-beta --label gnat.name=demo --restart on-failure --user 1000 --workdir /workspace " +
 			"--network gnat-demo --network-alias beta -v gnat-demo-beta-workspace:/workspace " +
 			"-v gnat-demo-beta-local-share-ox:/home/agent/.local/share/ox " +
-			"-v gnat-demo-beta-local-state-gnat:/home/agent/.local/state/gnat -e OPENROUTER_API_KEY -e GH_TOKEN " +
+			"-v gnat-demo-beta-local-state-gnat:/home/agent/.local/state/gnat -e OPENROUTER_API_KEY -e GH_TOKEN -e GNAT_SECRET " +
 			"--entrypoint /opt/gnat/gnat-container gnat-agent:latest agent beta --repo o/r --harness ox " +
 			"--file /opt/gnat-files/0:config/.env --model m --effort high",
 		"cp -a - gnat-demo-beta:/",
@@ -118,6 +124,58 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 			if !contains2(c.env, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || !contains2(c.env, "GH_TOKEN=gh-secret") ||
 				contains2(c.env, "OPENROUTER_API_KEY=ox-secret") {
 				t.Errorf("alpha's env: %v", c.env)
+			}
+		}
+	}
+}
+
+// Each agent gets its own secret, and only the control plane has them all.
+func TestUpGivesEachAgentItsOwnSecretAndControlAllOfThem(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"), agent("beta", "claude"))
+	f := useUp(t, nil)
+	useOutput(t)
+	if err := up("demo"); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, c := range f.calls {
+		if len(c.args) < 3 || c.args[0] != "create" {
+			continue
+		}
+		var secrets []string
+		for _, e := range c.env {
+			if name, _, _ := strings.Cut(e, "="); strings.HasPrefix(name, "GNAT_SECRET") {
+				secrets = append(secrets, e)
+			}
+		}
+		seen[c.args[2]] = strings.Join(secrets, "\n")
+	}
+	want := map[string]string{
+		"gnat-demo-control": `GNAT_SECRETS={"alpha":"pw-1","beta":"pw-2"}`,
+		"gnat-demo-alpha":   "GNAT_SECRET=pw-1",
+		"gnat-demo-beta":    "GNAT_SECRET=pw-2",
+	}
+	if !reflect.DeepEqual(seen, want) {
+		t.Errorf("got %v, want %v", seen, want)
+	}
+	for _, c := range f.calls {
+		if strings.Contains(strings.Join(c.args, " "), "pw-") {
+			t.Errorf("a secret is in argv: %v", c.args)
+		}
+	}
+}
+
+func TestUpRefusesAgentsWhoseNamesMakeInvalidBranches(t *testing.T) {
+	for _, name := range []string{"a..b", "x.lock"} {
+		useSwarm(t, agent(name, "claude"))
+		f := useUp(t, nil)
+		useOutput(t)
+		if err := up("demo"); err == nil || !strings.Contains(err.Error(), "can't name branches") {
+			t.Errorf("%s: got %v", name, err)
+		}
+		for _, l := range f.lines() {
+			if strings.HasPrefix(l, "docker network create") {
+				t.Errorf("%s: started a swarm", name)
 			}
 		}
 	}

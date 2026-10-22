@@ -21,6 +21,8 @@ type agentOptions struct {
 	Harness      string `yaml:"harness"`
 	Model        string `yaml:"model"`
 	Effort       string `yaml:"effort"`
+	// Merge is whether the agent may merge pull requests.
+	Merge bool `yaml:"merge"`
 }
 
 func configDirectory() string {
@@ -58,6 +60,7 @@ type swarmProfileAgent struct {
 	Harness      *string `yaml:"harness"`
 	Model        *string `yaml:"model"`
 	Effort       *string `yaml:"effort"`
+	Merge        *bool   `yaml:"merge"`
 }
 
 func swarmProfilesDirectory() string { return filepath.Join(configDirectory(), "profiles", "swarms") }
@@ -87,6 +90,9 @@ func loadSwarmProfile(name string) ([]state.Agent, error) {
 				return nil, err
 			}
 		}
+		if entry.Merge != nil {
+			options.Merge = *entry.Merge
+		}
 		for _, setting := range []struct {
 			value  *string
 			target *string
@@ -110,7 +116,7 @@ func loadSwarmProfile(name string) ([]state.Agent, error) {
 		for _, agentName := range names {
 			agents = append(agents, state.Agent{
 				Name: agentName, Instructions: options.Instructions, Harness: options.Harness,
-				Model: options.Model, Effort: options.Effort,
+				Model: options.Model, Effort: options.Effort, Merge: options.Merge,
 			})
 		}
 	}

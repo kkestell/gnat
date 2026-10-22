@@ -254,7 +254,10 @@ func agentCommands() *cobra.Command {
 		if !slices.Contains(harness.Names(), resolved.Harness) {
 			return usagef("invalid --harness %q (choose from %s)", resolved.Harness, strings.Join(harness.Names(), ", "))
 		}
-		return createAgent(args[0], args[1], resolved.Instructions, resolved.Harness, resolved.Model, resolved.Effort)
+		if cmd.Flags().Changed("merge") {
+			resolved.Merge = options.Merge
+		}
+		return createAgent(args[0], args[1], resolved.Instructions, resolved.Harness, resolved.Model, resolved.Effort, resolved.Merge)
 	}).run
 	create.Flags().StringVar(&profileName, "profile", "", "load agent settings from the named YAML `PROFILE` in gnat's config profiles/agents directory")
 	create.Flags().StringVar(&options.Instructions, "instructions", "", "additional instructions for the agent")
@@ -262,6 +265,7 @@ func agentCommands() *cobra.Command {
 		"the program the agent runs its turns with ("+strings.Join(harness.Names(), ", ")+")")
 	create.Flags().StringVar(&options.Model, "model", "",
 		"model (default: the harness's default); for ox, a qualified ID such as openrouter:deepseek/deepseek-v4.1-flash")
+	create.Flags().BoolVar(&options.Merge, "merge", false, "let the agent merge pull requests")
 	var efforts []string
 	for _, h := range harness.All() {
 		efforts = append(efforts, fmt.Sprintf("for %s, %s", h.Name(), strings.Join(h.Efforts(), ", ")))
@@ -445,13 +449,13 @@ func down(name string) error {
 	return nil
 }
 
-func createAgent(swarmName, agentName, instructions, harnessName, model, effort string) error {
+func createAgent(swarmName, agentName, instructions, harnessName, model, effort string, merge bool) error {
 	swarm, err := state.Load(swarmName)
 	if err != nil {
 		return err
 	}
 	a, err := checkAgent(swarm, state.Agent{
-		Name: agentName, Instructions: instructions, Model: model, Effort: effort, Harness: harnessName,
+		Name: agentName, Instructions: instructions, Model: model, Effort: effort, Harness: harnessName, Merge: merge,
 	})
 	if err != nil {
 		return err
@@ -479,6 +483,10 @@ func checkAgent(swarm *state.Swarm, a state.Agent) (state.Agent, error) {
 		if existing.Name == a.Name {
 			return a, fmt.Errorf("swarm '%s' already has an agent '%s'", swarm.Name, a.Name)
 		}
+	}
+	// The agent's branches are named after the swarm and the agent, so both must make valid refs.
+	if _, err := state.BranchPrefix(swarm.Name, a.Name); err != nil {
+		return a, err
 	}
 	h, err := harness.Get(a.Harness)
 	if err != nil {
@@ -526,7 +534,11 @@ func listAgents(swarmName string) error {
 		return err
 	}
 	for _, a := range swarm.Agents {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", a.Name, a.Harness, orDash(a.Model), orDash(a.Effort))
+		merge := "-"
+		if a.Merge {
+			merge = "merge"
+		}
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n", a.Name, a.Harness, orDash(a.Model), orDash(a.Effort), merge)
 	}
 	return nil
 }

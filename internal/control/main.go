@@ -213,7 +213,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 	command, args := args[0], args[1:]
 	switch command {
 	case "serve":
-		p, err := parseArgs(args, nil, []string{"setups", "repo"})
+		p, err := parseArgs(args, nil, []string{"setups", "repo", "swarm"})
 		if err != nil {
 			return err
 		}
@@ -226,7 +226,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 				return usageError(fmt.Sprintf("argument --setups: invalid JSON value: %v", err))
 			}
 		}
-		return serve(p.positional, setups, p.values["repo"])
+		return serve(p.positional, setups, p.values["swarm"], p.values["repo"])
 	case "send":
 		p, err := parseArgs(args, []string{"now", "new", "wait"}, []string{"timeout"})
 		if err != nil {
@@ -333,10 +333,18 @@ func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) 
 	return nil
 }
 
-// serve runs the control plane and the web UI until the container is stopped. The
-// UI shows the repository's pull requests with GH_TOKEN, if it's set.
-func serve(agents []string, setups map[string]state.Agent, repo string) error {
-	swarm := web.Swarm{Repo: repo, Started: time.Now(), Token: os.Getenv("GH_TOKEN")}
+// serve runs the control plane and the web UI until the container is stopped. With
+// GH_TOKEN, the UI shows the repository's pull requests, and the agents whose secrets
+// are in GNAT_SECRETS can act on GitHub through the control plane.
+func serve(agents []string, setups map[string]state.Agent, swarmName, repo string) error {
+	token := os.Getenv("GH_TOKEN")
+	swarm := web.Swarm{Repo: repo, Started: time.Now(), Token: token}
+	secrets := map[string]string{}
+	if v := os.Getenv(state.SecretsVar); v != "" {
+		if err := json.Unmarshal([]byte(v), &secrets); err != nil {
+			return fmt.Errorf("%s isn't a JSON object of agent secrets: %w", state.SecretsVar, err)
+		}
+	}
 	db, err := Prepare(layout.LogDir, agents)
 	if err != nil {
 		return err
@@ -344,6 +352,11 @@ func serve(agents []string, setups map[string]state.Agent, repo string) error {
 	c, err := New(agents, db, setups, layout.LogDir)
 	if err != nil {
 		return err
+	}
+	if repo != "" && swarmName != "" {
+		if err := c.EnableGitHub(GitHub{Swarm: swarmName, Repo: repo, Token: token, Secrets: secrets}); err != nil {
+			return err
+		}
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", protocol.Port))
 	if err != nil {

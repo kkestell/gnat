@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/kkestell/gnat/internal/state"
 )
@@ -337,5 +340,101 @@ func TestSwarmProfilesList(t *testing.T) {
 	}
 	if status, out, errs := runGnat(t, "profiles", "list"); status != 0 || out != "coder\n" {
 		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
+	}
+}
+
+func TestMergePermissionComesFromTheProfileAndTheFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		yaml  string
+		flags []string
+		want  bool
+	}{
+		{"none by default", "instructions: x\n", nil, false},
+		{"from the profile", "merge: true\n", nil, true},
+		{"the flag grants it", "instructions: x\n", []string{"--merge"}, true},
+		{"the flag takes it away", "merge: true\n", []string{"--merge=false"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useSwarm(t)
+			useExec(t, nil)
+			useProfiles(t, map[string]string{"p.yaml": tc.yaml})
+			args := append([]string{"agent", "create", "demo", "alpha", "--profile", "p"}, tc.flags...)
+			if status, _, errs := runGnat(t, args...); status != 0 {
+				t.Fatalf("status %d: %s", status, errs)
+			}
+			swarm, err := state.Load("demo")
+			if err != nil || swarm.Agents[0].Merge != tc.want {
+				t.Fatalf("merge = %v, want %v (%v)", swarm.Agents[0].Merge, tc.want, err)
+			}
+			_, out, _ := runGnat(t, "agent", "list", "demo")
+			if got := strings.HasSuffix(strings.TrimSpace(out), "\tmerge"); got != tc.want {
+				t.Errorf("list shows merge = %v: %q", got, out)
+			}
+		})
+	}
+	useSwarm(t)
+	useExec(t, nil)
+	if status, _, errs := runGnat(t, "agent", "create", "demo", "beta", "--merge"); status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	swarm, _ := state.Load("demo")
+	if !swarm.Agents[0].Merge {
+		t.Error("--merge without a profile didn't grant it")
+	}
+}
+
+func TestSwarmProfilesSetTheMergePermission(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	useExec(t, nil)
+	useProfiles(t, map[string]string{"orchestrator.yaml": "merge: true\n", "coder.yaml": "instructions: x\n"})
+	useSwarmProfiles(t, map[string]string{"team.yaml": `agents:
+  - name: lead
+    profile: orchestrator
+  - name: demoted
+    profile: orchestrator
+    merge: false
+  - name: promoted
+    profile: coder
+    merge: true
+  - name: coder
+    profile: coder
+`})
+	if status, _, errs := runGnat(t, "create", "demo", "--repo", "o/r", "--profile", "team"); status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	swarm, _ := state.Load("demo")
+	got := map[string]bool{}
+	for _, a := range swarm.Agents {
+		got[a.Name] = a.Merge
+	}
+	if want := map[string]bool{"lead": true, "demoted": false, "promoted": true, "coder": false}; !maps.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestOnlyTheBundledOrchestratorMerges(t *testing.T) {
+	for _, name := range []string{"coder", "reviewer", "researcher", "orchestrator"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "agents", name+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var options agentOptions
+		if err := yaml.Unmarshal(data, &options); err != nil {
+			t.Fatal(err)
+		}
+		if options.Merge != (name == "orchestrator") {
+			t.Errorf("%s: merge = %v", name, options.Merge)
+		}
+	}
+}
+
+func TestAgentsWhoseNamesMakeInvalidBranchesAreRefused(t *testing.T) {
+	useSwarm(t)
+	useExec(t, nil)
+	for _, name := range []string{"a..b", "x.lock", "dot."} {
+		if status, _, errs := runGnat(t, "agent", "create", "demo", name); status == 0 || !strings.Contains(errs, "can't name branches") {
+			t.Errorf("%s: status %d, %q", name, status, errs)
+		}
 	}
 }

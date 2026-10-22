@@ -18,9 +18,9 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
-| `gnat agent create SWARM AGENT [--profile NAME] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. |
+| `gnat agent create SWARM AGENT [--profile NAME] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
 | `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
-| `gnat agent list SWARM` | List agents. |
+| `gnat agent list SWARM` | List agents: name, harness, model, effort, and `merge` if it may merge pull requests. |
 | `gnat profiles list [--swarm]` | List available agent profile names, or swarm profile names with `--swarm`, alphabetically. |
 | `gnat auth login claude\|ox` | Save a harness's credential in the system keyring. See [setup](setup.md#credentials). |
 | `gnat auth logout claude\|ox` | Remove a harness's saved credential. |
@@ -58,6 +58,9 @@ gnat profiles list
 gnat agent create demo alpha --profile coder
 gnat agent create demo beta --profile coder --effort max
 ```
+
+A profile may also set `merge: true`, which lets the agent merge pull requests (the
+bundled `orchestrator` does); see Pull requests below.
 
 All four settings are optional. gnat always supplies basic instructions about
 the swarm, available tools, and credentials. Use the profile's `instructions` or
@@ -129,6 +132,18 @@ Each agent works through its queue one message at a time, continuing one session
 Agents can message each other with `/opt/gnat/gnat-container send TEAMMATE... [--now] -m TEXT`, which their instructions describe. Two agents can reply to each other forever; watch `gnat logs` and `gnat down` if they do.
 
 An agent whose daemon crashes restarts in the same container with its clone and session, and the turn it was running is reported as interrupted.
+
+## Pull requests
+
+Agents reach GitHub's pull requests through the control plane, which holds the
+GitHub token and enforces the rules, with `gnat-container pr create|list|view|diff|checks|comment|review|merge`.
+Each agent has a secret `gnat up` generates for it, which is how the control
+plane knows who is asking. Pull requests are always on the swarm's repository,
+and one is opened only from a branch named `SWARM/AGENT/...` (the swarm's and the
+agent's own name; names that would make invalid git refs, such as `a..b` or
+`x.lock`, are refused). Only agents saved with `merge` (`gnat agent create --merge`,
+or `merge: true` in a profile) may run `gnat-container pr merge`. A definition
+saved without it gives no permission.
 
 ## State
 
