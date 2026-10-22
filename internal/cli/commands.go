@@ -93,7 +93,7 @@ func createCommand() *cobra.Command {
 			return create(args[0], dockerfile, repo, files)
 		}).run,
 	}
-	c.Flags().StringVar(&profile, "profile", "", "add the agents of the named YAML `PROFILE` in gnat's config profiles/swarms directory")
+	c.Flags().StringVar(&profile, "profile", "", "add the agents of the swarm `PROFILE`: a name in gnat's config profiles/swarms directory, or a YAML file's path")
 	c.Flags().StringVar(&dockerfile, "dockerfile", "", "Dockerfile extending gnat-agent for the agent image (default: gnat-agent)")
 	c.Flags().StringVar(&repo, "repo", "", "GitHub repository each agent clones, `OWNER/NAME`")
 	c.Flags().StringArrayVar(&files, "file", nil, "copy a file outside source control into each agent's /workspace "+
@@ -232,7 +232,7 @@ func agentCommands() *cobra.Command {
 		resolved := agentOptions{Harness: state.DefaultHarness}
 		if cmd.Flags().Changed("profile") {
 			var err error
-			resolved, err = loadProfile(profileName)
+			resolved, err = loadProfile(profileName, "")
 			if err != nil {
 				return err
 			}
@@ -259,7 +259,7 @@ func agentCommands() *cobra.Command {
 		}
 		return createAgent(args[0], args[1], resolved.Instructions, resolved.Harness, resolved.Model, resolved.Effort, resolved.Merge)
 	}).run
-	create.Flags().StringVar(&profileName, "profile", "", "load agent settings from the named YAML `PROFILE` in gnat's config profiles/agents directory")
+	create.Flags().StringVar(&profileName, "profile", "", "load agent settings from `PROFILE`: a name in gnat's config profiles/agents directory, or a YAML file's path")
 	create.Flags().StringVar(&options.Instructions, "instructions", "", "additional instructions for the agent")
 	create.Flags().StringVar(&options.Harness, "harness", state.DefaultHarness,
 		"the program the agent runs its turns with ("+strings.Join(harness.Names(), ", ")+")")

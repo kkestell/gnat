@@ -36,13 +36,32 @@ func configDirectory() string {
 
 func profilesDirectory() string { return filepath.Join(configDirectory(), "profiles", "agents") }
 
-func loadProfile(name string) (agentOptions, error) {
+// loadProfile loads the agent profile named, or at the path, profile; a relative path is
+// relative to base.
+func loadProfile(profile, base string) (agentOptions, error) {
 	options := agentOptions{Harness: state.DefaultHarness}
-	if err := state.CheckName(name, "profile name"); err != nil {
+	path, err := profilePath(profile, base, profilesDirectory(), "profile name")
+	if err != nil {
 		return options, err
 	}
-	err := decodeProfile(filepath.Join(profilesDirectory(), name+".yaml"), "profile", name, &options)
+	err = decodeProfile(path, "profile", profile, &options)
 	return options, err
+}
+
+// profilePath is the file profile refers to: profile itself if it's a path (it contains a
+// slash or ends in .yaml or .yml), joined to base if relative, or else NAME.yaml in directory.
+func profilePath(profile, base, directory, what string) (string, error) {
+	if strings.ContainsRune(profile, '/') || strings.ContainsRune(profile, filepath.Separator) ||
+		strings.HasSuffix(profile, ".yaml") || strings.HasSuffix(profile, ".yml") {
+		if !filepath.IsAbs(profile) {
+			profile = filepath.Join(base, profile)
+		}
+		return profile, nil
+	}
+	if err := state.CheckName(profile, what); err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, profile+".yaml"), nil
 }
 
 // swarmProfile is a swarm's agents, each from an agent profile and its own settings.
@@ -65,12 +84,13 @@ type swarmProfileAgent struct {
 
 func swarmProfilesDirectory() string { return filepath.Join(configDirectory(), "profiles", "swarms") }
 
-// loadSwarmProfile is the agents the named swarm profile describes, in order.
+// loadSwarmProfile is the agents the swarm profile named, or at the path, name describes, in
+// order. Agent profiles it gives as relative paths are relative to its directory.
 func loadSwarmProfile(name string) ([]state.Agent, error) {
-	if err := state.CheckName(name, "swarm profile name"); err != nil {
+	path, err := profilePath(name, "", swarmProfilesDirectory(), "swarm profile name")
+	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(swarmProfilesDirectory(), name+".yaml")
 	var profile swarmProfile
 	if err := decodeProfile(path, "swarm profile", name, &profile); err != nil {
 		return nil, err
@@ -86,7 +106,7 @@ func loadSwarmProfile(name string) ([]state.Agent, error) {
 		options := agentOptions{Harness: state.DefaultHarness}
 		if entry.Profile != "" {
 			var err error
-			if options, err = loadProfile(entry.Profile); err != nil {
+			if options, err = loadProfile(entry.Profile, filepath.Dir(path)); err != nil {
 				return nil, err
 			}
 		}

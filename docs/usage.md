@@ -6,7 +6,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 
 | Command | Description |
 | --- | --- |
-| `gnat create SWARM --repo OWNER/NAME [--profile NAME] [--dockerfile FILE] [--file PATH]...` | Define a swarm. `--profile` adds a [swarm profile](#swarm-profiles)'s agents. |
+| `gnat create SWARM --repo OWNER/NAME [--profile NAME\|PATH] [--dockerfile FILE] [--file PATH]...` | Define a swarm. `--profile` adds a [swarm profile](#swarm-profiles)'s agents. |
 | `gnat delete SWARM` | Bring the swarm down and delete it, with its logs, clones, and sessions. |
 | `gnat list` | List swarms. |
 | `gnat up SWARM` | Build images and start the control plane and one container per agent. Returns once the control plane answers. |
@@ -18,7 +18,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
-| `gnat agent create SWARM AGENT [--profile NAME] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
+| `gnat agent create SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
 | `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
 | `gnat agent list SWARM` | List agents: name, harness, model, effort, and `merge` if it may merge pull requests. |
 | `gnat profiles list [--swarm]` | List available agent profile names, or swarm profile names with `--swarm`, alphabetically. |
@@ -70,6 +70,11 @@ profile settings regardless of flag order. Use `--model=""` or `--effort=""` to
 restore the harness's default for that setting. Use `--instructions=""` to clear
 the profile's additional instructions.
 
+`--profile` also takes a profile file's path instead of a name: a value containing
+a slash or ending in `.yaml` or `.yml` is a path, as in
+`gnat agent create demo alpha --profile ./coder.yaml`. The same goes for a swarm
+profile with `gnat create --profile`.
+
 Profile names use the same characters as agent names: a letter or digit followed
 by letters, digits, underscores, dots, or hyphens. Each file contains one YAML
 document; unknown settings are rejected. `gnat profiles list` lists names
@@ -89,20 +94,21 @@ includes `team`, from the repository's `profiles/swarms` directory:
 agents:
   - name: orchestrator
     profile: orchestrator
-  - name: coder-sonnet
+    harness: claude
+    model: claude-opus-5-5
+    effort: high
+  - name: coder
     count: 2
     profile: coder
-    effort: medium
-  - name: coder-flash
-    count: 2
-    profile: coder
-    harness: ox
-    model: openrouter:deepseek/deepseek-v4.1-flash
+    harness: claude
+    model: claude-opus-5-5
+    effort: high
   - name: reviewer
     count: 2
     profile: reviewer
     harness: claude
-    model: claude-sonnet-5-5
+    model: claude-opus-5-5
+    effort: high
 ```
 
 ```sh
@@ -110,11 +116,12 @@ gnat profiles list --swarm
 gnat create demo --repo OWNER/NAME --profile team
 ```
 
-That creates `orchestrator`, `coder-sonnet-1`, `coder-sonnet-2`, `coder-flash-1`,
-`coder-flash-2`, `reviewer-1`, and `reviewer-2`, in that order. Each entry needs a
+That creates `orchestrator`, `coder-1`, `coder-2`, `reviewer-1`, and `reviewer-2`,
+in that order, all running `claude-opus-5-5` at `high` effort. Each entry needs a
 `name`. With `count`, it creates that many agents named `NAME-1` through
 `NAME-COUNT`; without it, one agent named `NAME`. `profile` names an
-[agent profile](#agent-profiles) to start from, and `instructions`, `harness`,
+[agent profile](#agent-profiles) to start from, or gives its path (a relative path
+is relative to the swarm profile's directory), and `instructions`, `harness`,
 `model`, and `effort` replace its settings, the way flags do for
 `gnat agent create`; an empty value clears one. The file has the same rules as an
 agent profile: one YAML document, unknown settings rejected. If any agent is

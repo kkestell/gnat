@@ -99,7 +99,8 @@ func TestAgentProfileErrorsDoNotCreateAgents(t *testing.T) {
 		name, yaml, want string
 	}{
 		{name: "missing", want: "load profile"},
-		{name: "../coder", want: "profile name"},
+		{name: "../coder", want: "load profile"},
+		{name: "bad name", want: "profile name"},
 		{name: "", want: "profile name"},
 		{name: "coder", yaml: "instructions: [broken", want: "decode profile"},
 		{name: "coder", yaml: "instructions: x\nefort: max\n", want: "field efort not found"},
@@ -300,7 +301,8 @@ func TestSwarmProfileErrorsDoNotCreateSwarms(t *testing.T) {
 		name, yaml, want string
 	}{
 		{name: "missing", want: "load swarm profile"},
-		{name: "../team", want: "swarm profile name"},
+		{name: "../team", want: "load swarm profile"},
+		{name: "bad name", want: "swarm profile name"},
 		{name: "team", yaml: "agents: []\n", want: "has no agents"},
 		{name: "team", yaml: "agents:\n  - name: a\n    count: -1\n", want: "negative count"},
 		{name: "team", yaml: "agents:\n  - name: a\n    efort: max\n", want: "field efort not found"},
@@ -340,6 +342,58 @@ func TestSwarmProfilesList(t *testing.T) {
 	}
 	if status, out, errs := runGnat(t, "profiles", "list"); status != 0 || out != "coder\n" {
 		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
+	}
+}
+
+func TestProfilesByPath(t *testing.T) {
+	useSwarm(t)
+	useExec(t, nil)
+	useProfiles(t, map[string]string{"coder.yaml": "model: named\n"})
+	directory := t.TempDir()
+	for name, content := range map[string]string{
+		"coder.yaml":       "model: by-path\n",
+		"lead.yml":         "model: lead\n",
+		"swarms/team.yaml": "agents:\n  - name: a\n    profile: ../coder.yaml\n  - name: b\n    profile: coder\n",
+	} {
+		path := filepath.Join(directory, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFile(path, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(directory)
+	for agent, profile := range map[string]string{
+		"absolute": filepath.Join(directory, "coder.yaml"), "relative": "./coder.yaml", "yaml": "coder.yaml", "yml": "lead.yml",
+	} {
+		if status, _, errs := runGnat(t, "agent", "create", "demo", agent, "--profile", profile); status != 0 {
+			t.Fatalf("%s: status %d: %s", agent, status, errs)
+		}
+	}
+	swarm, err := state.Load("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := map[string]string{}
+	for _, a := range swarm.Agents {
+		models[a.Name] = a.Model
+	}
+	want := map[string]string{"absolute": "by-path", "relative": "by-path", "yaml": "by-path", "yml": "lead"}
+	if !maps.Equal(models, want) {
+		t.Errorf("models = %v, want %v", models, want)
+	}
+
+	// A swarm profile's relative agent profile paths are relative to the swarm profile.
+	t.Chdir(t.TempDir())
+	if status, _, errs := runGnat(t, "create", "team", "--repo", "o/r", "--profile", filepath.Join(directory, "swarms", "team.yaml")); status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	if swarm, err = state.Load("team"); err != nil {
+		t.Fatal(err)
+	}
+	if len(swarm.Agents) != 2 || swarm.Agents[0].Model != "by-path" || swarm.Agents[1].Model != "named" {
+		t.Errorf("agents = %+v", swarm.Agents)
 	}
 }
 
