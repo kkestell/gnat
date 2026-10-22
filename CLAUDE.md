@@ -22,6 +22,10 @@ After changing `ui/`, also `make ui`, `cd ui && bun test && bun run typecheck`, 
 
 Containers run the same `gnat` binary (static linux build at `/opt/gnat/gnat`); what ran as Python modules there are hidden subcommands, `gnat internal control|agent|hook|send` (`layout.Command`). SQLite is `modernc.org/sqlite` (pure Go).
 
+## Testing with a live swarm
+
+Use `kkestell/gnat-sandbox`, a private throwaway repository with a tiny Python library (`wordtools.py`, tests via `python3 -m unittest`), for end-to-end runs: agents may push, open pull requests, and merge there. The active `gh` account may not be `kkestell`, so run gnat with `GH_TOKEN=$(gh auth token --user kkestell)`. Close leftover pull requests and delete their branches before a fresh run, and `gnat delete` the swarm afterwards.
+
 ## Packages
 
 One binary, `cmd/gnat`; everything else is under `internal/`.
