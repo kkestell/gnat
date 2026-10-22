@@ -137,9 +137,12 @@ type Response struct {
 	// wait: whether the agent is idle, as well as its status.
 	Idle *bool `json:"idle,omitempty"`
 
-	// status and wait: the agent's status.
+	// status and wait: the agent's status. QueuedNow is how many of those queued were
+	// sent with now, and QueuedFrom how many each teammate sent.
 	State       string              `json:"state,omitempty"`
 	Queued      int                 `json:"queued,omitempty"`
+	QueuedNow   int                 `json:"queued_now,omitempty"`
+	QueuedFrom  map[string]int      `json:"queued_from,omitempty"`
 	Turns       int                 `json:"turns,omitempty"`
 	Exit        *int                `json:"exit,omitempty"`
 	Stopped     bool                `json:"stopped,omitempty"`
@@ -265,11 +268,17 @@ func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error
 // StatusLine is an agent's status as `status` prints it: every field, as the response
 // carries them all.
 func StatusLine(agent string, r *Response) any {
+	queuedFrom := r.QueuedFrom
+	if queuedFrom == nil {
+		queuedFrom = map[string]int{}
+	}
 	return struct {
 		Agent       string   `json:"agent"`
 		OK          bool     `json:"ok"`
 		State       string   `json:"state"`
 		Queued      int      `json:"queued"`
+		QueuedNow   int      `json:"queued_now"`
+		QueuedFrom  any      `json:"queued_from"`
 		Turns       int      `json:"turns"`
 		Exit        *int     `json:"exit"`
 		Stopped     bool     `json:"stopped"`
@@ -277,5 +286,5 @@ func StatusLine(agent string, r *Response) any {
 		Error       *string  `json:"error"`
 		Usage       any      `json:"usage"`
 		SinceActive *float64 `json:"since_active"`
-	}{agent, true, r.State, r.Queued, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
+	}{agent, true, r.State, r.Queued, r.QueuedNow, queuedFrom, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
 }

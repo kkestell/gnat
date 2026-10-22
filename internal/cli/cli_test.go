@@ -62,7 +62,7 @@ func TestFlagsMayFollowPositionals(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"), agent("beta", "claude"))
 	f := useExec(t, listing([]string{"gnat-demo-control"}, nil, nil))
 	status, out, errs := runGnat(t, "send", "demo", "alpha", "beta", "-m", "hello world", "--now")
-	if status != 0 || out != "queued message for alpha, beta\n" {
+	if want := "message for alpha, beta will be delivered into each agent's running turn at its next tool call, or start its next turn if it's idle\n"; status != 0 || out != want {
 		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
 	}
 	want := "docker exec gnat-demo-control /opt/gnat/gnat-container control send hello world alpha beta --now"

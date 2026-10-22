@@ -188,12 +188,13 @@ func (c *Control) idle(agent string) bool {
 
 // describe is the agent's status as a successful response.
 func (c *Control) describe(agent string) *protocol.Response {
-	queued := c.mailboxes[agent].Pending()
+	queue := c.mailboxes[agent].Queue()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := c.statuses[agent]
 	r := protocol.OK()
-	r.State, r.Queued, r.Turns, r.Exit, r.Stopped = s.State(), queued, s.Turns, s.Exit, s.Stopped
+	r.Queued, r.QueuedNow, r.QueuedFrom = queue.Total, queue.Now, queue.From
+	r.State, r.Turns, r.Exit, r.Stopped = s.State(), s.Turns, s.Exit, s.Stopped
 	r.Reply, r.Error = s.Reply, s.Error
 	total := c.usage[agent].total
 	r.Usage = &total

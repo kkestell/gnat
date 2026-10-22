@@ -236,6 +236,18 @@ func (m *Mailbox) Pending() int {
 	return n
 }
 
+// Queue is what is waiting in the queue: how many, how many were sent with now, and how
+// many each teammate sent.
+func (m *Mailbox) Queue() recorded.Queue {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	q, err := recorded.LoadQueue(m.db, m.agent)
+	if err != nil {
+		return recorded.Queue{}
+	}
+	return q
+}
+
 // Status is where an agent is in its work, for `gnat status` and `gnat wait`.
 //
 // All but Started are kept in the database: an agent that was busy when the swarm went

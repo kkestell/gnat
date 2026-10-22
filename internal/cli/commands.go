@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -709,7 +710,16 @@ func send(swarmName string, agentArgs []string, o sendOptions) error {
 		if err := docker(append([]string{"exec", container}, controlCommand(args...)...)...); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "queued message for %s\n", strings.Join(names, ", "))
+		if o.now {
+			whose := "its"
+			if len(names) > 1 {
+				whose = "each agent's"
+			}
+			fmt.Fprintf(stdout, "message for %s will be delivered into %s running turn at its next tool call, or start its next turn if it's idle\n",
+				strings.Join(names, ", "), whose)
+		} else {
+			fmt.Fprintf(stdout, "queued message for %s\n", strings.Join(names, ", "))
+		}
 		return nil
 	}
 	args = append(args, "--wait")
@@ -770,6 +780,8 @@ type agentStatus struct {
 	Agent       string         `json:"agent"`
 	State       string         `json:"state"`
 	Queued      int            `json:"queued"`
+	QueuedNow   int            `json:"queued_now"`
+	QueuedFrom  map[string]int `json:"queued_from"`
 	Turns       int            `json:"turns"`
 	Exit        *int           `json:"exit"`
 	Stopped     bool           `json:"stopped"`
@@ -788,7 +800,7 @@ func statusLine(name string, s agentStatus, containerState string) string {
 			agentState = "missing"
 		}
 	}
-	fields := []string{name, agentState, fmt.Sprintf("%d queued", s.Queued), fmt.Sprintf("%d turns", s.Turns)}
+	fields := []string{name, agentState, queued(s), fmt.Sprintf("%d turns", s.Turns)}
 	if agentState == "busy" && s.SinceActive != nil {
 		fields = append(fields, "last event "+duration(*s.SinceActive)+" ago")
 	}
@@ -804,6 +816,26 @@ func statusLine(name string, s agentStatus, containerState string) string {
 		fields = append(fields, fmt.Sprintf("last turn exited with status %d", *s.Exit))
 	}
 	return strings.Join(fields, "\t")
+}
+
+// queued is how many messages are queued, and of those how many are --now messages still
+// waiting for delivery and how many each teammate sent, such as "3 queued (1 now, 2 from
+// beta)". A --now message from a teammate counts in both.
+func queued(s agentStatus) string {
+	var parts []string
+	if s.QueuedNow > 0 {
+		parts = append(parts, fmt.Sprintf("%d now", s.QueuedNow))
+	}
+	for _, sender := range slices.Sorted(maps.Keys(s.QueuedFrom)) {
+		if n := s.QueuedFrom[sender]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d from %s", n, sender))
+		}
+	}
+	text := fmt.Sprintf("%d queued", s.Queued)
+	if len(parts) > 0 {
+		text += " (" + strings.Join(parts, ", ") + ")"
+	}
+	return text
 }
 
 // duration is a time span such as 45s, 3m12s, or 1h05m.
