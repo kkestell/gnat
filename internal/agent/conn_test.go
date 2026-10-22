@@ -395,3 +395,47 @@ func TestTheDaemonAttachesAndRequestsWithTheAgentsSecret(t *testing.T) {
 		t.Errorf("sent %+v", req)
 	}
 }
+
+// A control plane that refuses every attachment, as it does for a secret that is missing
+// or wrong, mustn't be answered by attaching as fast as it can be done.
+func TestTheDaemonPausesBetweenAttachmentsThatAreRefused(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attached atomic.Int64
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			attached.Add(1)
+			_, _ = bufio.NewReader(conn).ReadBytes('\n')
+			data, _ := protocol.Encode(protocol.Line{Type: protocol.LineError, Error: "unauthorized: the agent secret is missing or wrong"})
+			conn.Write(data)
+			conn.Close()
+		}
+	}()
+	t.Cleanup(func() { ln.Close() })
+	savedDelay := retryDelay
+	retryDelay = 100 * time.Millisecond
+	t.Cleanup(func() { retryDelay = savedDelay })
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		serveLoop(NewDaemon(newFakeRunner), "alpha", ln.Addr().String(), stop)
+	}()
+	time.Sleep(550 * time.Millisecond)
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the loop didn't end")
+	}
+	if n := attached.Load(); n < 3 || n > 8 {
+		t.Errorf("attached %d times in about half a second, with a 100ms pause", n)
+	}
+}

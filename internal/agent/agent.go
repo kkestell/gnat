@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/protocol"
@@ -93,8 +94,21 @@ func run(args []string, stderr io.Writer, serve func(name string, h harness.Harn
 // serve runs the daemon, attaching to the control plane again whenever the connection drops.
 func serve(name string, h harness.Harness, model, effort string) {
 	daemon := NewDaemon(func(emit harness.Emit) harness.Runner { return h.Runner(model, effort, emit) })
+	serveLoop(daemon, name, controlAddr, nil)
+}
+
+// serveLoop attaches the daemon to the control plane at addr, and attaches again whenever
+// the connection ends, after a pause: one that ends at once, as when the control plane
+// refuses the attachment, mustn't become a loop that takes all the CPU and fills the log.
+// A closed stop ends it, after the connection it's serving.
+func serveLoop(daemon *Daemon, name, addr string, stop <-chan struct{}) {
 	for {
-		daemon.Serve(Open(name, daemon.Stop, controlAddr))
+		daemon.Serve(Open(name, daemon.Stop, addr))
+		select {
+		case <-stop:
+			return
+		case <-time.After(retryDelay):
+		}
 	}
 }
 

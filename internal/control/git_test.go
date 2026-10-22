@@ -999,3 +999,32 @@ func TestGitNothingIsServedBeforeAFetchHasSucceeded(t *testing.T) {
 		t.Errorf("status %d", resp.StatusCode)
 	}
 }
+
+// Pushes are one at a time by the lock, and don't also wait for the places fetches use.
+func TestGitAPushDoesntWaitForAPlaceForRunningGit(t *testing.T) {
+	f := newGitFixture(t)
+	f.clone("alpha-secret") // So the mirror has been fetched.
+	f.proxy.slotWait.Store(int64(100 * time.Millisecond))
+	for range totalSlots {
+		f.proxy.slots <- struct{}{}
+	}
+	post := func(service string) int {
+		req, _ := http.NewRequest("POST", f.server.URL+"/o/r.git/git-"+service, strings.NewReader("0000"))
+		req.Header.Set("Content-Type", "application/x-git-"+service+"-request")
+		req.SetBasicAuth("agent", "alpha-secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	// With every place taken, a fetch waits and is turned away, and a push (here, one with
+	// nothing to push) is not.
+	if code := post("upload-pack"); code != http.StatusServiceUnavailable {
+		t.Errorf("fetch: status %d", code)
+	}
+	if code := post("receive-pack"); code != http.StatusOK {
+		t.Errorf("push: status %d", code)
+	}
+}

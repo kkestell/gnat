@@ -533,11 +533,15 @@ func (g *GitProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		defer func() { <-g.lock }()
 	}
-	if err := g.acquire(r.Context(), g.slots, &g.slotWait); err != nil {
-		g.busy(w, r, err)
-		return
+	// A push isn't counted: only one at a time can be running, by the lock it holds, and
+	// waiting here for a place that fetches have taken would hold up the pushes behind it.
+	if !push || rest == "info/refs" {
+		if err := g.acquire(r.Context(), g.slots, &g.slotWait); err != nil {
+			g.busy(w, r, err)
+			return
+		}
+		defer func() { <-g.slots }()
 	}
-	defer func() { <-g.slots }()
 
 	env := append([]string{"PATH=" + os.Getenv("PATH")}, g.env...)
 	env = append(env, "GIT_PROJECT_ROOT="+g.root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER="+agent,
