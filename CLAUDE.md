@@ -37,7 +37,7 @@ Two binaries, `cmd/gnat` (the host's commands) and `cmd/gnat-container` (what ru
 - `render`: events to readable log lines, and `UsageSummary`.
 - `layout`: container paths and identities (workspace, home, UID, binary, files dir, log dir, ports) and `Command`; also `wait`'s timeout status and the hook's timeout.
 - `recorded`: reads `control.db`, which `control` writes and the host reads for `gnat status` while a swarm is down.
-- `control`: the control plane (mailboxes, status, usage, logs, `control.db`).
+- `control`: the control plane (mailboxes, status, usage, logs, `control.db`), the GitHub requests agents make with their secrets, and the git proxy (`git.go`: a bare mirror served by `git http-backend`, with a pre-receive hook that enforces the push rules and pushes on to GitHub).
 - `web`: serves the web UI (embedded from `internal/web/dist`), `/agents`, and the `/events` stream.
 - `harness`: the programs an agent runs turns with (Claude, ACP, Ox).
 - `agent`: the agent daemon, the container's main process.

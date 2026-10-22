@@ -42,9 +42,9 @@ func btoi(b bool) int {
 }
 
 func TestMissingCommands(t *testing.T) {
-	f := useExec(t, func(command) (result, error) { return result{stdout: "gh\ngit\n"}, nil })
-	got, err := missingCommands("img", []string{"git", "gh", "ox-server"})
-	if err != nil || !reflect.DeepEqual(got, []string{"gh", "git"}) {
+	f := useExec(t, func(command) (result, error) { return result{stdout: "ox-server\ngit\n"}, nil })
+	got, err := missingCommands("img", []string{"git", "ox-server"})
+	if err != nil || !reflect.DeepEqual(got, []string{"ox-server", "git"}) {
 		t.Fatalf("got %v, %v", got, err)
 	}
 	args := f.calls[0].args
@@ -59,7 +59,7 @@ func TestMissingCommands(t *testing.T) {
 	if value("--user") != "1000" || value("--workdir") != "/workspace" {
 		t.Errorf("args %v", args)
 	}
-	if tail := args[len(args)-3:]; !reflect.DeepEqual(tail, []string{"git", "gh", "ox-server"}) {
+	if tail := args[len(args)-2:]; !reflect.DeepEqual(tail, []string{"git", "ox-server"}) {
 		t.Errorf("tail %v", tail)
 	}
 }

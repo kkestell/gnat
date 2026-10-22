@@ -18,6 +18,9 @@ const (
 	// (<agent>.log), events.jsonl, and control.db; it is a bind mount of the swarm's logs
 	// directory on the host, so they survive `gnat down`.
 	LogDir = "/var/log/gnat"
+	// GitPort is the port the control container serves git on, to the swarm's network
+	// only: the agents' clone, fetch, and push.
+	GitPort = 7001
 	// WebPort is the port the UI is served on inside the control container.
 	WebPort = 8080
 	// TimeoutStatus is `wait`'s exit status when it gives up, as timeout(1)'s.

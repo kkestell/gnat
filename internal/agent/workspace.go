@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/kkestell/gnat/internal/layout"
+	"github.com/kkestell/gnat/internal/protocol"
+	"github.com/kkestell/gnat/internal/state"
 )
 
 // workspacePath is where the repository is cloned; a variable so tests can use their own.
@@ -28,41 +29,61 @@ var runCommand = func(name string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// clone clones repo into the workspace, set up to commit and push as the token's GitHub user.
+// gitURL is where the control plane serves the repository, the agent's remote in place of
+// GitHub: the agent has no GitHub credential, and clones, fetches, and pushes through it.
+func gitURL(repo string) string {
+	return fmt.Sprintf("http://%s:%d/%s.git", state.Control, layout.GitPort, repo)
+}
+
+// credentialHelper gives git the agent's secret, which the control plane takes as the
+// password. It reads it from the environment, so it is never in a file.
+const credentialHelper = `!f() { test "$1" = get && echo username=agent && echo "password=$` + state.SecretVar + `"; }; f`
+
+// clone clones repo into the workspace through the control plane, set up to commit as the
+// control plane's GitHub user, and to push through it.
 //
-// A clone already there, from a restart or an earlier `gnat up`, is left as it was.
+// A clone already there, from a restart or an earlier `gnat up`, is left as it was, except
+// that its remote now points at the control plane: it may have been made from GitHub.
 func clone(repo string) error {
-	out, err := runCommand("gh", "api", "user")
+	resp, err := call(protocol.Request{Op: protocol.OpGitHub, Secret: os.Getenv(state.SecretVar),
+		GitHub: &protocol.GitHubRequest{Action: protocol.GitIdentityAction}})
 	if err != nil {
 		return err
 	}
-	var user struct {
-		Name  string `json:"name"`
-		Login string `json:"login"`
-		ID    int64  `json:"id"`
+	if resp.Identity == nil {
+		return errors.New("the control plane didn't say who to commit as")
 	}
-	if err := json.Unmarshal([]byte(out), &user); err != nil {
-		return fmt.Errorf("can't read the GitHub user: %w", err)
-	}
-	name := user.Name
-	if name == "" {
-		name = user.Login
-	}
+	url := gitURL(repo)
 	for _, command := range [][]string{
-		{"git", "config", "--global", "user.name", name},
-		{"git", "config", "--global", "user.email", fmt.Sprintf("%d+%s@users.noreply.github.com", user.ID, user.Login)},
-		// Let git authenticate to GitHub with the same token.
-		{"gh", "auth", "setup-git"},
+		{"git", "config", "--global", "user.name", resp.Identity.Name},
+		{"git", "config", "--global", "user.email", resp.Identity.Email},
+		// Let git authenticate to the control plane, and only to it.
+		{"git", "config", "--global", "credential." + strings.TrimSuffix(url, "/"+repo+".git") + ".helper", credentialHelper},
 	} {
 		if _, err := runCommand(command[0], command[1:]...); err != nil {
 			return err
 		}
 	}
 	if _, err := os.Stat(filepath.Join(workspacePath, ".git")); err == nil {
-		return nil
+		return repoint(url)
 	}
-	_, err = runCommand("gh", "repo", "clone", repo, workspacePath)
+	_, err = runCommand("git", "clone", "--quiet", url, workspacePath)
 	return err
+}
+
+// repoint makes the control plane the origin of the clone in the workspace, for fetching
+// and for pushing.
+func repoint(url string) error {
+	if _, err := runCommand("git", "-C", workspacePath, "remote", "get-url", "origin"); err != nil {
+		_, err = runCommand("git", "-C", workspacePath, "remote", "add", "origin", url)
+		return err
+	}
+	if _, err := runCommand("git", "-C", workspacePath, "remote", "set-url", "origin", url); err != nil {
+		return err
+	}
+	// A push URL of its own would send pushes elsewhere.
+	_, _ = runCommand("git", "-C", workspacePath, "config", "--unset-all", "remote.origin.pushurl")
+	return nil
 }
 
 // stagedFile is a file `gnat up` staged outside the workspace, and where it goes in it.

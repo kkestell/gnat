@@ -24,7 +24,8 @@ const (
 	controlImage = "gnat-control:latest"
 	// The base agent image, built from the Dockerfile beside this file.
 	agentImage = "gnat-agent:latest"
-	// githubTokenVar is what gh reads, and git authenticates through gh.
+	// githubTokenVar is the GitHub token, which only the control container holds; gh on
+	// the host reads it too.
 	githubTokenVar = "GH_TOKEN"
 	swarmLabel     = "gnat.name"
 	// agentLabel names the agent a volume belongs to.
@@ -34,15 +35,20 @@ const (
 	readyInterval = 250 * time.Millisecond
 )
 
-// controlDockerfile is the control image: the control plane is the gnat-container binary alone.
-const controlDockerfile = "FROM debian:bookworm-slim\n"
+// controlDockerfile is the control image: the control plane is the gnat-container binary,
+// which needs git for the agents' clones and pushes, and CA certificates to reach GitHub.
+const controlDockerfile = `FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+`
 
 //go:embed Dockerfile
 var agentDockerfile []byte
 
 // requiredCommands is what gnat runs in an agent container, so a Dockerfile can't break
 // it, besides each harness's program.
-var requiredCommands = []string{"git", "gh"}
+var requiredCommands = []string{"git"}
 
 // A stubbed clock lets tests skip the waiting.
 var (
@@ -514,7 +520,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	}
 
 	for _, agent := range swarm.Agents {
-		if err := startAgent(swarm, agent, label, network, credentials, githubToken, secrets[agent.Name], binaryTar, filesTar); err != nil {
+		if err := startAgent(swarm, agent, label, network, credentials, secrets[agent.Name], binaryTar, filesTar); err != nil {
 			return err
 		}
 	}
@@ -527,7 +533,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 }
 
 func startAgent(swarm *state.Swarm, agent state.Agent, label, network string, credentials map[string]string,
-	githubToken, secret string, binaryTar, filesTar []byte) error {
+	secret string, binaryTar, filesTar []byte) error {
 	name := containerName(swarm.Name, agent.Name)
 	h, err := harness.Get(agent.Harness)
 	if err != nil {
@@ -556,17 +562,17 @@ func startAgent(swarm *state.Swarm, agent state.Agent, label, network string, cr
 		}
 		mountArgs = append(mountArgs, "-v", m.volume+":"+m.path)
 	}
-	// Pass the tokens by name so their values stay out of the docker argv; each agent
-	// gets only its own harness's credential and its own secret. A daemon that crashes restarts in the same
+	// Pass the credentials by name so their values stay out of the docker argv; each agent
+	// gets only its own harness's credential and its own secret, and no GitHub token. A daemon that crashes restarts in the same
 	// container, keeping its clone and session.
 	args := []string{"create", "--name", name, "--label", label, "--restart", "on-failure"}
 	args = append(args, agentUserOptions()...)
 	args = append(args, "--network", network, "--network-alias", agent.Name)
 	args = append(args, mountArgs...)
-	args = append(args, "-e", h.Credential(), "-e", githubTokenVar, "-e", state.SecretVar, "--entrypoint", cmd[0], agentImageFor(swarm))
+	args = append(args, "-e", h.Credential(), "-e", state.SecretVar, "--entrypoint", cmd[0], agentImageFor(swarm))
 	args = append(args, cmd[1:]...)
 	_, err = execute(command{name: "docker", args: args, quiet: true, env: []string{
-		h.Credential() + "=" + credentials[h.Credential()], githubTokenVar + "=" + githubToken, state.SecretVar + "=" + secret}})
+		h.Credential() + "=" + credentials[h.Credential()], state.SecretVar + "=" + secret}})
 	if err != nil {
 		return err
 	}

@@ -89,7 +89,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"volume create --label gnat.name=demo --label gnat.agent=alpha gnat-demo-alpha-claude",
 		"create --name gnat-demo-alpha --label gnat.name=demo --restart on-failure --user 1000 --workdir /workspace " +
 			"--network gnat-demo --network-alias alpha -v gnat-demo-alpha-workspace:/workspace " +
-			"-v gnat-demo-alpha-claude:/home/agent/.claude -e CLAUDE_CODE_OAUTH_TOKEN -e GH_TOKEN -e GNAT_SECRET " +
+			"-v gnat-demo-alpha-claude:/home/agent/.claude -e CLAUDE_CODE_OAUTH_TOKEN -e GNAT_SECRET " +
 			"--entrypoint /opt/gnat/gnat-container gnat-agent:latest agent alpha --repo o/r --harness claude " +
 			"--file /opt/gnat-files/0:config/.env",
 		"cp -a - gnat-demo-alpha:/",
@@ -102,7 +102,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"create --name gnat-demo-beta --label gnat.name=demo --restart on-failure --user 1000 --workdir /workspace " +
 			"--network gnat-demo --network-alias beta -v gnat-demo-beta-workspace:/workspace " +
 			"-v gnat-demo-beta-local-share-ox:/home/agent/.local/share/ox " +
-			"-v gnat-demo-beta-local-state-gnat:/home/agent/.local/state/gnat -e OPENROUTER_API_KEY -e GH_TOKEN -e GNAT_SECRET " +
+			"-v gnat-demo-beta-local-state-gnat:/home/agent/.local/state/gnat -e OPENROUTER_API_KEY -e GNAT_SECRET " +
 			"--entrypoint /opt/gnat/gnat-container gnat-agent:latest agent beta --repo o/r --harness ox " +
 			"--file /opt/gnat-files/0:config/.env --model m --effort high",
 		"cp -a - gnat-demo-beta:/",
@@ -121,8 +121,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 			t.Errorf("a secret is in argv: %v", c.args)
 		}
 		if c.args != nil && c.args[0] == "create" && strings.Contains(c.args[2], "gnat-demo-alpha") {
-			if !contains2(c.env, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || !contains2(c.env, "GH_TOKEN=gh-secret") ||
-				contains2(c.env, "OPENROUTER_API_KEY=ox-secret") {
+			if !contains2(c.env, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || contains2(c.env, "OPENROUTER_API_KEY=ox-secret") {
 				t.Errorf("alpha's env: %v", c.env)
 			}
 		}
@@ -181,6 +180,36 @@ func TestUpRefusesAgentsWhoseNamesMakeInvalidBranches(t *testing.T) {
 	}
 }
 
+// Only the control container has the GitHub token.
+func TestUpGivesTheGitHubTokenToTheControlContainerAlone(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"), agent("beta", "ox"))
+	f := useUp(t, nil)
+	useOutput(t)
+	if err := up("demo"); err != nil {
+		t.Fatal(err)
+	}
+	creates := 0
+	for _, c := range f.calls {
+		if len(c.args) < 3 || c.args[0] != "create" {
+			continue
+		}
+		creates++
+		holds := contains2(c.env, "GH_TOKEN=gh-secret")
+		withName := contains2(c.args, "GH_TOKEN")
+		if control := c.args[2] == "gnat-demo-control"; holds != control || withName != control {
+			t.Errorf("%s: GH_TOKEN in env %v, in args %v", c.args[2], holds, withName)
+		}
+		for _, e := range c.env {
+			if strings.HasPrefix(e, "GH_TOKEN=") && c.args[2] != "gnat-demo-control" {
+				t.Errorf("%s has %s", c.args[2], e)
+			}
+		}
+	}
+	if creates != 3 {
+		t.Errorf("created %d containers", creates)
+	}
+}
+
 func contains2(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {
@@ -230,13 +259,13 @@ func TestUpChecksWhatAnImageNeeds(t *testing.T) {
 	}
 	f := useUp(t, func(c command) (result, error) {
 		if c.name == "docker" && c.args[0] == "run" {
-			return result{stdout: "gh\nox-server\n"}, nil
+			return result{stdout: "ox-server\n"}, nil
 		}
 		return result{}, nil
 	})
 	useOutput(t)
 	err := up("demo")
-	if err == nil || !strings.Contains(err.Error(), "lacks gh, ox-server; start it with `FROM gnat-agent`") {
+	if err == nil || !strings.Contains(err.Error(), "lacks ox-server; start it with `FROM gnat-agent`") {
 		t.Fatalf("got %v", err)
 	}
 	var check string
@@ -245,7 +274,7 @@ func TestUpChecksWhatAnImageNeeds(t *testing.T) {
 			check = l
 		}
 	}
-	if !strings.HasSuffix(check, " git gh claude ox-server") {
+	if !strings.HasSuffix(check, " git claude ox-server") {
 		t.Errorf("checked %q", check)
 	}
 	for _, l := range f.lines() {

@@ -589,3 +589,37 @@ func TestAnAgentsSecretNeverReachesTheDatabaseTheLogsEventsOrAnyResponse(t *test
 		}
 	}
 }
+
+func TestGitHubGivesTheAccountToCommitAsOnlyToAgentsWithASecret(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.answers["GET /user"] = map[string]any{"name": "The User", "login": "theuser", "id": 42}
+	p := githubPlane(t, f)
+	identity := protocol.GitHubRequest{Action: protocol.GitIdentityAction}
+	p.refused(gh("forged", identity), "unauthorized")
+	p.refused(gh("", identity), "unauthorized")
+	if got := f.asked(); len(got) != 0 {
+		t.Fatalf("GitHub was asked: %+v", got)
+	}
+	resp := p.must(gh("alpha-secret", identity))
+	if want := (protocol.GitIdentity{Name: "The User", Email: "42+theuser@users.noreply.github.com"}); resp.Identity == nil || *resp.Identity != want {
+		t.Errorf("got %+v", resp.Identity)
+	}
+	// GitHub is asked once, however many agents start.
+	p.must(gh("beta-secret", identity))
+	if got := f.asked(); len(got) != 1 || got[0].path != "/user" || got[0].auth != "Bearer "+fakeToken {
+		t.Errorf("asked %+v", got)
+	}
+}
+
+func TestGitHubNamesTheAccountByLoginWithoutAName(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.answers["GET /user"] = map[string]any{"name": nil, "login": "bot", "id": 7}
+	p := githubPlane(t, f)
+	resp := p.must(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.GitIdentityAction}))
+	if resp.Identity.Name != "bot" || resp.Identity.Email != "7+bot@users.noreply.github.com" {
+		t.Errorf("got %+v", resp.Identity)
+	}
+	f.answers["GET /user"] = "not json"
+	q := githubPlane(t, f)
+	q.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.GitIdentityAction}), "wasn't usable")
+}
