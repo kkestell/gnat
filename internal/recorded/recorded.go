@@ -20,6 +20,34 @@ import (
 // goes down and comes back up carries on where it was.
 const DBFile = "control.db"
 
+// Current reports whether what the database has under the agent's name is the agent's
+// own. The control plane records each agent's ID (see the state package) in the agent_ids
+// table, and an agent whose ID isn't the one recorded for its name is a new agent by an
+// old name, whose predecessor's history isn't its own: the control plane forgets that
+// history when it starts. An agent without an ID, saved before agents had them, owns
+// whatever its name has.
+func Current(db *sql.DB, agent, id string) (bool, error) {
+	if id == "" {
+		return true, nil
+	}
+	// A database no control plane with IDs has opened has no table for them.
+	var tables int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_ids'").Scan(&tables); err != nil {
+		return false, err
+	}
+	if tables == 0 {
+		return false, nil
+	}
+	var recorded string
+	err := db.QueryRow("SELECT id FROM agent_ids WHERE agent = ?", agent).Scan(&recorded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return recorded == id, nil
+}
+
 // Turn is where an agent's work was, as the database keeps it.
 type Turn struct {
 	Busy  bool
@@ -75,8 +103,9 @@ func LoadUsage(db *sql.DB, agent string, total *events.UsageTotals) error {
 // Write writes each agent's status as `status` does, from what control.db in logDir last
 // recorded, for `gnat status` while the swarm is down. It only reads the database. A turn
 // an agent was running when the swarm went down is reported as interrupted, as it will
-// be when the swarm comes back up.
-func Write(logDir string, agents []string, w io.Writer) error {
+// be when the swarm comes back up, and an agent whose ID (from ids, by name; absent for
+// none) isn't the one recorded for its name has no history, as it won't then (see Current).
+func Write(logDir string, agents []string, ids map[string]string, w io.Writer) error {
 	path := filepath.Join(logDir, DBFile)
 	var db *sql.DB
 	if _, err := os.Stat(path); err == nil {
@@ -91,7 +120,14 @@ func Write(logDir string, agents []string, w io.Writer) error {
 		var turn Turn
 		var usage events.UsageTotals
 		var queued int
+		current := false
 		if db != nil {
+			var err error
+			if current, err = Current(db, agent, ids[agent]); err != nil {
+				return err
+			}
+		}
+		if current {
 			if err := db.QueryRow("SELECT COUNT(*) FROM messages WHERE agent = ?", agent).Scan(&queued); err != nil {
 				return err
 			}

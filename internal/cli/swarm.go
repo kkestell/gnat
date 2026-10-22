@@ -319,10 +319,11 @@ func teardown(swarm string) ([]string, error) {
 	return names, nil
 }
 
-// setup is what the control container is told about each agent: its harness, model, and
-// effort for its web UI, and whether it may merge pull requests, which the control plane
-// enforces.
+// setup is what the control container is told about each agent: its ID, which tells it
+// from an earlier agent by its name, its harness, model, and effort for its web UI, and
+// whether it may merge pull requests, which the control plane enforces.
 type setup struct {
+	ID      string  `json:"id,omitempty"`
 	Harness string  `json:"harness"`
 	Model   *string `json:"model"`
 	Effort  *string `json:"effort"`
@@ -337,6 +338,27 @@ var newSecret = func() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// newAgentID is an ID for a new agent (see state.Agent), random enough never to repeat.
+func newAgentID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// agentIDs are the IDs of the agents that have one, by name, to tell each from an earlier
+// agent by its name.
+func agentIDs(agents []state.Agent) map[string]string {
+	ids := map[string]string{}
+	for _, a := range agents {
+		if a.ID != "" {
+			ids[a.Name] = a.ID
+		}
+	}
+	return ids
 }
 
 func optional(s string) *string {
@@ -484,7 +506,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	setups := map[string]setup{}
 	var names []string
 	for _, a := range swarm.Agents {
-		setups[a.Name] = setup{a.Harness, optional(a.Model), optional(a.Effort), a.Merge}
+		setups[a.Name] = setup{a.ID, a.Harness, optional(a.Model), optional(a.Effort), a.Merge}
 		names = append(names, a.Name)
 	}
 	setupsJSON, err := json.Marshal(setups)

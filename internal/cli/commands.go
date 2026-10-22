@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -334,6 +335,9 @@ func createFromProfile(name, dockerfile, repo string, fileSpecs []string, profil
 		if a, err = checkAgent(swarm, a); err != nil {
 			return fmt.Errorf("swarm profile %q: %w", profile, err)
 		}
+		if a.ID, err = newAgentID(); err != nil {
+			return err
+		}
 		swarm.Agents = append(swarm.Agents, a)
 	}
 	if err := state.Save(swarm); err != nil {
@@ -470,6 +474,13 @@ func createAgent(swarmName, agentName, instructions, harnessName, model, effort 
 	if err := requireDown(swarm.Name); err != nil {
 		return err
 	}
+	if a.ID, err = newAgentID(); err != nil {
+		return err
+	}
+	// A log an earlier agent by its name left (deleted by a gnat before IDs) isn't its own.
+	if err := removeLog(swarm.Name, a.Name); err != nil {
+		return err
+	}
 	swarm.Agents = append(swarm.Agents, a)
 	if err := state.Save(swarm); err != nil {
 		return err
@@ -531,7 +542,23 @@ func deleteAgent(swarmName, agentName string) error {
 			return err
 		}
 	}
+	// The control plane forgets the rest of its history at the next `up`, by its ID.
+	if err := removeLog(swarm.Name, agent.Name); err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout, "deleted agent %s in swarm %s\n", agent.Name, swarm.Name)
+	return nil
+}
+
+// removeLog removes the agent's log from the swarm's logs on the host, if it's there.
+func removeLog(swarm, agent string) error {
+	logs, err := state.LogsDirectory(swarm)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(logs, agent+".log")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return nil
 }
 
@@ -849,7 +876,7 @@ func status(swarmName string, agentArgs []string) error {
 	if up {
 		out, err = dockerOutput(append([]string{"exec", controlName}, controlCommand(append([]string{"status"}, agentNames(agents)...)...)...)...)
 	} else {
-		out, err = recordedStatus(swarm.Name, agentNames(agents))
+		out, err = recordedStatus(swarm.Name, agentNames(agents), agentIDs(agents))
 	}
 	if err != nil {
 		return err
@@ -871,15 +898,15 @@ func status(swarmName string, agentArgs []string) error {
 	return nil
 }
 
-// recordedStatus is the agents' status lines from what the swarm's control plane last
-// recorded on the host.
-func recordedStatus(swarm string, agents []string) (string, error) {
+// recordedStatus is the agents' status lines, given their IDs, from what the swarm's
+// control plane last recorded on the host.
+func recordedStatus(swarm string, agents []string, ids map[string]string) (string, error) {
 	dir, err := state.LogsDirectory(swarm)
 	if err != nil {
 		return "", err
 	}
 	var out strings.Builder
-	err = recorded.Write(dir, agents, &out)
+	err = recorded.Write(dir, agents, ids, &out)
 	return out.String(), err
 }
 

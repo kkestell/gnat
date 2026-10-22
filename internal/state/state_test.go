@@ -227,6 +227,24 @@ func TestFilesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAnAgentsIDIsSavedOnlyIfItHasOne(t *testing.T) {
+	useStateHome(t)
+	want := &Swarm{Name: "demo", Repo: "o/r", Agents: []Agent{
+		{Name: "alpha", ID: "abc", Harness: "claude"}, {Name: "beta", Harness: "claude"}}, Files: []File{}}
+	mustSave(t, want)
+	if got := mustLoad(t, "demo"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	data, _ := os.ReadFile(filepath.Join(Directory(), "demo.json"))
+	var v struct{ Agents []map[string]any }
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.Agents[1]["id"]; v.Agents[0]["id"] != "abc" || ok {
+		t.Fatalf("saved %s", data)
+	}
+}
+
 func TestSavedJSONIsValid(t *testing.T) {
 	useStateHome(t)
 	mustSave(t, &Swarm{Name: "demo", Repo: "o/r"})

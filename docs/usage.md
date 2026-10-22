@@ -19,7 +19,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
 | `gnat agent create SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
-| `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
+| `gnat agent delete SWARM AGENT` | Remove an agent with its clone, sessions, and log (swarm down). |
 | `gnat agent list SWARM` | List agents: name, harness, model, effort, and `merge` if it may merge pull requests. |
 | `gnat profiles list [--swarm]` | List available agent profile names, or swarm profile names with `--swarm`, alphabetically. |
 | `gnat auth login claude\|ox` | Save a harness's credential in the system keyring. See [setup](setup.md#credentials). |
@@ -177,6 +177,8 @@ saved without it gives no permission.
 - Clones and sessions: Docker volumes named `gnat-SWARM-AGENT-*`. They survive `gnat down`, so the next `gnat up` picks up where agents left off.
 
 `gnat delete` removes all of it.
+
+Each agent gets an ID when it's created, saved in the definition, which tells it apart from an earlier agent with the same name. If you delete an agent and create another by that name, the new one starts fresh: `gnat status`, `gnat logs`, and the web UI show none of the old one's turns, usage, queued messages, or output. Agents created before gnat gave IDs keep their history.
 
 Usage totals in `gnat status` and the web UI come from what each harness reports. Claude Code's cost is at API list prices and isn't reported for stopped or crashed turns.
 
