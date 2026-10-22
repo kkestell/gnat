@@ -218,6 +218,45 @@ func TestPullsComeFromGitHub(t *testing.T) {
 	}
 }
 
+func TestPullsFromAnAgentsBranchesNameTheAgent(t *testing.T) {
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pull := func(number int, ref, repo string) string {
+			return fmt.Sprintf(`{"number": %d, "title": "t", "html_url": "u", "state": "open", "merged_at": null,
+				"head": {"ref": %q, "repo": {"full_name": %q}}, "user": {"login": "me"}, "updated_at": "u"}`, number, ref, repo)
+		}
+		fmt.Fprint(w, "["+strings.Join([]string{
+			pull(1, "demo/alpha/fix", "o/r"),
+			pull(2, "demo/beta/fix", "O/R"),
+			pull(3, "other/alpha/fix", "o/r"),   // another swarm's
+			pull(4, "demo/gamma/fix", "o/r"),    // not an agent of this swarm
+			pull(5, "demo/alpha/", "o/r"),       // the prefix alone
+			pull(6, "demo/alpha/fix", "fork/r"), // a fork's
+		}, ",")+"]")
+	}))
+	defer github.Close()
+	events := fakeEvents{agents: []string{"alpha", "beta"}}
+	server := httptest.NewServer(Handler(events, Swarm{Name: "demo", Repo: "o/r", GitHub: github.URL}))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/pulls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var pulls []PullRequest
+	if err := json.NewDecoder(response.Body).Decode(&pulls); err != nil {
+		t.Fatal(err)
+	}
+	got := map[int]string{}
+	for _, p := range pulls {
+		if p.Agent != nil {
+			got[p.Number] = *p.Agent
+		}
+	}
+	if want := map[int]string{1: "alpha", 2: "beta"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("agents %v, want %v", got, want)
+	}
+}
+
 func TestPullsReportGitHubFailing(t *testing.T) {
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusNotFound)

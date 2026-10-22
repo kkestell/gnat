@@ -80,6 +80,8 @@ func optional(s string) *string {
 
 // Swarm is what the UI shows of the swarm itself.
 type Swarm struct {
+	// Name is the swarm's name, the first part of its agents' branches.
+	Name string
 	// Repo is the swarm's repository, OWNER/NAME.
 	Repo string
 	// Started is when the control plane started, at `gnat up`.
@@ -95,7 +97,7 @@ type Swarm struct {
 // repository's pull requests.
 func Handler(events Events, swarm Swarm) http.Handler {
 	files := http.FileServerFS(UI)
-	pulls := &pulls{swarm: swarm, client: &http.Client{Timeout: 20 * time.Second}}
+	pulls := &pulls{swarm: swarm, events: events, client: &http.Client{Timeout: 20 * time.Second}}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/agents":

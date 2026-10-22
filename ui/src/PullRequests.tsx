@@ -67,7 +67,7 @@ function Pull({ pull, now }: { pull: PullRequest; now: number }) {
         {pull.agent ? (
           <span className="shrink-0 font-medium text-zinc-300">{pull.agent}</span>
         ) : (
-          <span className="shrink-0 italic text-zinc-600" title="Which agent opened it isn't known yet">
+          <span className="shrink-0 italic text-zinc-600" title="Not from one of this swarm's agents' branches">
             no agent
           </span>
         )}

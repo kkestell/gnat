@@ -356,7 +356,7 @@ func listenOperator(path string) (net.Listener, error) {
 // the control plane.
 func serve(agents []string, setups map[string]state.Agent, swarmName, repo string) error {
 	token := os.Getenv("GH_TOKEN")
-	swarm := web.Swarm{Repo: repo, Started: time.Now(), Token: token}
+	swarm := web.Swarm{Name: swarmName, Repo: repo, Started: time.Now(), Token: token}
 	secrets := map[string]string{}
 	if v := os.Getenv(state.SecretsVar); v != "" {
 		if err := json.Unmarshal([]byte(v), &secrets); err != nil {

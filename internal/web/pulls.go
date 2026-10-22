@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/kkestell/gnat/internal/state"
 )
 
 // GitHubAPI is GitHub's REST API.
@@ -28,8 +31,8 @@ type PullRequest struct {
 	Branch string `json:"branch"`
 	// Author is the GitHub account that opened it.
 	Author string `json:"author"`
-	// Agent is the swarm's agent that opened it, when known; nothing records
-	// that yet, so it's always nil.
+	// Agent is the swarm's agent whose branch it is from, which only that agent
+	// can push to; nil for a pull request from any other branch.
 	Agent     *string `json:"agent"`
 	UpdatedAt string  `json:"updated_at"`
 }
@@ -38,6 +41,7 @@ type PullRequest struct {
 // fetch while it's fresh.
 type pulls struct {
 	swarm  Swarm
+	events Events
 	client *http.Client
 
 	mu      sync.Mutex
@@ -95,7 +99,10 @@ func (p *pulls) fetch(ctx context.Context) ([]PullRequest, error) {
 		Draft    bool    `json:"draft"`
 		MergedAt *string `json:"merged_at"`
 		Head     struct {
-			Ref string `json:"ref"`
+			Ref  string `json:"ref"`
+			Repo *struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
 		} `json:"head"`
 		User struct {
 			Login string `json:"login"`
@@ -111,10 +118,29 @@ func (p *pulls) fetch(ctx context.Context) ([]PullRequest, error) {
 		if f.MergedAt != nil {
 			state = "merged"
 		}
-		result = append(result, PullRequest{
+		pull := PullRequest{
 			Number: f.Number, Title: f.Title, URL: f.HTMLURL, State: state, Draft: f.Draft,
 			Branch: f.Head.Ref, Author: f.User.Login, UpdatedAt: f.UpdatedAt,
-		})
+		}
+		// A fork's branches aren't the agents', whatever they're called.
+		if f.Head.Repo != nil && strings.EqualFold(f.Head.Repo.FullName, p.swarm.Repo) {
+			pull.Agent = p.agentOf(f.Head.Ref)
+		}
+		result = append(result, pull)
 	}
 	return result, nil
+}
+
+// agentOf is the swarm's agent whose branches, SWARM/AGENT/NAME, include branch.
+func (p *pulls) agentOf(branch string) *string {
+	if p.swarm.Name == "" || p.events == nil {
+		return nil
+	}
+	for _, agent := range p.events.Agents() {
+		prefix, err := state.BranchPrefix(p.swarm.Name, agent)
+		if err == nil && len(branch) > len(prefix) && strings.HasPrefix(branch, prefix) {
+			return &agent
+		}
+	}
+	return nil
 }
