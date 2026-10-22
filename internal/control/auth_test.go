@@ -163,7 +163,13 @@ func TestTheOperatorsCommandsAreNotTheAgents(t *testing.T) {
 
 func TestTheOperatorsSocketIsTheOperatorsAlone(t *testing.T) {
 	p := startPlane(t, t.TempDir(), "alpha")
-	path := filepath.Join(t.TempDir(), "control.sock")
+	// Not under t.TempDir(), whose paths can be longer than a socket's may be on macOS.
+	dir, err := os.MkdirTemp("", "gnat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "control.sock")
 	if err := os.WriteFile(path, []byte("left by the last run"), 0o644); err != nil {
 		t.Fatal(err)
 	}
