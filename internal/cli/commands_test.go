@@ -696,3 +696,40 @@ func TestSetAgentRefusesInvalidSettings(t *testing.T) {
 		t.Errorf("status %d: %q", status, errs)
 	}
 }
+
+func TestSetAgentKeepsWhatTheProfileLeavesOut(t *testing.T) {
+	ox := state.Agent{Name: "alpha", Instructions: "x", Harness: "ox", Model: "m", Effort: "minimal", Merge: true}
+	useSwarm(t, ox)
+	f := useExec(t, listing(nil, []string{"gnat-demo-alpha-workspace", "gnat-demo-alpha-local-share-ox"}, nil))
+	useProfiles(t, map[string]string{"rev.yaml": "instructions: review\n"})
+	status, out, errs := runGnat(t, "agent", "set", "demo", "alpha", "--profile", "rev")
+	if status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	if want := "changed agent alpha in swarm demo: instructions changed\n"; out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	ox.Instructions = "review"
+	if swarm, _ := state.Load("demo"); swarm.Agents[0] != ox {
+		t.Errorf("got %+v, want %+v", swarm.Agents[0], ox)
+	}
+	for _, l := range f.lines() {
+		if strings.HasPrefix(l, "docker volume rm") {
+			t.Errorf("removed volumes: %s", l)
+		}
+	}
+}
+
+func TestSetAgentMovesAnAgentOffAHarnessGnatNoLongerHas(t *testing.T) {
+	useSwarm(t, state.Agent{Name: "alpha", Instructions: "x", Harness: "gone"})
+	f := useExec(t, listing(nil, []string{"gnat-demo-alpha-workspace", "gnat-demo-alpha-gone"}, nil))
+	if status, _, errs := runGnat(t, "agent", "set", "demo", "alpha", "--harness", "claude"); status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	if !slices.Contains(f.lines(), "docker volume rm gnat-demo-alpha-gone") {
+		t.Errorf("got %v", f.lines())
+	}
+	if swarm, _ := state.Load("demo"); swarm.Agents[0].Harness != "claude" {
+		t.Errorf("got %+v", swarm.Agents[0])
+	}
+}

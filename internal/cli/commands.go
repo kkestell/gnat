@@ -244,7 +244,7 @@ func agentCommands() *cobra.Command {
 		Use: "set SWARM AGENT", Args: cobra.ExactArgs(2),
 		Short: "change an agent's settings, keeping its clone and sessions",
 		Long: "Change an agent's settings, keeping its clone, sessions, queue, and history.\n\n" +
-			"Settings no flag gives keep their current values, or with --profile, the profile's. " +
+			"Settings no flag gives keep their current values, or with --profile, the profile's if it names them. " +
 			"Changing the harness deletes the agent's sessions, so its next turn starts a fresh one.",
 	}
 	set.RunE = action(func(cmd *cobra.Command, args []string) error {
@@ -302,13 +302,13 @@ func agentFlags(c *cobra.Command, profileName *string, options *agentOptions, de
 		"effort level (default: the harness's default): "+strings.Join(efforts, "; "))
 }
 
-// resolveAgentOptions are an agent's settings: base, or the profile's with --profile,
-// with each flag given replacing its setting.
+// resolveAgentOptions are an agent's settings: base, with those --profile's profile names
+// replacing base's, and then each flag given replacing its setting.
 func resolveAgentOptions(cmd *cobra.Command, profileName string, options, base agentOptions) (agentOptions, error) {
 	resolved := base
 	if cmd.Flags().Changed("profile") {
 		var err error
-		resolved, err = loadProfile(profileName, "")
+		resolved, err = loadProfile(profileName, "", base)
 		if err != nil {
 			return resolved, err
 		}
@@ -610,17 +610,14 @@ func mergeWord(merge bool) string {
 }
 
 // deleteSessions removes every volume of the agent's but its clone: its harness's
-// sessions, and any a harness it had before left.
+// sessions, and any a harness it had before left. It doesn't need the agent's harness,
+// which may be one gnat no longer has.
 func deleteSessions(swarmName string, agent state.Agent) error {
-	mounts, err := agentVolumes(swarmName, agent)
-	if err != nil {
-		return err
-	}
 	names, err := volumes(swarmName, agent.Name)
 	if err != nil {
 		return err
 	}
-	clone := mounts[0].volume // agentVolumes lists the clone first
+	clone := cloneVolume(swarmName, agent.Name)
 	names = slices.DeleteFunc(names, func(name string) bool { return name == clone })
 	if len(names) == 0 {
 		return nil

@@ -19,7 +19,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
 | `gnat agent create SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
-| `gnat agent set SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge\|--no-merge]` | Change an agent's settings (swarm down), keeping its clone, sessions, queue, logs, and history. Flags given replace their settings and the rest keep their values; with `--profile`, the profile supplies those no flag gives, as in `agent create`. A new harness can't continue the old one's session, so changing it deletes the agent's sessions and its next turn starts a fresh one. Prints what changed. |
+| `gnat agent set SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge\|--no-merge]` | Change an agent's settings (swarm down), keeping its clone, sessions, queue, logs, and history. Flags given replace their settings and the rest keep their values; with `--profile`, the settings the profile names replace the agent's, and flags replace those. A setting the profile leaves out keeps its value: a profile without `harness:` doesn't change the harness. A new harness can't continue the old one's session, so changing it deletes the agent's sessions and its next turn starts a fresh one. Prints what changed. |
 | `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
 | `gnat agent list SWARM` | List agents: name, harness, model, effort, and `merge` if it may merge pull requests. |
 | `gnat profiles list [--swarm]` | List available agent profile names, or swarm profile names with `--swarm`, alphabetically. |
@@ -83,7 +83,7 @@ without parsing the files and prints nothing if the directory does not exist.
 
 Settings are copied into the swarm definition when an agent is created. Editing
 or removing a profile later does not change existing agents; `gnat agent set
-SWARM AGENT --profile NAME` applies it again.
+SWARM AGENT --profile NAME` applies the settings it names again.
 
 ## Swarm profiles
 
