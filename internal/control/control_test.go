@@ -971,7 +971,7 @@ func TestMainWaitAnyReturnsOnTheFirstAgentToFinish(t *testing.T) {
 	daemons["beta"].turnEnd("from beta", "")
 	daemons["beta"].done(0, false)
 	r := <-finished
-	if r.code != 0 || r.out != "==> beta <==\nfrom beta\n" || r.errOut != "" {
+	if r.code != 0 || r.out != "==> beta <==\nfrom beta\n" || r.errOut != "still waiting on: alpha, gamma\n" {
 		t.Fatalf("got %+v", r)
 	}
 	for _, agent := range []string{"alpha", "gamma"} {
@@ -983,7 +983,15 @@ func TestMainWaitAnyReturnsOnTheFirstAgentToFinish(t *testing.T) {
 	// Agents already finished count at once, and a failed last turn exits 1.
 	daemons["alpha"].turnEnd("", "rate limited")
 	daemons["alpha"].done(1, false)
+	p.waitUntil("alpha is idle", func() bool { return p.status("alpha").State == "idle" })
 	r = <-waitAny("alpha", "beta", "gamma")
+	if r.code != 1 || r.out != "==> alpha <==\n==> beta <==\nfrom beta\n" ||
+		r.errOut != "alpha: its last turn failed with status 1: rate limited\nstill waiting on: gamma\n" {
+		t.Fatalf("got %+v", r)
+	}
+
+	// With none left busy, there is nothing still to wait on.
+	r = <-waitAny("alpha", "beta")
 	if r.code != 1 || r.out != "==> alpha <==\n==> beta <==\nfrom beta\n" ||
 		r.errOut != "alpha: its last turn failed with status 1: rate limited\n" {
 		t.Fatalf("got %+v", r)

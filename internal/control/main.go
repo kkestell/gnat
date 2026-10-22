@@ -397,7 +397,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 // waitAndReport waits for every agent to be idle, or with anyOf for at least one, and
-// prints the replies of those that are.
+// prints the replies of those that are, and with anyOf, which agents are still busy.
 func waitAndReport(agents []string, timeout *float64, anyOf bool, stdout, stderr io.Writer) error {
 	wait, waiting := WaitFor, ""
 	if anyOf {
@@ -422,6 +422,18 @@ func waitAndReport(agents []string, timeout *float64, anyOf bool, stdout, stderr
 	io.WriteString(stdout, out)
 	for _, failure := range failures {
 		fmt.Fprintln(stderr, failure)
+	}
+	if anyOf {
+		// So the operator can wait again on just these.
+		var still []string
+		for _, agent := range agents {
+			if !slices.ContainsFunc(results, func(r AgentResult) bool { return r.Agent == agent }) {
+				still = append(still, agent)
+			}
+		}
+		if len(still) > 0 {
+			fmt.Fprintf(stderr, "still waiting on: %s\n", strings.Join(still, ", "))
+		}
 	}
 	if len(failures) > 0 {
 		return exitError(1)

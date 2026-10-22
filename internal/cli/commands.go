@@ -178,7 +178,7 @@ func waitCommand() *cobra.Command {
 		return wait(args[0], args[1:], t, anyOf)
 	}).run
 	c.Flags().BoolVar(&anyOf, "any", false, "return once at least one of the agents has finished, "+
-		"printing the replies of those that have, each under its name; one already finished counts at once")
+		"printing the replies of those that have, each under its name, and the ones still busy; one already finished counts at once")
 	timeoutFlag(c, &timeout)
 	return c
 }
