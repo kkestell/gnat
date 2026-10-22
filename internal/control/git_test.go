@@ -2,6 +2,7 @@ package control
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"io"
@@ -28,11 +29,13 @@ type gitFixture struct {
 	proxy    *GitProxy
 	server   *httptest.Server
 	github   *httptest.Server
+	// pushDelay is how long GitHub takes to take a push, and fetchDelay to answer a fetch.
+	pushDelay, fetchDelay atomic.Int64
 }
 
 // githubGit is git over HTTP for the repositories in root, to whoever has the control
 // plane's token, as GitHub is.
-func githubGit(t *testing.T, root string) http.Handler {
+func githubGit(t *testing.T, root string, pushDelay, fetchDelay *atomic.Int64) http.Handler {
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +45,12 @@ func githubGit(t *testing.T, root string) http.Handler {
 		if r.Header.Get("Authorization") != want {
 			http.Error(w, "bad credentials", http.StatusUnauthorized)
 			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "git-receive-pack") {
+			time.Sleep(time.Duration(pushDelay.Load()))
+		}
+		if r.Method == http.MethodGet && r.URL.Query().Get("service") == "git-upload-pack" {
+			time.Sleep(time.Duration(fetchDelay.Load()))
 		}
 		(&cgi.Handler{Path: gitPath, Args: []string{"http-backend"}, Env: []string{
 			"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER=github", "PATH=" + os.Getenv("PATH"),
@@ -77,13 +86,15 @@ func newGitFixtureAt(t *testing.T, path string) *gitFixture {
 	f.git(seed, "init", "--quiet", "-b", "main")
 	f.commit(seed, "README", "hello\n")
 	f.git(seed, "push", "--quiet", f.upstream, "main")
-	f.github = httptest.NewServer(githubGit(t, root))
+	f.github = httptest.NewServer(githubGit(t, root, &f.pushDelay, &f.fetchDelay))
 	t.Cleanup(f.github.Close)
 
 	p := startPlane(t, t.TempDir(), "alpha", "beta", "a..b")
+	if err := p.control.SetSecrets(map[string]string{"alpha": "alpha-secret", "beta": "beta-secret", "a..b": "dots-secret"}); err != nil {
+		t.Fatal(err)
+	}
 	proxy, err := p.control.NewGitProxy(GitConfig{
 		Swarm: "demo", Repo: "o/r", Token: fakeToken, Upstream: f.github.URL + path, Dir: t.TempDir(),
-		Secrets: map[string]string{"alpha": "alpha-secret", "beta": "beta-secret", "a..b": "dots-secret"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -869,5 +880,122 @@ func TestGitTellsARequestThatCantGetATurnToRetry(t *testing.T) {
 	}
 	if resp := advertise("alpha-secret"); resp.StatusCode != http.StatusOK {
 		t.Errorf("alpha after: %d", resp.StatusCode)
+	}
+}
+
+func TestGitCutsOffAPushGitHubTakesTooLongOver(t *testing.T) {
+	f := newGitFixture(t)
+	f.proxy.pushTimeout.Store(int64(time.Second))
+	f.pushDelay.Store(int64(10 * time.Second))
+	dir := f.clone("alpha-secret")
+	f.git(dir, "checkout", "--quiet", "-b", "demo/alpha/work")
+	f.commit(dir, "a.txt", "one\n")
+	before := f.refs()
+	start := time.Now()
+	out, err := f.run(dir, "push", "origin", "demo/alpha/work")
+	if err == nil || !strings.Contains(out, "took longer than 1s") {
+		t.Fatalf("err %v:\n%s", err, out)
+	}
+	if took := time.Since(start); took > 8*time.Second {
+		t.Errorf("the push took %v", took)
+	}
+	if f.refs() != before {
+		t.Errorf("GitHub changed:\n%s", f.refs())
+	}
+	// Nothing is recorded in the mirror, and the lock is free: the next push goes through.
+	f.pushDelay.Store(0)
+	f.git(dir, "push", "--quiet", "origin", "demo/alpha/work")
+	if !strings.Contains(f.refs(), "refs/heads/demo/alpha/work") {
+		t.Errorf("GitHub lacks the push:\n%s", f.refs())
+	}
+}
+
+// A push has to wait for one that is slow, and git doesn't retry a refusal, so it waits
+// rather than being turned away.
+func TestGitMakesAPushWaitItsTurnRatherThanFail(t *testing.T) {
+	f := newGitFixture(t)
+	f.proxy.slotWait.Store(int64(100 * time.Millisecond))
+	f.pushDelay.Store(int64(1500 * time.Millisecond))
+	work := func(secret, branch string) func() error {
+		dir := f.clone(secret)
+		f.git(dir, "checkout", "--quiet", "-b", branch)
+		f.commit(dir, "x.txt", branch+"\n")
+		return func() error {
+			out, err := f.run(dir, "push", "--quiet", "origin", branch)
+			if err != nil {
+				t.Errorf("%s:\n%s", branch, out)
+			}
+			return err
+		}
+	}
+	slow, waiting := work("alpha-secret", "demo/alpha/slow"), work("beta-secret", "demo/beta/waiting")
+	done := make(chan error, 2)
+	go func() { done <- slow() }()
+	time.Sleep(300 * time.Millisecond)
+	go func() { done <- waiting() }()
+	<-done
+	<-done
+	for _, ref := range []string{"demo/alpha/slow", "demo/beta/waiting"} {
+		if !strings.Contains(f.refs(), "refs/heads/"+ref) {
+			t.Errorf("GitHub lacks %s:\n%s", ref, f.refs())
+		}
+	}
+}
+
+// The control plane fetches the repository when it starts, and an agent that clones while
+// that is still going on must get the repository, not the mirror as it is so far: empty.
+func TestGitAClonePastTheFirstFetchWaitsForItAndGetsTheCommits(t *testing.T) {
+	f := newGitFixture(t)
+	f.fetchDelay.Store(int64(700 * time.Millisecond))
+	f.proxy.fresh.Store(int64(time.Hour)) // What the clone waited for is fresh enough for it.
+	started := make(chan error, 1)
+	go func() { started <- f.proxy.Sync(context.Background()) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.proxy.lock) == 0 { // The fetch has the lock.
+		if time.Now().After(deadline) {
+			t.Fatal("the first fetch never started")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if f.proxy.synced.Load() {
+		t.Fatal("synced already")
+	}
+
+	dir := f.clone("alpha-secret")
+	if data, err := os.ReadFile(filepath.Join(dir, "README")); err != nil || string(data) != "hello\n" {
+		t.Fatalf("README: %q, %v", data, err)
+	}
+	if got := strings.TrimSpace(f.git(dir, "log", "--format=%s")); got == "" {
+		t.Error("the clone has no commits")
+	}
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	if n := f.proxy.syncs.Load(); n != 1 {
+		t.Errorf("fetched from GitHub %d times", n)
+	}
+}
+
+// If the first fetch fails there is nothing to serve: what waited on it fails too, and
+// so does what comes after, until one succeeds.
+func TestGitNothingIsServedBeforeAFetchHasSucceeded(t *testing.T) {
+	f := newGitFixtureAt(t, "/gone.git")
+	for range 2 {
+		out, err := f.run(f.home, "clone", f.url("alpha-secret"), filepath.Join(t.TempDir(), "c"))
+		if err == nil || !strings.Contains(out, "502") {
+			t.Errorf("err %v:\n%s", err, out)
+		}
+	}
+	// Not by a request for the pack alone either.
+	req, _ := http.NewRequest("POST", f.server.URL+"/o/r.git/git-upload-pack", strings.NewReader("0000"))
+	req.Header.Set("Content-Type", "application/x-git-upload-pack-request")
+	req.SetBasicAuth("agent", "alpha-secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status %d", resp.StatusCode)
 	}
 }

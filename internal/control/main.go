@@ -24,9 +24,10 @@ import (
 	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
-// call sends one request to the control plane in this container; tests replace it.
+// call sends one request to the control plane in this container, over the socket only
+// the container's own users can reach; tests replace it.
 var call = func(req protocol.Request) (*protocol.Response, error) {
-	return protocol.Call("localhost", req, 0)
+	return protocol.CallAddr(layout.ControlSocket, req, 0)
 }
 
 // An AgentResult is an agent's status from a wait.
@@ -334,6 +335,21 @@ func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) 
 	return nil
 }
 
+// listenOperator listens on the socket at path for the operator's commands, which only the
+// user the control plane runs as can connect to.
+func listenOperator(path string) (net.Listener, error) {
+	_ = os.Remove(path) // The last run's.
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
+}
+
 // serve runs the control plane, the web UI, and git for the agents until the container
 // is stopped. With GH_TOKEN, the UI shows the repository's pull requests, and the agents
 // whose secrets are in GNAT_SECRETS can act on GitHub, and clone, fetch, and push, through
@@ -355,27 +371,38 @@ func serve(agents []string, setups map[string]state.Agent, swarmName, repo strin
 	if err != nil {
 		return err
 	}
+	if err := c.SetSecrets(secrets); err != nil {
+		return err
+	}
 	if repo != "" && swarmName != "" {
-		if err := c.EnableGitHub(GitHub{Swarm: swarmName, Repo: repo, Token: token, Secrets: secrets}); err != nil {
+		if err := c.EnableGitHub(GitHub{Swarm: swarmName, Repo: repo, Token: token}); err != nil {
 			return err
 		}
 	}
 	var proxy *GitProxy
 	if repo != "" && swarmName != "" {
-		if proxy, err = c.NewGitProxy(GitConfig{Swarm: swarmName, Repo: repo, Token: token, Secrets: secrets}); err != nil {
+		if proxy, err = c.NewGitProxy(GitConfig{Swarm: swarmName, Repo: repo, Token: token}); err != nil {
 			return err
 		}
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", protocol.Port))
+	// Agents come in over the network, and every request they make must have their
+	// secret. The operator's commands come in by `docker exec`, over a socket that only
+	// the container's own user can use, and need none.
+	agentsLn, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", protocol.Port))
+	if err != nil {
+		return err
+	}
+	operatorLn, err := listenOperator(layout.ControlSocket)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	errs := make(chan error, 3)
+	errs := make(chan error, 4)
 	var wg sync.WaitGroup
 	for _, run := range []func() error{
-		func() error { return c.Serve(ctx, ln) },
+		func() error { return c.ServeAgents(ctx, agentsLn) },
+		func() error { return c.Serve(ctx, operatorLn) },
 		func() error { return web.Serve(ctx, fmt.Sprintf("0.0.0.0:%d", layout.WebPort), c, swarm) },
 		func() error {
 			if proxy == nil {

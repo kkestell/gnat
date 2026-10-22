@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kkestell/gnat/internal/events"
@@ -211,9 +212,13 @@ func Call(host string, req Request, timeout time.Duration) (*Response, error) {
 	return CallAddr(net.JoinHostPort(host, strconv.Itoa(Port)), req, timeout)
 }
 
-// CallAddr is Call to a "host:port" address.
+// CallAddr is Call to a "host:port" address, or to the Unix socket at an absolute path.
 func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error) {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	network := "tcp"
+	if strings.HasPrefix(addr, "/") {
+		network = "unix"
+	}
+	conn, err := net.DialTimeout(network, addr, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +226,10 @@ func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error
 	if timeout > 0 {
 		_ = conn.SetDeadline(time.Now().Add(timeout))
 	}
-	host, _, _ := net.SplitHostPort(addr)
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = "the control plane"
+	}
 
 	line, err := Encode(req)
 	if err != nil {

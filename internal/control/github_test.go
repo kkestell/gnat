@@ -78,10 +78,7 @@ func githubPlane(t *testing.T, f *fakeGitHub) *plane {
 	t.Helper()
 	p := startPlane(t, t.TempDir(), "alpha", "beta", "merger")
 	p.control.setups = map[string]state.Agent{"alpha": {Name: "alpha"}, "beta": {Name: "beta"}, "merger": {Name: "merger", Merge: true}}
-	err := p.control.EnableGitHub(GitHub{
-		Swarm: "demo", Repo: "o/r", Token: fakeToken, API: f.server.URL,
-		Secrets: map[string]string{"alpha": "alpha-secret", "beta": "beta-secret", "merger": "merger-secret"},
-	})
+	err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r", Token: fakeToken, API: f.server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +131,7 @@ func TestGitHubRefusesAMissingForgedOrForeignSecret(t *testing.T) {
 func TestGitHubIsUnavailableUntilEnabled(t *testing.T) {
 	p := startPlane(t, t.TempDir())
 	p.refused(gh("anything", protocol.GitHubRequest{Action: protocol.PRList}), "unauthorized")
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRList}), "no GitHub access")
 }
 
 func TestEnableGitHubChecksItsArguments(t *testing.T) {
@@ -143,11 +141,14 @@ func TestEnableGitHubChecksItsArguments(t *testing.T) {
 			t.Errorf("accepted repository %q", repo)
 		}
 	}
-	if err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r", Secrets: map[string]string{"ghost": "x"}}); err == nil {
+	if err := p.control.SetSecrets(map[string]string{"ghost": "x"}); err == nil {
 		t.Error("accepted a secret for an agent that isn't in the swarm")
 	}
 	// An agent whose secret is empty has none.
-	if err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r", Secrets: map[string]string{"alpha": ""}}); err != nil {
+	if err := p.control.SetSecrets(map[string]string{"alpha": ""}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r"}); err != nil {
 		t.Fatal(err)
 	}
 	p.refused(gh("", protocol.GitHubRequest{Action: protocol.PRList}), "unauthorized")
@@ -213,8 +214,10 @@ func TestGitHubCreateOpensPullRequestsOnlyFromTheAgentsOwnBranches(t *testing.T)
 func TestGitHubCreateRefusesAgentsWhoseNamesMakeInvalidRefs(t *testing.T) {
 	f := newFakeGitHub(t)
 	p := startPlane(t, t.TempDir(), "a..b", "x.lock", "ok", "dot.")
-	if err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r", Token: fakeToken, API: f.server.URL,
-		Secrets: map[string]string{"a..b": "s1", "x.lock": "s2", "ok": "s3", "dot.": "s4"}}); err != nil {
+	if err := p.control.SetSecrets(map[string]string{"a..b": "s1", "x.lock": "s2", "ok": "s3", "dot.": "s4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r", Token: fakeToken, API: f.server.URL}); err != nil {
 		t.Fatal(err)
 	}
 	for agent, secret := range map[string]string{"a..b": "s1", "x.lock": "s2", "dot.": "s4"} {
@@ -229,8 +232,10 @@ func TestGitHubCreateRefusesAgentsWhoseNamesMakeInvalidRefs(t *testing.T) {
 
 	// A swarm whose name makes invalid refs gets nothing either.
 	q := startPlane(t, t.TempDir(), "ok")
-	if err := q.control.EnableGitHub(GitHub{Swarm: "my..swarm", Repo: "o/r", Token: fakeToken, API: f.server.URL,
-		Secrets: map[string]string{"ok": "s"}}); err != nil {
+	if err := q.control.SetSecrets(map[string]string{"ok": "s"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.control.EnableGitHub(GitHub{Swarm: "my..swarm", Repo: "o/r", Token: fakeToken, API: f.server.URL}); err != nil {
 		t.Fatal(err)
 	}
 	q.refused(gh("s", protocol.GitHubRequest{Action: protocol.PRCreate, Title: "t", Head: "my..swarm/ok/x", Base: "main"}), "can't name branches")
@@ -483,7 +488,10 @@ func TestGitHubNeverEchoesTheToken(t *testing.T) {
 func TestGitHubWithoutAToken(t *testing.T) {
 	f := newFakeGitHub(t)
 	p := startPlane(t, t.TempDir())
-	if err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r", API: f.server.URL, Secrets: map[string]string{"alpha": "s"}}); err != nil {
+	if err := p.control.SetSecrets(map[string]string{"alpha": "s"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.control.EnableGitHub(GitHub{Swarm: "demo", Repo: "o/r", API: f.server.URL}); err != nil {
 		t.Fatal(err)
 	}
 	p.refused(gh("s", protocol.GitHubRequest{Action: protocol.PRList}), "no GitHub token")

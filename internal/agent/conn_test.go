@@ -7,13 +7,18 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/kkestell/gnat/internal/events"
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/protocol"
+	"github.com/kkestell/gnat/internal/state"
 )
+
+// realRequest is the request the daemon makes, before a test replaces it.
+var realRequest = request
 
 // fakeRunner replies with the message in capitals, or for "block", runs until stopped.
 type fakeRunner struct {
@@ -69,6 +74,8 @@ type plane struct {
 	ready    chan struct{}
 	lines    chan protocol.Line
 	attached chan string
+	// secret is the secret the daemon attached with.
+	secret atomic.Value
 }
 
 func newPlane(t *testing.T) *plane {
@@ -106,6 +113,7 @@ func (p *plane) accept() {
 	if err := json.Unmarshal(first, &attach); err != nil || attach.Op != protocol.OpAttach {
 		p.t.Errorf("first line = %s", first)
 	}
+	p.secret.Store(attach.Secret)
 	p.attached <- attach.Agent
 	for {
 		data, err := reader.ReadBytes('\n')
@@ -296,7 +304,7 @@ func TestCallRetriesUntilTheControlPlaneIsReachable(t *testing.T) {
 		}
 		return protocol.OK(), nil
 	}
-	t.Cleanup(func() { retryDelay = time.Second; request = nil })
+	t.Cleanup(func() { retryDelay = time.Second; request = realRequest })
 	resp, err := call(protocol.Request{Op: protocol.OpOutput, Agent: "alpha", Text: "x"})
 	if err != nil || !resp.OK || attempts != 3 {
 		t.Fatalf("call = %v, %v after %d attempts", resp, err, attempts)
@@ -309,7 +317,7 @@ func TestCallDoesntResendARequestTheControlPlaneTookAndDropped(t *testing.T) {
 		attempts++
 		return nil, &protocol.RequestError{Message: "control closed the connection without responding", NoResponse: true}
 	}
-	t.Cleanup(func() { request = nil })
+	t.Cleanup(func() { request = realRequest })
 	_, err := call(protocol.Request{Op: protocol.OpOutput, Agent: "alpha", Text: "x"})
 	if !protocol.IsNoResponse(err) || attempts != 1 {
 		t.Fatalf("call = %v after %d attempts", err, attempts)
@@ -345,4 +353,45 @@ func TestConnectingRetriesUntilTheControlPlaneIsUp(t *testing.T) {
 		t.Fatalf("first line = %q, %v", first, err)
 	}
 	(<-attached).conn.Close()
+}
+
+func TestTheDaemonAttachesAndRequestsWithTheAgentsSecret(t *testing.T) {
+	t.Setenv(state.SecretVar, "the-secret")
+	p := newPlane(t)
+	c := Open("alpha", func() {}, p.addr())
+	defer c.conn.Close()
+	<-p.attached
+	if got := p.secret.Load(); got != "the-secret" {
+		t.Errorf("attached with %q", got)
+	}
+
+	// One-shot requests too, whoever builds them.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan protocol.Request, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		line, _ := bufio.NewReader(conn).ReadBytes('\n')
+		var req protocol.Request
+		_ = json.Unmarshal(line, &req)
+		got <- req
+		data, _ := protocol.Encode(protocol.OK())
+		conn.Write(data)
+	}()
+	saved := controlAddr
+	controlAddr = ln.Addr().String()
+	defer func() { controlAddr = saved }()
+	if _, err := request(protocol.Request{Op: protocol.OpOutput, Agent: "alpha", Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if req := <-got; req.Secret != "the-secret" {
+		t.Errorf("sent %+v", req)
+	}
 }

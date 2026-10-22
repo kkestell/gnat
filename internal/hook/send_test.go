@@ -1,13 +1,17 @@
 package hook
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/kkestell/gnat/internal/protocol"
+	"github.com/kkestell/gnat/internal/state"
 )
 
 func send(t *testing.T, f *fakeCall, args []string, stdin, sender string) (stdout, stderr string, status int) {
@@ -91,5 +95,56 @@ func TestSendReportsAFailureAndStops(t *testing.T) {
 	out, errOut, status := send(t, f, []string{"beta", "gamma", "-m", "hi"}, "", "alpha")
 	if status != 1 || out != "" || errOut != "error: no such agent\n" || len(f.requests) != 1 {
 		t.Errorf("status %d, out %q, err %q, requests %d", status, out, errOut, len(f.requests))
+	}
+}
+
+// serveOnce answers one request on a local listener, and returns what it was.
+func serveOnce(t *testing.T, response *protocol.Response) (addr string, got <-chan protocol.Request) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	requests := make(chan protocol.Request, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		line, _ := bufio.NewReader(conn).ReadBytes('\n')
+		var req protocol.Request
+		_ = json.Unmarshal(line, &req)
+		requests <- req
+		data, _ := protocol.Encode(response)
+		conn.Write(data)
+	}()
+	return ln.Addr().String(), requests
+}
+
+// The control plane takes who is asking from the agent's secret, so every request the hook
+// and send make carry it.
+func TestTheHookAndSendPutTheAgentsSecretInEveryRequest(t *testing.T) {
+	t.Setenv(state.SecretVar, "the-secret")
+	saved := controlAddr
+	t.Cleanup(func() { controlAddr = saved })
+	for name, run := range map[string]func(){
+		"hook": func() { runHook("alpha", &bytes.Buffer{}, &bytes.Buffer{}) },
+		"send": func() {
+			runSend([]string{"beta", "-m", "hi"}, "alpha", strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+		},
+	} {
+		var got <-chan protocol.Request
+		controlAddr, got = serveOnce(t, protocol.OK())
+		run()
+		select {
+		case req := <-got:
+			if req.Secret != "the-secret" {
+				t.Errorf("%s sent %+v", name, req)
+			}
+		default:
+			t.Errorf("%s sent nothing", name)
+		}
 	}
 }

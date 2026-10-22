@@ -13,6 +13,7 @@ package control
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -85,6 +86,8 @@ type Control struct {
 	logDir string
 	// github is the agents' access to GitHub; nil if the control plane has none.
 	github *GitHub
+	// secrets are the agents' secrets, hashed.
+	secrets map[string][sha256.Size]byte
 
 	mailboxes map[string]*Mailbox
 

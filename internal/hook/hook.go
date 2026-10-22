@@ -9,7 +9,9 @@ package hook
 import (
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,10 +20,15 @@ import (
 	"github.com/kkestell/gnat/internal/state"
 )
 
-// call makes a request to the control plane; a variable so tests can fake it.
+// call makes a request to the control plane, with the agent's secret, which is what the
+// control plane takes as who is asking; a variable so tests can fake it.
 var call = func(req protocol.Request, timeout time.Duration) (*protocol.Response, error) {
-	return protocol.Call(state.Control, req, timeout)
+	req.Secret = os.Getenv(state.SecretVar)
+	return protocol.CallAddr(controlAddr, req, timeout)
 }
+
+// controlAddr is where the control plane listens; a variable so tests can use their own.
+var controlAddr = net.JoinHostPort(state.Control, strconv.Itoa(protocol.Port))
 
 // Main is `gnat-container hook`; args are those after it. It returns an exit status.
 func Main(args []string) int {

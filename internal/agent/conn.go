@@ -24,8 +24,12 @@ var retryDelay = time.Second
 // controlAddr is where the control plane listens.
 var controlAddr = net.JoinHostPort(state.Control, strconv.Itoa(protocol.Port))
 
-// request makes a one-shot request to the control plane; a variable so tests can fake it.
+// request makes a one-shot request to the control plane, with the agent's secret, which is
+// what the control plane takes as who is asking; a variable so tests can fake it.
 var request = func(req protocol.Request) (*protocol.Response, error) {
+	if req.Secret == "" {
+		req.Secret = os.Getenv(state.SecretVar)
+	}
 	return protocol.CallAddr(controlAddr, req, 0)
 }
 
@@ -77,7 +81,7 @@ func Open(name string, onStop func(), addr string) *Connection {
 		c := &Connection{
 			conn: conn, onStop: onStop, turns: make(chan turn, 16), closed: make(chan struct{}),
 		}
-		c.send(protocol.Request{Op: protocol.OpAttach, Agent: name})
+		c.send(protocol.Request{Op: protocol.OpAttach, Agent: name, Secret: os.Getenv(state.SecretVar)})
 		go c.read()
 		return c
 	}

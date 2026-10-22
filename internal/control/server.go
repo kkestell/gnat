@@ -46,8 +46,23 @@ func (d *Daemon) push(line protocol.Line) error {
 	return err
 }
 
-// Serve accepts connections on ln until ctx is cancelled, then closes them all.
+// Serve accepts the operator's connections on ln until ctx is cancelled, then closes them
+// all. ln must be one only the operator can reach, such as the control container's own
+// socket, since what comes in on it is trusted: the commands `gnat` runs there, which
+// send the agents messages, stop them, and ask how they are.
 func (c *Control) Serve(ctx context.Context, ln net.Listener) error {
+	return c.serve(ctx, ln, false)
+}
+
+// ServeAgents is Serve for ln the agents can reach, on the swarm's network. What comes in
+// on it is believed only as far as the secret in each request goes: it says which agent
+// is asking, and the agent is allowed to attach, to send messages as itself, to take its
+// own, to report its own output, and to ask for what GitHub operations it may have.
+func (c *Control) ServeAgents(ctx context.Context, ln net.Listener) error {
+	return c.serve(ctx, ln, true)
+}
+
+func (c *Control) serve(ctx context.Context, ln net.Listener, fromAgents bool) error {
 	var (
 		wg    sync.WaitGroup
 		mu    sync.Mutex
@@ -77,7 +92,7 @@ func (c *Control) Serve(ctx context.Context, ln net.Listener) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.handle(conn)
+			c.handle(conn, fromAgents)
 			mu.Lock()
 			delete(conns, conn)
 			mu.Unlock()
@@ -87,7 +102,7 @@ func (c *Control) Serve(ctx context.Context, ln net.Listener) error {
 
 // handle serves one connection: a request and its response, or an agent daemon's
 // attachment.
-func (c *Control) handle(conn net.Conn) {
+func (c *Control) handle(conn net.Conn, fromAgents bool) {
 	defer conn.Close()
 	br := bufio.NewReaderSize(conn, 64*1024)
 	var req protocol.Request
@@ -108,8 +123,60 @@ func (c *Control) handle(conn net.Conn) {
 		respond(conn, protocol.Fail(fmt.Sprintf("bad request: %v", err)))
 		return
 	}
-	if req.Op == protocol.OpAttach {
-		c.attach(req.Agent, br, conn)
+	if fromAgents {
+		c.handleAgent(req, br, conn)
+		return
+	}
+	// The operator's: what the host runs, which names its agents and has no secret.
+	switch req.Op {
+	case protocol.OpSend:
+		if req.Sender != "" {
+			// Senders are known by their secrets, so here there is only the operator.
+			respond(conn, protocol.Fail("a message's sender is the agent whose secret it comes with"))
+			return
+		}
+	case protocol.OpStop, protocol.OpStatus, protocol.OpWait:
+	default:
+		respond(conn, protocol.Fail(fmt.Sprintf("'%s' is only for agents", req.Op)))
+		return
+	}
+	if resp := c.dispatch(req, br); resp != nil {
+		respond(conn, resp)
+	}
+}
+
+// errUnauthorized is what a request from an agent gets without one of their secrets.
+const errUnauthorized = "unauthorized: the agent secret is missing or wrong"
+
+// handleAgent serves a request that came in over the network. Who sent it is whoever's
+// secret it has, and that overrides anything it says about itself: the agent attaching,
+// taking messages, or reporting output is that agent, and a message is from it.
+func (c *Control) handleAgent(req protocol.Request, br *bufio.Reader, conn net.Conn) {
+	agent := c.whoIs(req.Secret)
+	req.Secret = ""
+	if agent == "" {
+		if req.Op == protocol.OpAttach {
+			// An attachment is answered in lines, as the daemon reads.
+			_ = newDaemon(conn).push(protocol.Line{Type: protocol.LineError, Error: errUnauthorized})
+			return
+		}
+		respond(conn, protocol.Fail(errUnauthorized))
+		return
+	}
+	switch req.Op {
+	case protocol.OpAttach:
+		c.attach(agent, br, conn)
+		return
+	case protocol.OpGitHub:
+		respond(conn, c.githubRequest(agent, req))
+		return
+	case protocol.OpSend:
+		// Whoever the message is to is the agent's to say, but not who it is from.
+		req.Sender = agent
+	case protocol.OpTake, protocol.OpOutput:
+		req.Agent = agent
+	default:
+		respond(conn, protocol.Fail(fmt.Sprintf("'%s' is only for the operator", req.Op)))
 		return
 	}
 	if resp := c.dispatch(req, br); resp != nil {
@@ -126,10 +193,6 @@ func respond(conn net.Conn, resp *protocol.Response) {
 
 // dispatch answers a request; nil when the caller hung up before the answer.
 func (c *Control) dispatch(req protocol.Request, r io.Reader) *protocol.Response {
-	if req.Op == protocol.OpGitHub {
-		// Who is asking is the secret's, never req.Agent.
-		return c.githubRequest(req)
-	}
 	if req.Agent == "" {
 		return protocol.Fail("bad request: missing agent")
 	}
