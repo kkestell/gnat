@@ -1,13 +1,19 @@
 package control
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/state"
@@ -283,23 +289,32 @@ func TestGitHubMergeReportsWhatGitHubRefuses(t *testing.T) {
 
 func TestGitHubOnlyEverTouchesTheSwarmsRepository(t *testing.T) {
 	f := newFakeGitHub(t)
+	f.answers["GET /repos/o/r"] = map[string]any{"default_branch": "main"}
 	p := githubPlane(t, f)
 	for _, a := range []protocol.GitHubRequest{
 		{Action: protocol.PRList}, {Action: protocol.PRView, Number: 1}, {Action: protocol.PRDiff, Number: 1},
 		{Action: protocol.PRChecks, Number: 1}, {Action: protocol.PRComment, Number: 1, Body: "x"},
 		{Action: protocol.PRReview, Number: 1, Review: protocol.ReviewApprove},
+		{Action: protocol.PRCreate, Title: "t", Head: "demo/merger/x"}, // Asks for the default branch.
 		{Action: protocol.PRCreate, Title: "t", Head: "demo/merger/x", Base: "main"}, {Action: protocol.PRMerge, Number: 1},
 	} {
 		_, _ = p.request(gh("merger-secret", a)) // GitHub answers 404; only where it was asked matters.
 	}
 	got := f.asked()
-	if len(got) < 8 {
+	if len(got) != 10 {
 		t.Fatalf("asked %+v", got)
 	}
+	defaultBranch := false
 	for _, r := range got {
-		if !strings.HasPrefix(r.path, "/repos/o/r/") {
+		// The repository itself, for its default branch, or something in it.
+		if r.path == "/repos/o/r" {
+			defaultBranch = r.method == "GET"
+		} else if !strings.HasPrefix(r.path, "/repos/o/r/") {
 			t.Errorf("%s %s", r.method, r.path)
 		}
+	}
+	if !defaultBranch {
+		t.Error("the default branch fetch wasn't among the requests")
 	}
 }
 
@@ -474,5 +489,103 @@ func TestGitHubWithoutAToken(t *testing.T) {
 	p.refused(gh("s", protocol.GitHubRequest{Action: protocol.PRList}), "no GitHub token")
 	if got := f.asked(); len(got) != 0 {
 		t.Fatalf("GitHub was asked: %+v", got)
+	}
+}
+
+// rawLine sends one line as it is and returns the answer, for requests no client would make.
+func (p *plane) rawLine(line string) string {
+	p.t.Helper()
+	conn, err := net.DialTimeout("tcp", p.addr, 5*time.Second)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(conn, line+"\n"); err != nil {
+		p.t.Fatal(err)
+	}
+	answer, _ := bufio.NewReader(conn).ReadString('\n')
+	return answer
+}
+
+func TestAnAgentsSecretNeverReachesTheDatabaseTheLogsEventsOrAnyResponse(t *testing.T) {
+	const secret = "alpha-secret"
+	f := newFakeGitHub(t)
+	f.answers["GET /repos/o/r"] = map[string]any{"default_branch": "main"}
+	f.answers["POST /repos/o/r/pulls"] = map[string]any{"number": 7, "html_url": "u"}
+	f.status["GET /repos/o/r/pulls/9"] = http.StatusInternalServerError
+	f.answers["GET /repos/o/r/pulls/9"] = map[string]any{"message": "boom"}
+	p := githubPlane(t, f)
+	beta := p.attach("beta")
+	_ = beta
+
+	var responses []string
+	record := func(resp *protocol.Response, err error) {
+		if err != nil {
+			responses = append(responses, err.Error())
+		}
+		if resp != nil {
+			data, _ := protocol.Encode(resp)
+			responses = append(responses, string(data))
+		}
+	}
+	for _, r := range []protocol.GitHubRequest{
+		{Action: protocol.PRCreate, Title: "t", Head: "demo/alpha/x"},          // succeeds
+		{Action: protocol.PRCreate, Title: "t", Head: "demo/beta/x"},           // refused
+		{Action: protocol.PRMerge, Number: 5},                                  // refused
+		{Action: protocol.PRView, Number: 9},                                   // GitHub fails
+		{Action: protocol.PRList, State: "bogus"},                              // bad request
+		{Action: "nonsense"},                                                   // unknown
+		{Action: protocol.PRComment, Number: 1, Body: "mentions " + "nothing"}, // GitHub 404
+	} {
+		record(p.request(gh(secret, r)))
+	}
+	// A secret that's wrong, one in the wrong place, and requests that don't parse; none
+	// may be echoed back. (What a client sends in a field the answer repeats, such as an
+	// agent's name, is its own to see.)
+	record(p.request(gh(secret+"x", protocol.GitHubRequest{Action: protocol.PRList})))
+	record(p.request(protocol.Request{Op: protocol.OpSend, Agent: "alpha", Text: "hi", Secret: secret}))
+	record(p.request(protocol.Request{Op: protocol.OpStatus, Agent: "alpha", Secret: secret}))
+	record(p.request(protocol.Request{Op: "unknown", Agent: "alpha", Secret: secret}))
+	record(p.request(protocol.Request{Op: protocol.OpGitHub, Secret: secret}))
+	responses = append(responses,
+		p.rawLine(`{"op":"github","secret":"`+secret+`","github":"not an object"}`),
+		p.rawLine(`{"op":"github","secret":"`+secret+`","github":{"action":`),
+		p.rawLine(`{"op":"github","secret":["`+secret+`"]}`),
+	)
+	p.close()
+
+	for _, response := range responses {
+		if strings.Contains(response, secret) {
+			t.Errorf("a response has the secret: %q", response)
+		}
+	}
+	if len(responses) < 10 {
+		t.Fatalf("only %d responses", len(responses))
+	}
+	// Everything the control plane wrote: the database, the logs, the events.
+	entries, err := os.ReadDir(p.dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("%v, %v", entries, err)
+	}
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(p.dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(data, []byte(secret)) {
+			t.Errorf("%s has the secret", e.Name())
+		}
+		for _, other := range []string{"beta-secret", "merger-secret", fakeToken} {
+			if bytes.Contains(data, []byte(other)) {
+				t.Errorf("%s has %s", e.Name(), other)
+			}
+		}
+	}
+	// The token reaches only GitHub.
+	for _, response := range responses {
+		if strings.Contains(response, fakeToken) {
+			t.Errorf("a response has the token: %q", response)
+		}
 	}
 }
