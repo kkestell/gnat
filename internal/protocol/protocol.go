@@ -142,9 +142,10 @@ type Response struct {
 	// wait: whether the agent is idle, as well as its status.
 	Idle *bool `json:"idle,omitempty"`
 
-	// status and wait: the agent's status.
+	// status and wait: the agent's status. QueuedBy breaks Queued down by sender.
 	State       string              `json:"state,omitempty"`
 	Queued      int                 `json:"queued,omitempty"`
+	QueuedBy    []Queued            `json:"queued_by,omitempty"`
 	Turns       int                 `json:"turns,omitempty"`
 	Exit        *int                `json:"exit,omitempty"`
 	Stopped     bool                `json:"stopped,omitempty"`
@@ -276,14 +277,28 @@ func CallContext(ctx context.Context, addr string, req Request, timeout time.Dur
 	return &resp, nil
 }
 
+// Queued is how many of an agent's queued messages one sender sent, and how many of
+// those were sent with now and are still waiting to be delivered.
+type Queued struct {
+	// Sender is the agent that sent them, or nil for the operator.
+	Sender *string `json:"sender"`
+	Queued int     `json:"queued"`
+	Now    int     `json:"now"`
+}
+
 // StatusLine is an agent's status as `status` prints it: every field, as the response
 // carries them all.
 func StatusLine(agent string, r *Response) any {
+	queuedBy := r.QueuedBy
+	if queuedBy == nil {
+		queuedBy = []Queued{}
+	}
 	return struct {
 		Agent       string   `json:"agent"`
 		OK          bool     `json:"ok"`
 		State       string   `json:"state"`
 		Queued      int      `json:"queued"`
+		QueuedBy    []Queued `json:"queued_by"`
 		Turns       int      `json:"turns"`
 		Exit        *int     `json:"exit"`
 		Stopped     bool     `json:"stopped"`
@@ -291,5 +306,5 @@ func StatusLine(agent string, r *Response) any {
 		Error       *string  `json:"error"`
 		Usage       any      `json:"usage"`
 		SinceActive *float64 `json:"since_active"`
-	}{agent, true, r.State, r.Queued, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
+	}{agent, true, r.State, r.Queued, queuedBy, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
 }

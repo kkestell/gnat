@@ -14,7 +14,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat send SWARM [AGENT...] [-m TEXT] [--now \| --new] [--wait [--timeout SECONDS]]` | Queue a message. Reads stdin without `-m`. |
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
 | `gnat wait SWARM [AGENT...] [--any] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. With `--any`, return as soon as at least one of them has (one already finished counts at once), printing the replies of those that have, each under its name, and on stderr the ones still busy (`still waiting on: alpha, gamma`); the exit status is for those that have. |
-| `gnat status SWARM [AGENT...]` | Show each agent's state, queue, time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
+| `gnat status SWARM [AGENT...]` | Show each agent's state, queue (see [messages](#messages)), time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. `HOST_PATH` is treated as `docker cp` treats it: a directory copied to an existing directory goes inside it, and to a path that doesn't exist creates that path with the directory's contents; a `PATH` ending in `/.` copies the directory's contents, so `AGENT:.` copies the clone's contents. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
@@ -137,10 +137,12 @@ invalid, `gnat create` creates nothing. Add or remove agents afterwards with
 Each agent works through its queue one message at a time, continuing one session.
 
 - `--new` starts the message in a fresh session, which later messages continue.
-- `--now` delivers the message into the running turn after the agent's next tool call. If the turn ends first, it starts the next turn, ahead of the queue.
+- `--now` delivers the message into the running turn after the agent's next tool call. If the turn ends first, or the agent is idle, it starts the next turn, ahead of the queue. `gnat send --now` says so instead of "queued message for".
 - `gnat stop` ends the running turn; the agent goes on to its next message.
 
 Agents can message each other with `/opt/gnat/gnat-container send TEAMMATE... [--now] -m TEXT`, which their instructions describe. Two agents can reply to each other forever; watch `gnat logs` and `gnat down` if they do.
+
+`gnat status` counts each agent's queued messages and breaks the count down by sender, you first, with how many of each sender's are `--now` messages not yet delivered: `4 queued: 2 from you (1 now), 1 from alpha, 1 from beta (1 now)`. A `--now` message leaves the count once it is delivered, mid-turn or as the start of a turn, so its `now` going away means it has landed. When every queued message is yours and none is `--now`, it's just `2 queued`.
 
 An agent whose daemon crashes restarts in the same container with its clone and session, and the turn it was running is reported as interrupted.
 

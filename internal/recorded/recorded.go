@@ -88,6 +88,38 @@ func LoadTurn(db *sql.DB, agent string) (Turn, bool, error) {
 	return t, true, nil
 }
 
+// Queue is what is waiting in an agent's queue: how many messages, and how many each
+// sender sent, the operator first and then agents by name.
+type Queue struct {
+	Total int
+	By    []protocol.Queued
+}
+
+// LoadQueue reads what is waiting in the agent's queue.
+func LoadQueue(db *sql.DB, agent string) (Queue, error) {
+	var q Queue
+	// The operator's messages have no sender, and NULL sorts first.
+	rows, err := db.Query("SELECT sender, COUNT(*), SUM(urgent != 0) FROM messages WHERE agent = ? "+
+		"GROUP BY sender ORDER BY sender", agent)
+	if err != nil {
+		return q, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var by protocol.Queued
+		var sender sql.NullString
+		if err := rows.Scan(&sender, &by.Queued, &by.Now); err != nil {
+			return q, err
+		}
+		if sender.Valid {
+			by.Sender = &sender.String
+		}
+		q.Total += by.Queued
+		q.By = append(q.By, by)
+	}
+	return q, rows.Err()
+}
+
 // LoadUsage reads the agent's usage totals into total, leaving them as they are if the
 // database has none.
 func LoadUsage(db *sql.DB, agent string, total *events.UsageTotals) error {
@@ -119,7 +151,7 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 	for _, agent := range agents {
 		var turn Turn
 		var usage events.UsageTotals
-		var queued int
+		var queue Queue
 		current := false
 		if db != nil {
 			var err error
@@ -128,10 +160,10 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 			}
 		}
 		if current {
-			if err := db.QueryRow("SELECT COUNT(*) FROM messages WHERE agent = ?", agent).Scan(&queued); err != nil {
+			var err error
+			if queue, err = LoadQueue(db, agent); err != nil {
 				return err
 			}
-			var err error
 			if turn, _, err = LoadTurn(db, agent); err != nil {
 				return err
 			}
@@ -144,7 +176,8 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 			turn.Turns++
 		}
 		r := protocol.OK()
-		r.State, r.Queued, r.Turns, r.Exit, r.Stopped = "down", queued, turn.Turns, turn.Exit, turn.Stopped
+		r.State, r.Turns, r.Exit, r.Stopped = "down", turn.Turns, turn.Exit, turn.Stopped
+		r.Queued, r.QueuedBy = queue.Total, queue.By
 		r.Reply, r.Error = turn.Reply, turn.Error
 		r.Usage = &usage
 		line, err := protocol.Encode(protocol.StatusLine(agent, r))
