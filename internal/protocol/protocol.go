@@ -8,6 +8,7 @@ package protocol
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -218,15 +219,21 @@ func Call(host string, req Request, timeout time.Duration) (*Response, error) {
 
 // CallAddr is Call to a "host:port" address, or to the Unix socket at an absolute path.
 func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error) {
+	return CallContext(context.Background(), addr, req, timeout)
+}
+
+// CallContext is CallAddr that hangs up when ctx is done, with ctx's error.
+func CallContext(ctx context.Context, addr string, req Request, timeout time.Duration) (*Response, error) {
 	network := "tcp"
 	if strings.HasPrefix(addr, "/") {
 		network = "unix"
 	}
-	conn, err := net.DialTimeout(network, addr, timeout)
+	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	defer context.AfterFunc(ctx, func() { conn.Close() })()
 	if timeout > 0 {
 		_ = conn.SetDeadline(time.Now().Add(timeout))
 	}
@@ -247,6 +254,9 @@ func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error
 		}
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, &RequestError{Message: fmt.Sprintf("%s didn't respond: %v", host, err), NoResponse: true}
 	}
 	if len(reply) == 0 {

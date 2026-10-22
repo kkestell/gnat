@@ -13,7 +13,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat down SWARM` | Stop the containers. Clones, sessions, queued messages, and logs are kept. |
 | `gnat send SWARM [AGENT...] [-m TEXT] [--now \| --new] [--wait [--timeout SECONDS]]` | Queue a message. Reads stdin without `-m`. |
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
-| `gnat wait SWARM [AGENT...] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. |
+| `gnat wait SWARM [AGENT...] [--any] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. With `--any`, return as soon as at least one of them has (one already finished counts at once), printing the replies of those that have, each under its name, and on stderr the ones still busy (`still waiting on: alpha, gamma`); the exit status is for those that have. |
 | `gnat status SWARM [AGENT...]` | Show each agent's state, queue, time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. `HOST_PATH` is treated as `docker cp` treats it: a directory copied to an existing directory goes inside it, and to a path that doesn't exist creates that path with the directory's contents; a `PATH` ending in `/.` copies the directory's contents, so `AGENT:.` copies the clone's contents. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
@@ -204,6 +204,15 @@ Every agent, waiting for replies:
 
 ```sh
 gnat send demo --wait -m "What files are in the repository root?"
+```
+
+Collecting replies as they come (wait again on the agents it says it is still waiting on, until it says none):
+
+```sh
+gnat send demo alpha -m "Count to 3, then say ALPHA."
+gnat send demo beta -m "Use Bash to run: python3 -c 'import time; time.sleep(30)'. Then say BETA."
+gnat wait demo alpha beta --any   # alpha's reply, then on stderr: still waiting on: beta
+gnat wait demo beta --any         # beta's reply, and nothing on stderr
 ```
 
 Separate clones:

@@ -165,6 +165,7 @@ func stopCommand() *cobra.Command {
 
 func waitCommand() *cobra.Command {
 	var timeout float64
+	var anyOf bool
 	c := &cobra.Command{
 		Use: "wait SWARM" + agentsUsage, Args: cobra.MinimumNArgs(1),
 		Short: "wait for agents to finish every message sent to them and print their replies",
@@ -174,8 +175,10 @@ func waitCommand() *cobra.Command {
 		if cmd.Flags().Changed("timeout") {
 			t = &timeout
 		}
-		return wait(args[0], args[1:], t)
+		return wait(args[0], args[1:], t, anyOf)
 	}).run
+	c.Flags().BoolVar(&anyOf, "any", false, "return once at least one of the agents has finished, "+
+		"printing the replies of those that have, each under its name, and the ones still busy; one already finished counts at once")
 	timeoutFlag(c, &timeout)
 	return c
 }
@@ -748,7 +751,7 @@ func stop(swarmName string, agentArgs []string) error {
 	return docker(append([]string{"exec", container}, controlCommand(append([]string{"stop"}, agentNames(agents)...)...)...)...)
 }
 
-func wait(swarmName string, agentArgs []string, timeout *float64) error {
+func wait(swarmName string, agentArgs []string, timeout *float64, anyOf bool) error {
 	swarm, err := state.Load(swarmName)
 	if err != nil {
 		return err
@@ -758,6 +761,9 @@ func wait(swarmName string, agentArgs []string, timeout *float64) error {
 		return err
 	}
 	args := append([]string{"wait"}, agentNames(agents)...)
+	if anyOf {
+		args = append(args, "--any")
+	}
 	if timeout != nil {
 		args = append(args, "--timeout", formatFloat(*timeout))
 	}
