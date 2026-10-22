@@ -166,7 +166,7 @@ func TestAgentInstructionsNameTeammatesAndForbidLeakingCredentials(t *testing.T)
 		"beta, gamma", "--now",
 		"`/opt/gnat/gnat-container send TEAMMATE... -m TEXT`",
 		"at its next tool call",
-		"Never print", "`GH_TOKEN` and `OPENROUTER_API_KEY`",
+		"Never print", "`GNAT_SECRET` and `OPENROUTER_API_KEY`", "You have no GitHub credential",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q", want)

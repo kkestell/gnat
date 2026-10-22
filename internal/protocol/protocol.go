@@ -46,6 +46,9 @@ const (
 	PRComment = "pr_comment"
 	PRReview  = "pr_review"
 	PRMerge   = "pr_merge"
+	// GitIdentityAction asks who commits should be by: the name and email of the GitHub account
+	// the control plane's token belongs to (Response.Identity).
+	GitIdentityAction = "git_identity"
 )
 
 // The kinds of review a pr_review gives.
@@ -143,8 +146,15 @@ type Response struct {
 	Usage       *events.UsageTotals `json:"usage,omitempty"`
 	SinceActive *float64            `json:"since_active,omitempty"`
 
-	// github: the result, as text for an agent to read.
-	Output string `json:"output,omitempty"`
+	// github: the result, as text for an agent to read, or for GitIdentity the account.
+	Output   string       `json:"output,omitempty"`
+	Identity *GitIdentity `json:"identity,omitempty"`
+}
+
+// A GitIdentity is the author git commits as.
+type GitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 // A Line is one message on an attached daemon's connection. The control plane pushes

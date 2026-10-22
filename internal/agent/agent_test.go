@@ -14,11 +14,7 @@ import (
 
 func TestRunParsesFlagsAfterTheName(t *testing.T) {
 	useWorkspace(t, t.TempDir())
-	oldRun, oldRequest := runCommand, request
-	runCommand = func(name string, args ...string) (string, error) {
-		return `{"name": "A", "login": "a", "id": 1}`, nil
-	}
-	t.Cleanup(func() { runCommand, request = oldRun, oldRequest })
+	useControl(t)
 	t.Setenv(state.AgentVar, "")
 
 	var gotName, gotModel, gotEffort string
@@ -43,9 +39,7 @@ func TestRunParsesFlagsAfterTheName(t *testing.T) {
 func TestRunDefaultsToTheDefaultHarness(t *testing.T) {
 	t.Setenv(state.AgentVar, "")
 	useWorkspace(t, t.TempDir())
-	oldRun := runCommand
-	runCommand = func(string, ...string) (string, error) { return `{"login": "a", "id": 1}`, nil }
-	t.Cleanup(func() { runCommand = oldRun })
+	useControl(t)
 	var got string
 	run([]string{"alpha", "--repo", "o/r"}, &bytes.Buffer{},
 		func(_ string, h harness.Harness, _, _ string) { got = h.Name() })
@@ -85,16 +79,19 @@ func TestRunHelpExitsZero(t *testing.T) {
 func TestRunReportsAFailedCloneToTheControlPlane(t *testing.T) {
 	t.Setenv(state.AgentVar, "")
 	useWorkspace(t, t.TempDir())
-	oldRun, oldRequest := runCommand, request
+	_, _ = useControl(t)
 	runCommand = func(name string, args ...string) (string, error) {
 		return "", os.ErrPermission
 	}
 	var sent protocol.Request
+	identity := request
 	request = func(req protocol.Request) (*protocol.Response, error) {
+		if req.Op == protocol.OpGitHub {
+			return identity(req)
+		}
 		sent = req
 		return protocol.OK(), nil
 	}
-	t.Cleanup(func() { runCommand, request = oldRun, oldRequest })
 	status := run([]string{"alpha", "--repo", "o/r"}, &bytes.Buffer{},
 		func(string, harness.Harness, string, string) { t.Error("served") })
 	want := protocol.Request{Op: protocol.OpOutput, Agent: "alpha", Text: "error: permission denied\n"}

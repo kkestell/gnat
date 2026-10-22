@@ -10,7 +10,7 @@ Requires Go 1.26, Docker, and the [GitHub CLI](https://cli.github.com/).
 make install
 ```
 
-Save a credential for each harness your agents use: `gnat auth login claude` (paste the token from `claude setup-token`) or `gnat auth login ox` (an OpenRouter API key). Agents use `GH_TOKEN`, or else `gh auth token`. Agents run with permissions skipped, so give them a token scoped to the one repository; see [docs/setup.md](docs/setup.md).
+Save a credential for each harness your agents use: `gnat auth login claude` (paste the token from `claude setup-token`) or `gnat auth login ox` (an OpenRouter API key). Only the control container uses `GH_TOKEN` (or else `gh auth token`): agents have no GitHub credential, and clone, fetch, and push through it. Give that a token scoped to the one repository; see [docs/setup.md](docs/setup.md).
 
 ## Usage
 

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kkestell/gnat/internal/protocol"
@@ -53,13 +54,16 @@ type GitHub struct {
 	Client  *http.Client
 
 	hashes map[string][sha256.Size]byte
+
+	identityMu *sync.Mutex
+	who        *protocol.GitIdentity
 }
 
 // EnableGitHub lets the agents act on GitHub through the control plane. An agent without
 // a secret, or with an empty one, can't.
 func (c *Control) EnableGitHub(g GitHub) error {
-	if owner, name, _ := strings.Cut(g.Repo, "/"); !repoRE.MatchString(g.Repo) || strings.Trim(owner, ".") == "" || strings.Trim(name, ".") == "" {
-		return fmt.Errorf("repository %q isn't OWNER/NAME", g.Repo)
+	if err := checkRepo(g.Repo); err != nil {
+		return err
 	}
 	if g.API == "" {
 		g.API = GitHubAPI
@@ -67,30 +71,44 @@ func (c *Control) EnableGitHub(g GitHub) error {
 	if g.Client == nil {
 		g.Client = &http.Client{Timeout: githubTimeout}
 	}
-	g.hashes = map[string][sha256.Size]byte{}
-	for agent, secret := range g.Secrets {
-		if c.mailboxes[agent] == nil {
-			return fmt.Errorf("a secret for '%s', which is not an agent of this swarm", agent)
-		}
-		if secret != "" {
-			g.hashes[agent] = sha256.Sum256([]byte(secret))
-		}
+	var err error
+	if g.hashes, err = c.hashSecrets(g.Secrets); err != nil {
+		return err
 	}
 	g.Secrets = nil // Only the hashes are kept.
+	g.identityMu = &sync.Mutex{}
 	c.github = &g
 	return nil
+}
+
+// hashSecrets is each agent's secret hashed, for comparing a presented one with. An
+// agent without a secret, or with an empty one, has none to present.
+func (c *Control) hashSecrets(secrets map[string]string) (map[string][sha256.Size]byte, error) {
+	hashes := map[string][sha256.Size]byte{}
+	for agent, secret := range secrets {
+		if c.mailboxes[agent] == nil {
+			return nil, fmt.Errorf("a secret for '%s', which is not an agent of this swarm", agent)
+		}
+		if secret != "" {
+			hashes[agent] = sha256.Sum256([]byte(secret))
+		}
+	}
+	return hashes, nil
 }
 
 // whoIs is the agent the secret belongs to, or "" if it is nobody's. It compares in
 // constant time with every agent's, so how long it takes says nothing about which agent
 // came closest.
-func (g *GitHub) whoIs(secret string) string {
+func (g *GitHub) whoIs(secret string) string { return whoIs(g.hashes, secret) }
+
+// whoIs is the agent whose hashed secret in hashes is secret, or "" if it is nobody's.
+func whoIs(hashes map[string][sha256.Size]byte, secret string) string {
 	if secret == "" {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(secret))
 	found := ""
-	for agent, hash := range g.hashes {
+	for agent, hash := range hashes {
 		if subtle.ConstantTimeCompare(sum[:], hash[:]) == 1 {
 			found = agent
 		}
@@ -116,6 +134,15 @@ func (c *Control) githubRequest(req protocol.Request) *protocol.Response {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), githubTimeout)
 	defer cancel()
+	if req.GitHub.Action == protocol.GitIdentityAction {
+		who, err := g.identity(ctx)
+		if err != nil {
+			return protocol.Fail(err.Error())
+		}
+		r := protocol.OK()
+		r.Identity = who
+		return r
+	}
 	out, err := g.do(ctx, c, agent, *req.GitHub)
 	if err != nil {
 		return protocol.Fail(err.Error())
@@ -518,8 +545,41 @@ func (g *GitHub) json(ctx context.Context, method, path string, body, out any) e
 	return nil
 }
 
+// identity is the account the token belongs to, as git commits as it. GitHub is asked
+// once.
+func (g *GitHub) identity(ctx context.Context) (*protocol.GitIdentity, error) {
+	g.identityMu.Lock()
+	defer g.identityMu.Unlock()
+	if g.who != nil {
+		return g.who, nil
+	}
+	data, err := g.send(ctx, "GET", "/user", nil, "application/vnd.github+json")
+	if err != nil {
+		return nil, err
+	}
+	var user struct {
+		Name  *string `json:"name"`
+		Login string  `json:"login"`
+		ID    int64   `json:"id"`
+	}
+	if err := json.Unmarshal(data, &user); err != nil || user.Login == "" {
+		return nil, errors.New("GitHub's answer for the user wasn't usable")
+	}
+	name := user.Login
+	if user.Name != nil && *user.Name != "" {
+		name = *user.Name
+	}
+	g.who = &protocol.GitIdentity{Name: name, Email: fmt.Sprintf("%d+%s@users.noreply.github.com", user.ID, user.Login)}
+	return g.who, nil
+}
+
 // request makes a request on the repository, whose path comes after /repos/OWNER/NAME.
 func (g *GitHub) request(ctx context.Context, method, path string, body any, accept string) ([]byte, error) {
+	return g.send(ctx, method, "/repos/"+g.Repo+path, body, accept)
+}
+
+// send makes a request to the API, whose path is the whole of it.
+func (g *GitHub) send(ctx context.Context, method, path string, body any, accept string) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -528,7 +588,7 @@ func (g *GitHub) request(ctx context.Context, method, path string, body any, acc
 		}
 		reader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(g.API, "/")+"/repos/"+g.Repo+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(g.API, "/")+path, reader)
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -333,9 +334,10 @@ func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) 
 	return nil
 }
 
-// serve runs the control plane and the web UI until the container is stopped. With
-// GH_TOKEN, the UI shows the repository's pull requests, and the agents whose secrets
-// are in GNAT_SECRETS can act on GitHub through the control plane.
+// serve runs the control plane, the web UI, and git for the agents until the container
+// is stopped. With GH_TOKEN, the UI shows the repository's pull requests, and the agents
+// whose secrets are in GNAT_SECRETS can act on GitHub, and clone, fetch, and push, through
+// the control plane.
 func serve(agents []string, setups map[string]state.Agent, swarmName, repo string) error {
 	token := os.Getenv("GH_TOKEN")
 	swarm := web.Swarm{Repo: repo, Started: time.Now(), Token: token}
@@ -358,17 +360,35 @@ func serve(agents []string, setups map[string]state.Agent, swarmName, repo strin
 			return err
 		}
 	}
+	var proxy *GitProxy
+	if repo != "" && swarmName != "" {
+		if proxy, err = c.NewGitProxy(GitConfig{Swarm: swarmName, Repo: repo, Token: token, Secrets: secrets}); err != nil {
+			return err
+		}
+	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", protocol.Port))
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	var wg sync.WaitGroup
 	for _, run := range []func() error{
 		func() error { return c.Serve(ctx, ln) },
 		func() error { return web.Serve(ctx, fmt.Sprintf("0.0.0.0:%d", layout.WebPort), c, swarm) },
+		func() error {
+			if proxy == nil {
+				return nil
+			}
+			// Fetch now, so the agents' first clones needn't wait for it.
+			go func() {
+				if err := proxy.Sync(ctx); err != nil {
+					log.Printf("git: fetching %s: %v", repo, err)
+				}
+			}()
+			return ServeGit(ctx, fmt.Sprintf("0.0.0.0:%d", layout.GitPort), proxy)
+		},
 	} {
 		wg.Add(1)
 		go func() {
