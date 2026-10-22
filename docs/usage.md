@@ -142,7 +142,7 @@ Each agent works through its queue one message at a time, continuing one session
 
 Agents can message each other with `/opt/gnat/gnat-container send TEAMMATE... [--now] -m TEXT`, which their instructions describe. Two agents can reply to each other forever; watch `gnat logs` and `gnat down` if they do.
 
-`gnat status` counts each agent's queued messages and breaks the count down: how many are `--now` messages not yet delivered, and how many each teammate sent, such as `3 queued (1 now, 2 from beta)`. A `--now` message from a teammate counts in both. A `--now` message leaves the count once it is delivered, mid-turn or as the start of a turn, so `now` going to zero means it has landed. With nothing to break down, it's just `1 queued`.
+`gnat status` counts each agent's queued messages and breaks the count down by sender, you first, with how many of each sender's are `--now` messages not yet delivered: `4 queued: 2 from you (1 now), 1 from alpha, 1 from beta (1 now)`. A `--now` message leaves the count once it is delivered, mid-turn or as the start of a turn, so its `now` going away means it has landed. When every queued message is yours and none is `--now`, it's just `2 queued`.
 
 An agent whose daemon crashes restarts in the same container with its clone and session, and the turn it was running is reported as interrupted.
 

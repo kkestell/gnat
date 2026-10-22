@@ -236,8 +236,8 @@ func (m *Mailbox) Pending() int {
 	return n
 }
 
-// Queue is what is waiting in the queue: how many, how many were sent with now, and how
-// many each teammate sent.
+// Queue is what is waiting in the queue: how many messages, and how many each sender
+// sent, with now and without.
 func (m *Mailbox) Queue() recorded.Queue {
 	m.mu.Lock()
 	defer m.mu.Unlock()

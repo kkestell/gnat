@@ -12,6 +12,7 @@ import (
 
 	"github.com/kkestell/gnat/internal/control"
 	"github.com/kkestell/gnat/internal/layout"
+	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/state"
 )
 
@@ -45,8 +46,8 @@ func TestSelectAgentsRejectsUnknownNames(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-func withQueue(s agentStatus, now int, from map[string]int) agentStatus {
-	s.QueuedNow, s.QueuedFrom = now, from
+func withQueue(s agentStatus, by ...protocol.Queued) agentStatus {
+	s.QueuedBy = by
 	return s
 }
 
@@ -66,9 +67,13 @@ func TestStatusLine(t *testing.T) {
 		{mkStatus("idle", 0, 1, ptr(-9), true), "running", "alpha\tidle\t0 queued\t1 turns\tlast turn stopped"},
 		{mkStatus("busy", 0, 0, nil, false), "restarting", "alpha\trestarting\t0 queued\t0 turns"},
 		{mkStatus("busy", 0, 0, nil, false), "", "alpha\tmissing\t0 queued\t0 turns"},
-		{withQueue(mkStatus("busy", 4, 3, ptr(0), false), 1, map[string]int{"gamma": 1, "beta": 2}), "running",
-			"alpha\tbusy\t4 queued (1 now, 2 from beta, 1 from gamma)\t3 turns"},
-		{withQueue(mkStatus("idle", 1, 3, ptr(0), false), 1, map[string]int{}), "running", "alpha\tidle\t1 queued (1 now)\t3 turns"},
+		{withQueue(mkStatus("busy", 4, 3, ptr(0), false), protocol.Queued{Queued: 2, Now: 1},
+			protocol.Queued{Sender: ptr("alpha"), Queued: 1}, protocol.Queued{Sender: ptr("beta"), Queued: 1, Now: 1}), "running",
+			"alpha\tbusy\t4 queued: 2 from you (1 now), 1 from alpha, 1 from beta (1 now)\t3 turns"},
+		{withQueue(mkStatus("idle", 1, 3, ptr(0), false), protocol.Queued{Queued: 1, Now: 1}), "running", "alpha\tidle\t1 queued: 1 from you (1 now)\t3 turns"},
+		{withQueue(mkStatus("idle", 1, 3, ptr(0), false), protocol.Queued{Sender: ptr("beta"), Queued: 1}), "running", "alpha\tidle\t1 queued: 1 from beta\t3 turns"},
+		// Only the operator's, none --now: just the count.
+		{withQueue(mkStatus("busy", 2, 3, ptr(0), false), protocol.Queued{Queued: 2}), "running", "alpha\tbusy\t2 queued\t3 turns"},
 	}
 	for _, c := range cases {
 		if got := statusLine("alpha", c.s, c.container); got != c.want {
@@ -400,7 +405,7 @@ func TestSendReadsStdinWhenThereIsNoMessage(t *testing.T) {
 	if want := "docker exec gnat-demo-control /opt/gnat/gnat-container control send from a pipe\n beta --now"; last != want {
 		t.Errorf("got %q, want %q", last, want)
 	}
-	if want := "message for beta will be delivered into its running turn at its next tool call, or start its next turn if it's idle\n"; out.String() != want {
+	if want := "message for beta will be delivered into its running turn at its next tool call, or start its next turn if it's idle or the turn ends first\n"; out.String() != want {
 		t.Errorf("out: %q", out)
 	}
 
@@ -437,7 +442,7 @@ func TestStatusMergesContainerStates(t *testing.T) {
 		case strings.HasPrefix(args, "ps -a"):
 			return result{stdout: "gnat-demo-control\ngnat-demo-alpha\n"}, nil
 		case strings.Contains(args, "gnat-container control status"):
-			return result{stdout: `{"agent": "alpha", "state": "idle", "queued": 3, "queued_now": 1, "queued_from": {"beta": 2}, "turns": 2, "exit": 0, "stopped": false}` + "\n" +
+			return result{stdout: `{"agent": "alpha", "state": "idle", "queued": 3, "queued_by": [{"sender": null, "queued": 1, "now": 1}, {"sender": "beta", "queued": 2, "now": 0}], "turns": 2, "exit": 0, "stopped": false}` + "\n" +
 				`{"agent": "beta", "state": "busy", "queued": 0, "turns": 0, "exit": null, "stopped": false}` + "\n"}, nil
 		}
 		return result{}, nil
@@ -446,7 +451,7 @@ func TestStatusMergesContainerStates(t *testing.T) {
 	if err := status("demo", nil); err != nil {
 		t.Fatal(err)
 	}
-	want := "alpha\tidle\t3 queued (1 now, 2 from beta)\t2 turns\nbeta\tmissing\t0 queued\t0 turns\n"
+	want := "alpha\tidle\t3 queued: 1 from you (1 now), 2 from beta\t2 turns\nbeta\tmissing\t0 queued\t0 turns\n"
 	if out.String() != want {
 		t.Errorf("got %q, want %q", out, want)
 	}
@@ -479,7 +484,7 @@ func TestStatusOfADownSwarmReadsWhatTheControlPlaneRecorded(t *testing.T) {
 	if err := status("demo", nil); err != nil {
 		t.Fatal(err)
 	}
-	want := "alpha\tdown\t3 queued (1 now, 1 from beta)\t3 turns\t1.2k in, 340 out, $1.23\nbeta\tdown\t0 queued\t0 turns\n"
+	want := "alpha\tdown\t3 queued: 2 from you (1 now), 1 from beta\t3 turns\t1.2k in, 340 out, $1.23\nbeta\tdown\t0 queued\t0 turns\n"
 	if out.String() != want {
 		t.Errorf("got %q, want %q", out, want)
 	}

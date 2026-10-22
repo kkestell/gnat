@@ -193,7 +193,7 @@ func (c *Control) describe(agent string) *protocol.Response {
 	defer c.mu.Unlock()
 	s := c.statuses[agent]
 	r := protocol.OK()
-	r.Queued, r.QueuedNow, r.QueuedFrom = queue.Total, queue.Now, queue.From
+	r.Queued, r.QueuedBy = queue.Total, queue.By
 	r.State, r.Turns, r.Exit, r.Stopped = s.State(), s.Turns, s.Exit, s.Stopped
 	r.Reply, r.Error = s.Reply, s.Error
 	total := c.usage[agent].total

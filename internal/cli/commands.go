@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
+
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +17,7 @@ import (
 	"github.com/kkestell/gnat/internal/events"
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/layout"
+	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/recorded"
 	"github.com/kkestell/gnat/internal/render"
 	"github.com/kkestell/gnat/internal/state"
@@ -715,7 +716,7 @@ func send(swarmName string, agentArgs []string, o sendOptions) error {
 			if len(names) > 1 {
 				whose = "each agent's"
 			}
-			fmt.Fprintf(stdout, "message for %s will be delivered into %s running turn at its next tool call, or start its next turn if it's idle\n",
+			fmt.Fprintf(stdout, "message for %s will be delivered into %s running turn at its next tool call, or start its next turn if it's idle or the turn ends first\n",
 				strings.Join(names, ", "), whose)
 		} else {
 			fmt.Fprintf(stdout, "queued message for %s\n", strings.Join(names, ", "))
@@ -777,16 +778,15 @@ func wait(swarmName string, agentArgs []string, timeout *float64) error {
 // agentStatus is a line of `gnat-container control status`: the control plane's view of
 // an agent.
 type agentStatus struct {
-	Agent       string         `json:"agent"`
-	State       string         `json:"state"`
-	Queued      int            `json:"queued"`
-	QueuedNow   int            `json:"queued_now"`
-	QueuedFrom  map[string]int `json:"queued_from"`
-	Turns       int            `json:"turns"`
-	Exit        *int           `json:"exit"`
-	Stopped     bool           `json:"stopped"`
-	SinceActive *float64       `json:"since_active"`
-	Usage       map[string]any `json:"usage"`
+	Agent       string            `json:"agent"`
+	State       string            `json:"state"`
+	Queued      int               `json:"queued"`
+	QueuedBy    []protocol.Queued `json:"queued_by"`
+	Turns       int               `json:"turns"`
+	Exit        *int              `json:"exit"`
+	Stopped     bool              `json:"stopped"`
+	SinceActive *float64          `json:"since_active"`
+	Usage       map[string]any    `json:"usage"`
 }
 
 // statusLine is one agent's line of `gnat status`. containerState is "" for a container
@@ -818,24 +818,27 @@ func statusLine(name string, s agentStatus, containerState string) string {
 	return strings.Join(fields, "\t")
 }
 
-// queued is how many messages are queued, and of those how many are --now messages still
-// waiting for delivery and how many each teammate sent, such as "3 queued (1 now, 2 from
-// beta)". A --now message from a teammate counts in both.
+// queued is how many messages are queued and, unless every one is the operator's and none
+// is a --now message still waiting for delivery, how many each sender sent and how many of
+// those are, such as "4 queued: 2 from you (1 now), 1 from alpha, 1 from beta (1 now)".
 func queued(s agentStatus) string {
-	var parts []string
-	if s.QueuedNow > 0 {
-		parts = append(parts, fmt.Sprintf("%d now", s.QueuedNow))
-	}
-	for _, sender := range slices.Sorted(maps.Keys(s.QueuedFrom)) {
-		if n := s.QueuedFrom[sender]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%d from %s", n, sender))
-		}
-	}
 	text := fmt.Sprintf("%d queued", s.Queued)
-	if len(parts) > 0 {
-		text += " (" + strings.Join(parts, ", ") + ")"
+	if !slices.ContainsFunc(s.QueuedBy, func(q protocol.Queued) bool { return q.Sender != nil || q.Now > 0 }) {
+		return text
 	}
-	return text
+	var parts []string
+	for _, q := range s.QueuedBy {
+		sender := "you"
+		if q.Sender != nil {
+			sender = *q.Sender
+		}
+		part := fmt.Sprintf("%d from %s", q.Queued, sender)
+		if q.Now > 0 {
+			part += fmt.Sprintf(" (%d now)", q.Now)
+		}
+		parts = append(parts, part)
+	}
+	return text + ": " + strings.Join(parts, ", ")
 }
 
 // duration is a time span such as 45s, 3m12s, or 1h05m.

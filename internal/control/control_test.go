@@ -655,16 +655,25 @@ func TestStatusBreaksDownTheQueue(t *testing.T) {
 	p.must(protocol.Request{Op: protocol.OpSend, Agent: "gamma", Text: "one", Sender: "alpha"})
 	p.must(protocol.Request{Op: protocol.OpSend, Agent: "gamma", Text: "two", Sender: "alpha"})
 	p.must(protocol.Request{Op: protocol.OpSend, Agent: "gamma", Text: "three", Now: true, Sender: "beta"})
+	alpha, beta := "alpha", "beta"
 	s := p.status("gamma")
-	if want := map[string]int{"alpha": 2, "beta": 1}; s.Queued != 5 || s.QueuedNow != 2 || !reflect.DeepEqual(s.QueuedFrom, want) {
-		t.Fatalf("got %d queued, %d now, from %v", s.Queued, s.QueuedNow, s.QueuedFrom)
+	// The operator's first, then each agent's by name.
+	want := []protocol.Queued{{Sender: nil, Queued: 2, Now: 1}, {Sender: &alpha, Queued: 2}, {Sender: &beta, Queued: 1, Now: 1}}
+	if s.Queued != 5 || !reflect.DeepEqual(s.QueuedBy, want) {
+		t.Fatalf("got %d queued, by %s", s.Queued, queuedBy(s.QueuedBy))
 	}
 	// Delivering the --now messages takes them out of the count.
 	p.must(protocol.Request{Op: protocol.OpTake, Agent: "gamma"})
 	s = p.status("gamma")
-	if want := map[string]int{"alpha": 2}; s.Queued != 3 || s.QueuedNow != 0 || !reflect.DeepEqual(s.QueuedFrom, want) {
-		t.Fatalf("got %d queued, %d now, from %v", s.Queued, s.QueuedNow, s.QueuedFrom)
+	want = []protocol.Queued{{Sender: nil, Queued: 1}, {Sender: &alpha, Queued: 2}}
+	if s.Queued != 3 || !reflect.DeepEqual(s.QueuedBy, want) {
+		t.Fatalf("got %d queued, by %s", s.Queued, queuedBy(s.QueuedBy))
 	}
+}
+
+func queuedBy(by []protocol.Queued) string {
+	b, _ := json.Marshal(by)
+	return string(b)
 }
 
 func TestAgentsMessageEachOther(t *testing.T) {
@@ -753,15 +762,18 @@ func TestRecordedWriteReadsTheStatusOfADownSwarm(t *testing.T) {
 			t.Fatal(err)
 		}
 		got = append(got, map[string]any{"agent": m["agent"], "state": m["state"], "queued": m["queued"],
-			"queued_now": m["queued_now"], "queued_from": m["queued_from"], "turns": m["turns"], "exit": m["exit"], "usage": m["usage"]})
+			"queued_by": m["queued_by"], "turns": m["turns"], "exit": m["exit"], "usage": m["usage"]})
 	}
 	none := map[string]any{"input_tokens": nil, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": nil, "cost": nil}
 	want := []map[string]any{
-		{"agent": "alpha", "state": "down", "queued": 0.0, "queued_now": 0.0, "queued_from": map[string]any{}, "turns": 1.0, "exit": 0.0,
+		{"agent": "alpha", "state": "down", "queued": 0.0, "queued_by": []any{}, "turns": 1.0, "exit": 0.0,
 			"usage": map[string]any{"input_tokens": 10.0, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": 5.0, "cost": 0.25}},
 		// Beta went down mid-turn, which coming back up reports as interrupted.
-		{"agent": "beta", "state": "down", "queued": 2.0, "queued_now": 1.0, "queued_from": map[string]any{"alpha": 1.0}, "turns": 1.0, "exit": nil, "usage": none},
-		{"agent": "gamma", "state": "down", "queued": 0.0, "queued_now": 0.0, "queued_from": map[string]any{}, "turns": 0.0, "exit": nil, "usage": none},
+		{"agent": "beta", "state": "down", "queued": 2.0, "queued_by": []any{
+			map[string]any{"sender": nil, "queued": 1.0, "now": 0.0},
+			map[string]any{"sender": "alpha", "queued": 1.0, "now": 1.0},
+		}, "turns": 1.0, "exit": nil, "usage": none},
+		{"agent": "gamma", "state": "down", "queued": 0.0, "queued_by": []any{}, "turns": 0.0, "exit": nil, "usage": none},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -927,7 +939,8 @@ func TestMainStatusAndStopPrintLikePythons(t *testing.T) {
 	if line["agent"] != "alpha" || line["ok"] != true || line["state"] != "starting" || line["exit"] != nil || line["since_active"] != nil {
 		t.Fatalf("got %v", line)
 	}
-	for _, k := range []string{"queued", "queued_now", "queued_from", "turns", "stopped", "reply", "error", "usage"} {
+	// queued_by is gnat's own, added to Python's fields.
+	for _, k := range []string{"queued", "queued_by", "turns", "stopped", "reply", "error", "usage"} {
 		if _, ok := line[k]; !ok {
 			t.Errorf("no %s", k)
 		}
