@@ -1,8 +1,11 @@
 package control
 
 import (
+	"bufio"
+	"crypto/rand"
 	"encoding/base64"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
@@ -10,7 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // gitFixture is a GitProxy serving a bare repository standing in for GitHub, with agents
@@ -55,7 +61,10 @@ func needGit(t *testing.T) {
 	}
 }
 
-func newGitFixture(t *testing.T) *gitFixture {
+func newGitFixture(t *testing.T) *gitFixture { return newGitFixtureAt(t, "/upstream.git") }
+
+// newGitFixtureAt is a fixture whose proxy fetches from GitHub at a path of it.
+func newGitFixtureAt(t *testing.T, path string) *gitFixture {
 	t.Helper()
 	needGit(t)
 	f := &gitFixture{t: t, home: t.TempDir()}
@@ -73,14 +82,14 @@ func newGitFixture(t *testing.T) *gitFixture {
 
 	p := startPlane(t, t.TempDir(), "alpha", "beta", "a..b")
 	proxy, err := p.control.NewGitProxy(GitConfig{
-		Swarm: "demo", Repo: "o/r", Token: fakeToken, Upstream: f.github.URL + "/upstream.git", Dir: t.TempDir(),
+		Swarm: "demo", Repo: "o/r", Token: fakeToken, Upstream: f.github.URL + path, Dir: t.TempDir(),
 		Secrets: map[string]string{"alpha": "alpha-secret", "beta": "beta-secret", "a..b": "dots-secret"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.proxy = proxy
-	proxy.fresh = 0 // So that what a test changes on GitHub is seen at once.
+	proxy.fresh.Store(0) // So that what a test changes on GitHub is seen at once.
 	f.server = httptest.NewServer(proxy)
 	t.Cleanup(f.server.Close)
 	return f
@@ -273,7 +282,7 @@ func TestGitHubGetsTheLastWordOnFastForwards(t *testing.T) {
 
 	// With a mirror that is behind GitHub, which a race could leave, the mirror sees a
 	// fast-forward and GitHub, which is pushed to without force, does not.
-	f.proxy.noSync = true
+	f.proxy.noSync.Store(true)
 	elsewhere := t.TempDir()
 	f.git(elsewhere, "clone", "--quiet", "-b", "demo/alpha/work", f.upstream, ".")
 	f.commit(elsewhere, "other.txt", "x\n")
@@ -398,8 +407,7 @@ func TestGitLetsAgentsWhoseNamesMakeNoBranchesFetchButNotPush(t *testing.T) {
 }
 
 func TestGitReportsAGitHubItCantReach(t *testing.T) {
-	f := newGitFixture(t)
-	f.proxy.Upstream = f.github.URL + "/gone.git"
+	f := newGitFixtureAt(t, "/gone.git")
 	out, err := f.run(f.home, "clone", f.url("alpha-secret"), filepath.Join(t.TempDir(), "c"))
 	if err == nil || !strings.Contains(out, "502") {
 		t.Errorf("err %v:\n%s", err, out)
@@ -446,5 +454,420 @@ func TestGitPreReceiveRefusesRefsNoRealClientWouldSend(t *testing.T) {
 	out, err := hook("demo/alpha/", zero+" "+head+" refs/heads/demo/alpha/x")
 	if err == nil || !strings.Contains(out, "GitHub refused the push") {
 		t.Errorf("a good ref: err %v:\n%s", err, out)
+	}
+}
+
+func TestGitTakesNoPushOptions(t *testing.T) {
+	f := newGitFixture(t)
+	dir := f.clone("alpha-secret")
+	f.git(dir, "checkout", "--quiet", "-b", "demo/alpha/work")
+	f.commit(dir, "a.txt", "one\n")
+	before := f.refs()
+	out, err := f.run(dir, "push", "-o", "ci.skip", "origin", "demo/alpha/work")
+	if err == nil || !strings.Contains(out, "push options") {
+		t.Errorf("err %v:\n%s", err, out)
+	}
+	if f.refs() != before {
+		t.Errorf("GitHub changed:\n%s", f.refs())
+	}
+	mirror := filepath.Join(f.proxy.root, mirrorName)
+	if got := strings.TrimSpace(f.git(mirror, "config", "receive.advertisePushOptions")); got != "false" {
+		t.Errorf("advertisePushOptions = %q", got)
+	}
+	// And without the option, the same push goes through.
+	f.git(dir, "push", "--quiet", "origin", "demo/alpha/work")
+}
+
+func TestGitSerializesConcurrentPushes(t *testing.T) {
+	f := newGitFixture(t)
+	type result struct {
+		name string
+		out  string
+		err  error
+	}
+	work := func(secret, branch string) func() result {
+		dir := f.clone(secret)
+		f.git(dir, "checkout", "--quiet", "-b", branch)
+		f.commit(dir, branch[strings.LastIndex(branch, "/")+1:]+".txt", branch+"\n")
+		return func() result {
+			out, err := f.run(dir, "push", "--quiet", "origin", branch)
+			return result{branch, out, err}
+		}
+	}
+	var pushes []func() result
+	for _, b := range []string{"demo/alpha/a", "demo/alpha/b", "demo/alpha/c"} {
+		pushes = append(pushes, work("alpha-secret", b))
+	}
+	for _, b := range []string{"demo/beta/a", "demo/beta/b", "demo/beta/c"} {
+		pushes = append(pushes, work("beta-secret", b))
+	}
+	results := make(chan result, len(pushes))
+	for _, push := range pushes {
+		go func() { results <- push() }()
+	}
+	for range pushes {
+		if r := <-results; r.err != nil {
+			t.Errorf("%s: %v\n%s", r.name, r.err, r.out)
+		}
+	}
+	for _, b := range []string{"alpha/a", "alpha/b", "alpha/c", "beta/a", "beta/b", "beta/c"} {
+		if !strings.Contains(f.refs(), "refs/heads/demo/"+b) {
+			t.Errorf("GitHub lacks %s:\n%s", b, f.refs())
+		}
+	}
+}
+
+func TestGitLetsOnlyOneOfTwoPushesToTheSameBranchWin(t *testing.T) {
+	f := newGitFixture(t)
+	first, second := f.clone("alpha-secret"), f.clone("alpha-secret")
+	for i, dir := range []string{first, second} {
+		f.git(dir, "checkout", "--quiet", "-b", "demo/alpha/work")
+		f.commit(dir, "a.txt", []string{"one\n", "two\n"}[i])
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, dir := range []string{first, second} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = f.run(dir, "push", "--quiet", "origin", "demo/alpha/work")
+		}()
+	}
+	wg.Wait()
+	if (errs[0] == nil) == (errs[1] == nil) {
+		t.Fatalf("errors %v and %v: want exactly one push to win", errs[0], errs[1])
+	}
+	winner := first
+	if errs[0] != nil {
+		winner = second
+	}
+	want := strings.TrimSpace(f.git(winner, "rev-parse", "HEAD"))
+	if got := strings.TrimSpace(f.git(f.upstream, "rev-parse", "refs/heads/demo/alpha/work")); got != want {
+		t.Errorf("GitHub has %s, want the winner's %s", got, want)
+	}
+}
+
+// pushOf pushes a commit that was made by hand, to the agent's branch.
+func (f *gitFixture) pushOf(dir, sha string) (string, error) {
+	return f.run(dir, "push", "origin", sha+":refs/heads/demo/alpha/work")
+}
+
+func TestGitTreatsWhatIsPushedAsDataNotAsConfiguration(t *testing.T) {
+	f := newGitFixture(t)
+	mirror := filepath.Join(f.proxy.root, mirrorName)
+	configBefore, _ := os.ReadFile(filepath.Join(mirror, "config"))
+	hooks := func() string {
+		entries, err := os.ReadDir(filepath.Join(mirror, "hooks"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		return strings.Join(names, ",")
+	}
+	hooksBeforeNames := hooks()
+
+	// A submodule that points at a server of its own, which must never be asked for anything.
+	var asked atomic.Int64
+	trap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(trap.Close)
+
+	dir := f.clone("alpha-secret")
+	f.git(dir, "checkout", "--quiet", "-b", "demo/alpha/work")
+	head := strings.TrimSpace(f.git(dir, "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(dir, ".gitmodules"),
+		[]byte("[submodule \"sub\"]\n\tpath = sub\n\turl = "+trap.URL+"/sub.git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A filter and attributes of every kind git acts on.
+	if err := os.WriteFile(filepath.Join(dir, ".gitattributes"),
+		[]byte("* filter=evil ident export-subst diff=evil merge=evil\n*.txt text eol=crlf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.git(dir, "add", ".gitmodules", ".gitattributes")
+	f.git(dir, "update-index", "--add", "--cacheinfo", "160000,"+head+",sub")
+	f.git(dir, "commit", "--quiet", "-m", "submodule and attributes")
+	f.git(dir, "push", "--quiet", "origin", "demo/alpha/work")
+
+	// Then the mirror is synced again, and a clone is made of it: that is when a mirror
+	// that followed submodules, or took anything from the content, would show it.
+	f.proxy.fresh.Store(int64(0))
+	f.git(dir, "fetch", "--quiet", "origin")
+	other := f.clone("beta-secret")
+	f.git(other, "fetch", "--quiet", "origin")
+	if n := asked.Load(); n != 0 {
+		t.Errorf("the submodule's server was asked %d times", n)
+	}
+	if _, err := os.Stat(filepath.Join(mirror, "modules")); err == nil {
+		t.Error("the mirror has submodules")
+	}
+	if configAfter, _ := os.ReadFile(filepath.Join(mirror, "config")); string(configAfter) != string(configBefore) {
+		t.Errorf("the mirror's config changed:\n%s", configAfter)
+	}
+	if got := hooks(); got != hooksBeforeNames {
+		t.Errorf("hooks %q, was %q", got, hooksBeforeNames)
+	}
+	for _, setting := range []string{"fetch.recurseSubmodules", "submodule.recurse", "receive.fsckObjects", "receive.denyDeletes", "receive.denyNonFastForwards"} {
+		want := "false"
+		if setting == "receive.fsckObjects" || strings.HasPrefix(setting, "receive.deny") {
+			want = "true"
+		}
+		if got := strings.TrimSpace(f.git(mirror, "config", setting)); got != want {
+			t.Errorf("%s = %q", setting, got)
+		}
+	}
+}
+
+func TestGitRefusesContentThatAttacksACheckout(t *testing.T) {
+	f := newGitFixture(t)
+	dir := f.clone("alpha-secret")
+	f.git(dir, "checkout", "--quiet", "-b", "demo/alpha/work")
+	good := f.refs()
+
+	commit := func(tree string) string {
+		return strings.TrimSpace(f.git(dir, "commit-tree", "-p", "HEAD", "-m", "x", tree))
+	}
+	blob := func(content string) string {
+		cmd := exec.Command("git", "hash-object", "-w", "--stdin")
+		cmd.Dir = dir
+		cmd.Stdin = strings.NewReader(content)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	mktree := func(lines ...string) string {
+		cmd := exec.Command("git", "mktree")
+		cmd.Dir = dir
+		cmd.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("mktree: %v\n%s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	config := blob("[core]\n\tfsmonitor = touch /tmp/pwned\n")
+	hook := blob("#!/bin/sh\ntouch /tmp/pwned\n")
+	for name, tree := range map[string]string{
+		// A .git directory in the tree, which a checkout would put hooks and config in.
+		"a .git directory":   mktree("040000 tree " + mktree("100644 blob "+config+"\tconfig") + "\t.git"),
+		"a .git hook":        mktree("040000 tree " + mktree("040000 tree "+mktree("100755 blob "+hook+"\tpost-checkout")+"\thooks") + "\t.git"),
+		"a case-folded .GIT": mktree("040000 tree " + mktree("100644 blob "+config+"\tconfig") + "\t.GIT"),
+		// A .gitmodules that a clone's `git submodule` would act on.
+		"an option as a submodule URL": mktree("100644 blob " + blob("[submodule \"x\"]\n\tpath = x\n\turl = -u./payload\n") + "\t.gitmodules"),
+		"a .gitmodules symlink":        mktree("120000 blob " + blob("/etc/passwd") + "\t.gitmodules"),
+	} {
+		sha := commit(tree)
+		out, err := f.pushOf(dir, sha)
+		if err == nil {
+			t.Errorf("%s: pushed\n%s", name, out)
+		}
+		if f.refs() != good {
+			t.Errorf("%s: GitHub changed:\n%s", name, f.refs())
+		}
+	}
+}
+
+// rawRequest sends the start of a request to the proxy by hand, and returns the
+// connection to carry on with.
+func (f *gitFixture) rawRequest(secret, request string) net.Conn {
+	f.t.Helper()
+	conn, err := net.Dial("tcp", f.server.Listener.Addr().String())
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { conn.Close() })
+	auth := base64.StdEncoding.EncodeToString([]byte("agent:" + secret))
+	if _, err := io.WriteString(conn, strings.Replace(request, "{AUTH}", auth, 1)); err != nil {
+		f.t.Fatal(err)
+	}
+	return conn
+}
+
+const stalledPush = "POST /o/r.git/git-receive-pack HTTP/1.1\r\nHost: control\r\nAuthorization: Basic {AUTH}\r\n" +
+	"Content-Type: application/x-git-receive-pack-request\r\nContent-Length: 1000\r\n\r\n0000"
+
+func TestGitAStalledPushDoesNotBlockOthers(t *testing.T) {
+	f := newGitFixture(t)
+	// Three requests that never send the rest of their body, from three agents' worth of
+	// patience, and an agent with all of its places taken.
+	for range agentSlots {
+		f.rawRequest("alpha-secret", stalledPush)
+	}
+	time.Sleep(100 * time.Millisecond) // Let them arrive.
+
+	dir := f.clone("beta-secret")
+	f.git(dir, "checkout", "--quiet", "-b", "demo/beta/work")
+	f.commit(dir, "b.txt", "x\n")
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.run(dir, "push", "--quiet", "origin", "demo/beta/work")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("a push waited on requests that never finished sending")
+	}
+	if !strings.Contains(f.refs(), "refs/heads/demo/beta/work") {
+		t.Errorf("GitHub lacks the push:\n%s", f.refs())
+	}
+}
+
+func TestGitDropsARequestThatStopsSending(t *testing.T) {
+	f := newGitFixture(t)
+	f.proxy.bodyIdle.Store(int64(200 * time.Millisecond))
+	conn := f.rawRequest("alpha-secret", stalledPush)
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusRequestTimeout {
+		t.Errorf("status %d", resp.StatusCode)
+	}
+	// A request that is turned away isn't waited on for the rest of its body either.
+	for name, request := range map[string]string{
+		"no credentials":   strings.Replace(stalledPush, "Authorization: Basic {AUTH}\r\n", "", 1),
+		"another path":     strings.Replace(stalledPush, "/o/r.git/git-receive-pack", "/o/other.git/git-receive-pack", 1),
+		"a wrong password": strings.Replace(stalledPush, "{AUTH}", "d3Jvbmc6d3Jvbmc=", 1),
+	} {
+		conn := f.rawRequest("alpha-secret", request)
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+		} else if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: status %d", name, resp.StatusCode)
+		}
+	}
+	// Its place is free again, and nothing is left in the spool.
+	f.proxy.agentSlots["alpha"] <- struct{}{}
+	<-f.proxy.agentSlots["alpha"]
+	if entries, _ := os.ReadDir(f.proxy.spool); len(entries) != 0 {
+		t.Errorf("spool has %d files", len(entries))
+	}
+}
+
+func TestGitRefusesAPushOverTheLimit(t *testing.T) {
+	f := newGitFixture(t)
+	f.proxy.maxPush.Store(1024)
+	dir := f.clone("alpha-secret")
+	f.git(dir, "checkout", "--quiet", "-b", "demo/alpha/work")
+	big := make([]byte, 1<<20)
+	if _, err := rand.Read(big); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.git(dir, "add", "big.bin")
+	f.git(dir, "commit", "--quiet", "-m", "big")
+	before := f.refs()
+	out, err := f.run(dir, "push", "origin", "demo/alpha/work")
+	if err == nil || !strings.Contains(out, "413") {
+		t.Errorf("err %v:\n%s", err, out)
+	}
+	if f.refs() != before {
+		t.Errorf("GitHub changed:\n%s", f.refs())
+	}
+	// Said up front by a request that says how big it is.
+	conn := f.rawRequest("alpha-secret", strings.Replace(stalledPush, "Content-Length: 1000", "Content-Length: 2000", 1))
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil || resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("%v, %v", resp, err)
+	}
+	if entries, _ := os.ReadDir(f.proxy.spool); len(entries) != 0 {
+		t.Errorf("spool has %d files", len(entries))
+	}
+}
+
+func TestGitFetchesFromGitHubNoMoreOftenThanItsFreshness(t *testing.T) {
+	f := newGitFixture(t)
+	f.proxy.fresh.Store(int64(time.Hour))
+	advertise := func(service string) int {
+		req, _ := http.NewRequest("GET", f.server.URL+"/o/r.git/info/refs?service="+service, nil)
+		req.SetBasicAuth("agent", "alpha-secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	var wg sync.WaitGroup
+	for i := range 40 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if code := advertise([]string{"git-receive-pack", "git-upload-pack"}[i%2]); code != http.StatusOK {
+				t.Errorf("status %d", code)
+			}
+		}()
+	}
+	wg.Wait()
+	for range 10 {
+		advertise("git-receive-pack")
+	}
+	if n := f.proxy.syncs.Load(); n != 1 {
+		t.Errorf("fetched from GitHub %d times", n)
+	}
+	// Once it's stale again, the next asks for another.
+	f.proxy.fresh.Store(int64(0))
+	advertise("git-receive-pack")
+	if n := f.proxy.syncs.Load(); n != 2 {
+		t.Errorf("fetched from GitHub %d times", n)
+	}
+}
+
+func TestGitTellsARequestThatCantGetATurnToRetry(t *testing.T) {
+	f := newGitFixture(t)
+	f.proxy.slotWait.Store(int64(100 * time.Millisecond))
+	advertise := func(secret string) *http.Response {
+		req, _ := http.NewRequest("GET", f.server.URL+"/o/r.git/info/refs?service=git-upload-pack", nil)
+		req.SetBasicAuth("agent", secret)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+	// An agent with all of its places taken waits, and then is told to come back; another
+	// agent isn't held up by it.
+	for range agentSlots {
+		f.proxy.agentSlots["alpha"] <- struct{}{}
+	}
+	if resp := advertise("alpha-secret"); resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" {
+		t.Errorf("alpha: %d %v", resp.StatusCode, resp.Header)
+	}
+	if resp := advertise("beta-secret"); resp.StatusCode != http.StatusOK {
+		t.Errorf("beta: %d", resp.StatusCode)
+	}
+	for range agentSlots {
+		<-f.proxy.agentSlots["alpha"]
+	}
+	// And all of them together are limited too.
+	for range totalSlots {
+		f.proxy.slots <- struct{}{}
+	}
+	if resp := advertise("beta-secret"); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("beta with everything taken: %d", resp.StatusCode)
+	}
+	for range totalSlots {
+		<-f.proxy.slots
+	}
+	if resp := advertise("alpha-secret"); resp.StatusCode != http.StatusOK {
+		t.Errorf("alpha after: %d", resp.StatusCode)
 	}
 }
