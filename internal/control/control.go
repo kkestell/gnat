@@ -27,14 +27,10 @@ import (
 
 	"github.com/kkestell/gnat/internal/events"
 	"github.com/kkestell/gnat/internal/protocol"
+	"github.com/kkestell/gnat/internal/recorded"
 	"github.com/kkestell/gnat/internal/render"
 	"github.com/kkestell/gnat/internal/state"
 )
-
-// LogDir is where the control container keeps each agent's readable log
-// (<agent>.log), events.jsonl, and control.db; it is a bind mount of the swarm's logs
-// directory on the host, so they survive `gnat down`.
-const LogDir = "/var/log/gnat"
 
 // EventsFile records what every agent sees and does, one {"agent", "event"} object per
 // line, for the web UI. Events are the agents' (see the events package) and the control
@@ -44,10 +40,6 @@ const LogDir = "/var/log/gnat"
 // "stopped"} when its turn ends, with a null exit if the agent restarted before the turn
 // could finish, and stopped true if `gnat stop` ended it.
 const EventsFile = "events.jsonl"
-
-// DBFile holds each agent's queued messages and how its last turn went, so a swarm that
-// goes down and comes back up carries on where it was.
-const DBFile = "control.db"
 
 // DefaultMaxRequestBytes is the longest line the control plane reads. One event can be
 // far longer than a typical line limit: a long Claude thinking block's signature alone
@@ -160,7 +152,7 @@ func Prepare(logDir string, agents []string) (*sql.DB, error) {
 		}
 		f.Close()
 	}
-	return Connect(filepath.Join(logDir, DBFile))
+	return Connect(filepath.Join(logDir, recorded.DBFile))
 }
 
 func logNames(agents []string) []string {

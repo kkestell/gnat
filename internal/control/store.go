@@ -2,16 +2,11 @@ package control
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/kkestell/gnat/internal/events"
-	"github.com/kkestell/gnat/internal/protocol"
+	"github.com/kkestell/gnat/internal/recorded"
 	_ "modernc.org/sqlite" // The database driver.
 )
 
@@ -273,27 +268,11 @@ func newStatus(db *sql.DB, agent string) (*Status, error) {
 // load reads the agent's status from the database, leaving it as it is if the database
 // has none.
 func (s *Status) load() error {
-	var busy, stopped int
-	var exit sql.NullInt64
-	var reply, failure sql.NullString
-	err := s.db.QueryRow("SELECT busy, turns, exit, reply, error, stopped FROM statuses WHERE agent = ?",
-		s.agent).Scan(&busy, &s.Turns, &exit, &reply, &failure, &stopped)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	} else if err != nil {
+	t, found, err := recorded.LoadTurn(s.db, s.agent)
+	if err != nil || !found {
 		return err
 	}
-	s.Busy, s.Stopped = busy != 0, stopped != 0
-	if exit.Valid {
-		code := int(exit.Int64)
-		s.Exit = &code
-	}
-	if reply.Valid {
-		s.Reply = &reply.String
-	}
-	if failure.Valid {
-		s.Error = &failure.String
-	}
+	s.Busy, s.Turns, s.Exit, s.Reply, s.Error, s.Stopped = t.Busy, t.Turns, t.Exit, t.Reply, t.Error, t.Stopped
 	return nil
 }
 
@@ -332,15 +311,7 @@ func newUsage(db *sql.DB, agent string) (*usageTotal, error) {
 
 // load reads the agent's totals from the database, leaving them as they are if the
 // database has none.
-func (u *usageTotal) load() error {
-	t := &u.total
-	err := u.db.QueryRow("SELECT input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, cost FROM usage WHERE agent = ?",
-		u.agent).Scan(&t.InputTokens, &t.CacheReadTokens, &t.CacheWriteTokens, &t.OutputTokens, &t.Cost)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	return err
-}
+func (u *usageTotal) load() error { return recorded.LoadUsage(u.db, u.agent, &u.total) }
 
 // add totals a usage event's reported fields.
 func (u *usageTotal) add(event events.Event) error {
@@ -373,53 +344,4 @@ func b2i(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-// WriteRecorded writes each agent's status as `status` does, from what control.db in
-// logDir last recorded, for `gnat status` while the swarm is down. It only reads the
-// database. A turn an agent was running when the swarm went down is reported as
-// interrupted, as it will be when the swarm comes back up.
-func WriteRecorded(logDir string, agents []string, w io.Writer) error {
-	path := filepath.Join(logDir, DBFile)
-	var db *sql.DB
-	if _, err := os.Stat(path); err == nil {
-		if db, err = sql.Open("sqlite", path); err != nil {
-			return err
-		}
-		defer db.Close()
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	for _, agent := range agents {
-		s := &Status{db: db, agent: agent}
-		u := &usageTotal{db: db, agent: agent}
-		var queued int
-		if db != nil {
-			if err := db.QueryRow("SELECT COUNT(*) FROM messages WHERE agent = ?", agent).Scan(&queued); err != nil {
-				return err
-			}
-			if err := s.load(); err != nil {
-				return err
-			}
-			if err := u.load(); err != nil {
-				return err
-			}
-		}
-		if s.Busy {
-			s.Busy, s.Exit, s.Stopped = false, nil, false
-			s.Turns++
-		}
-		r := protocol.OK()
-		r.State, r.Queued, r.Turns, r.Exit, r.Stopped = "down", queued, s.Turns, s.Exit, s.Stopped
-		r.Reply, r.Error = s.Reply, s.Error
-		r.Usage = &u.total
-		line, err := protocol.Encode(statusLine(agent, r))
-		if err != nil {
-			return err
-		}
-		if _, err := w.Write(line); err != nil {
-			return err
-		}
-	}
-	return nil
 }

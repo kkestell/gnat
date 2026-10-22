@@ -16,9 +16,6 @@ import (
 	"github.com/kkestell/gnat/internal/state"
 )
 
-// Port is the port the UI is served on inside the control container.
-const Port = 8080
-
 // Events is what the UI needs from the control plane.
 //
 // TODO(control): internal/control's control plane should implement this; it

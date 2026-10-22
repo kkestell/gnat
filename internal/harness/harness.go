@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/kkestell/gnat/internal/events"
-	"github.com/kkestell/gnat/internal/hook"
 	"github.com/kkestell/gnat/internal/layout"
 )
 
@@ -102,7 +101,7 @@ func Get(name string) (Harness, error) {
 
 // hookTimeoutSeconds is how long the harness waits on the hook: twice the hook's own
 // timeout on the control plane.
-const hookTimeoutSeconds = hook.TimeoutSeconds * 2
+const hookTimeoutSeconds = layout.HookTimeoutSeconds * 2
 
 // hookSettings is the settings that install gnat's PostToolUse hook, which both harnesses
 // run after each tool call.

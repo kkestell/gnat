@@ -2,7 +2,7 @@
 
 ## Building
 
-`make install` cross-builds the static linux `gnat` binaries containers run (amd64 and arm64), embeds them in the host binary, and installs it with `go install`. Rerun it after pulling.
+`make install` cross-builds the static linux `gnat-container` binaries containers run (amd64 and arm64), embeds them in the `gnat` binary, and installs it with `go install`. Rerun it after pulling.
 
 It also installs the bundled profiles, from the repository's `profiles/agents`
 and `profiles/swarms`, into `~/.config/gnat/profiles/agents` and
@@ -33,7 +33,7 @@ Agents run with permissions skipped and hold these credentials, so anything that
 
 `gnat up` builds `gnat-agent` from `internal/cli/Dockerfile`: `claude`, `ox-server` (from Ox's main branch on every build), `git`, `gh`, `python3`, `uv`, build-essential, and common command-line tools, with an `agent` user (UID 1000) that owns `/workspace`.
 
-To add packages or files, pass `gnat create --dockerfile FILE`, where `FILE` starts `FROM gnat-agent` (see `Dockerfile` in this repo). It is built with its own directory as the context, usually a checkout of the swarm's repository. Containers always start as UID 1000 in `/workspace` with `/opt/gnat/gnat` as the entrypoint, so a trailing `USER`, `WORKDIR`, `ENTRYPOINT`, or `CMD` doesn't matter. `gnat up` fails if the image lacks `git`, `gh`, or a harness the swarm uses.
+To add packages or files, pass `gnat create --dockerfile FILE`, where `FILE` starts `FROM gnat-agent` (see `Dockerfile` in this repo). It is built with its own directory as the context, usually a checkout of the swarm's repository. Containers always start as UID 1000 in `/workspace` with `/opt/gnat/gnat-container` as the entrypoint, so a trailing `USER`, `WORKDIR`, `ENTRYPOINT`, or `CMD` doesn't matter. `gnat up` fails if the image lacks `git`, `gh`, or a harness the swarm uses.
 
 ## Files outside source control
 

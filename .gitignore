@@ -2,6 +2,6 @@
 /bin/
 /dist/
 .ref/
-# Linux binaries `make install` builds for containers and embeds in the host binary.
+# Linux gnat-container binaries `make linux` builds and embeds in the host binary.
 /internal/workspace/bin/*
 !/internal/workspace/bin/.gitkeep

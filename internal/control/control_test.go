@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/kkestell/gnat/internal/events"
+	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/protocol"
+	"github.com/kkestell/gnat/internal/recorded"
 	"github.com/kkestell/gnat/internal/web"
 )
 
@@ -669,7 +671,7 @@ func TestUsageIsTotalledPerAgent(t *testing.T) {
 	}
 }
 
-func TestWriteRecordedReadsTheStatusOfADownSwarm(t *testing.T) {
+func TestRecordedWriteReadsTheStatusOfADownSwarm(t *testing.T) {
 	dir := t.TempDir()
 	p := startPlane(t, dir, "alpha", "beta")
 	alpha, beta := p.attach("alpha"), p.attach("beta")
@@ -684,7 +686,7 @@ func TestWriteRecordedReadsTheStatusOfADownSwarm(t *testing.T) {
 	p.close()
 
 	var out strings.Builder
-	if err := WriteRecorded(dir, []string{"alpha", "beta", "gamma"}, &out); err != nil {
+	if err := recorded.Write(dir, []string{"alpha", "beta", "gamma"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	var got []map[string]any
@@ -709,10 +711,10 @@ func TestWriteRecordedReadsTheStatusOfADownSwarm(t *testing.T) {
 	}
 }
 
-func TestWriteRecordedWithoutADatabase(t *testing.T) {
+func TestRecordedWriteWithoutADatabase(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "never-up")
 	var out strings.Builder
-	if err := WriteRecorded(dir, []string{"alpha"}, &out); err != nil {
+	if err := recorded.Write(dir, []string{"alpha"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"turns":0`) {
@@ -889,7 +891,7 @@ func TestMainStatusAndStopPrintLikePythons(t *testing.T) {
 	// send takes flags after the positionals, as argparse does, and --wait times out
 	// while the agent has no daemon.
 	out.Reset()
-	if code := run([]string{"send", "hi", "alpha", "--wait", "--timeout", "0.1"}, &out, &errOut); code != TimeoutStatus {
+	if code := run([]string{"send", "hi", "alpha", "--wait", "--timeout", "0.1"}, &out, &errOut); code != layout.TimeoutStatus {
 		t.Fatalf("exit %d", code)
 	}
 	if !strings.Contains(errOut.String(), "timed out waiting for alpha") {

@@ -1,5 +1,4 @@
-// Package cli is gnat's command line: the host commands and the hidden subcommands the
-// containers run.
+// Package cli is gnat's command line, the commands users run on the host.
 package cli
 
 import (

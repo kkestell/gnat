@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"github.com/kkestell/gnat/internal/control"
+	"github.com/kkestell/gnat/internal/layout"
 	"os"
 	"reflect"
 	"strings"
@@ -50,10 +50,10 @@ func TestFailuresExit1WithTheMessage(t *testing.T) {
 func TestACommandsOwnStatusIsPassedThrough(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"))
 	useExec(t, listing([]string{"gnat-demo-control"}, nil, func(c command) (result, error) {
-		return result{}, &exitError{Code: control.TimeoutStatus}
+		return result{}, &exitError{Code: layout.TimeoutStatus}
 	}))
 	status, _, errs := runGnat(t, "wait", "demo", "--timeout", "5")
-	if status != control.TimeoutStatus || errs != "" {
+	if status != layout.TimeoutStatus || errs != "" {
 		t.Errorf("status %d, stderr %q", status, errs)
 	}
 }
@@ -65,7 +65,7 @@ func TestFlagsMayFollowPositionals(t *testing.T) {
 	if status != 0 || out != "queued message for alpha, beta\n" {
 		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
 	}
-	want := "docker exec gnat-demo-control /opt/gnat/gnat internal control send hello world alpha beta --now"
+	want := "docker exec gnat-demo-control /opt/gnat/gnat-container control send hello world alpha beta --now"
 	if last := f.lines()[len(f.lines())-1]; last != want {
 		t.Errorf("got %q, want %q", last, want)
 	}
@@ -99,21 +99,7 @@ func TestLogsTailsTheHostLogs(t *testing.T) {
 	}
 }
 
-func TestInternalSubcommandsGetTheirArgumentsUntouched(t *testing.T) {
-	var got []string
-	saved := internalMains["send"]
-	internalMains["send"] = func(args []string) int { got = args; return 3 }
-	t.Cleanup(func() { internalMains["send"] = saved })
-	status, _, errs := runGnat(t, "internal", "send", "alpha", "-m", "hi", "--now", "--help")
-	if status != 3 || errs != "" {
-		t.Errorf("status %d, stderr %q", status, errs)
-	}
-	if want := []string{"alpha", "-m", "hi", "--now", "--help"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestInternalIsHiddenFromHelp(t *testing.T) {
+func TestHelpListsOnlyUserCommands(t *testing.T) {
 	_, out, _ := runGnat(t, "--help")
 	if strings.Contains(out, "internal") {
 		t.Errorf("help lists internal:\n%s", out)

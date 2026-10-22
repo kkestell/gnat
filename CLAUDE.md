@@ -5,8 +5,9 @@ gnat is a Go port of `swarm` (Python): run a swarm of coding agents, each in its
 ## Commands
 
 ```sh
-make build     # go build -o gnat ./cmd/gnat
-make install   # go install ./cmd/gnat (will embed the linux container binaries)
+make linux     # cross-build the static linux gnat-container binaries into internal/workspace/bin
+make build     # make linux, then go build -o gnat ./cmd/gnat
+make install   # make linux, then go install ./cmd/gnat (embeds the gnat-container binaries)
 make ui        # build the web UI (ui/) into internal/web/dist; commit the result
 make test      # go test ./..., bun test
 make lint      # go vet, staticcheck, gofmt check, tsc
@@ -20,7 +21,7 @@ go build ./... && go vet ./... && staticcheck ./... && test -z "$(gofmt -l .)" &
 
 After changing `ui/`, also `make ui`, `cd ui && bun test && bun run typecheck`, and commit `internal/web/dist`.
 
-Containers run the same `gnat` binary (static linux build at `/opt/gnat/gnat`); what ran as Python modules there are hidden subcommands, `gnat internal control|agent|hook|send` (`layout.Command`). SQLite is `modernc.org/sqlite` (pure Go).
+Containers run a separate binary, `gnat-container` (`cmd/gnat-container`, a static linux build at `/opt/gnat/gnat-container`, embedded in `gnat` and copied in by `gnat up`); what ran as Python modules there are its subcommands, `gnat-container control|agent|hook|send` (`layout.Command`). The two binaries share no code beyond the small packages below: `gnat` must not link `control`, `agent`, or `hook`, and `gnat-container` must not link `cli`, `keyring`, or `workspace`. Check with `go list -deps ./cmd/gnat` and `go list -deps ./cmd/gnat-container`. The host reads `control.db` through `recorded`, never `control`. SQLite is `modernc.org/sqlite` (pure Go).
 
 ## Testing with a live swarm
 
@@ -28,21 +29,22 @@ Use `kkestell/gnat-sandbox`, a private throwaway repository with a tiny Python l
 
 ## Packages
 
-One binary, `cmd/gnat`; everything else is under `internal/`.
+Two binaries, `cmd/gnat` (the host's commands) and `cmd/gnat-container` (what runs in containers); everything else is under `internal/`.
 
 - `events`: the event format every harness is translated into (`Event` maps, constructors, `UsageTotals`).
 - `protocol`: wire types (`Request`, `Response`, `Line`) and the one-shot request client (`Call`).
 - `state`: swarm definitions as JSON under `$XDG_STATE_HOME/gnat/swarms`; names and workspace paths.
 - `render`: events to readable log lines, and `UsageSummary`.
-- `layout`: container paths and identities (workspace, home, UID, binary, files dir) and `Command`.
+- `layout`: container paths and identities (workspace, home, UID, binary, files dir, log dir, ports) and `Command`; also `wait`'s timeout status and the hook's timeout.
+- `recorded`: reads `control.db`, which `control` writes and the host reads for `gnat status` while a swarm is down.
 - `control`: the control plane (mailboxes, status, usage, logs, `control.db`).
 - `web`: serves the web UI (embedded from `internal/web/dist`), `/agents`, and the `/events` stream.
 - `harness`: the programs an agent runs turns with (Claude, ACP, Ox).
 - `agent`: the agent daemon, the container's main process.
-- `hook`: the PostToolUse hook that delivers `--now` messages.
+- `hook`: the PostToolUse hook that delivers `--now` messages, and `gnat-container send`.
 - `workspace`: cloning, files, instructions, and archives for containers.
 - `keyring`: harness credentials in the system keyring (macOS `security`, `secret-tool` elsewhere).
-- `cli`: the command line, host commands and hidden subcommands (`cli.Run`).
+- `cli`: the host's command line (`cli.Run`).
 
 The web UI is `ui/`, a Bun + React + Tailwind app: `swarm.ts` turns events into each agent's transcript, usage, and latest entries; `markdown.js` is a hand-written, DOM-building Markdown renderer (no HTML parsing, http(s)/mailto links only). `bun dev` in `ui/` runs it with hot reloading on http://localhost:5180 against a pretend swarm (`ui/mock/swarm.ts`); with `GNAT_URL=$(gnat web SWARM --no-open)`, against a running one.
 

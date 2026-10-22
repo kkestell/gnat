@@ -1,7 +1,7 @@
 // Package workspace is the host's side of setting up an agent's container: the tar
-// archives `gnat up` copies in, the instructions every agent gets, and the linux gnat
-// binaries embedded in the host binary. What runs inside the container, cloning the
-// repository and installing files, is the agent package's.
+// archives `gnat up` copies in, the instructions every agent gets, and the linux
+// gnat-container binaries embedded in the host binary. What runs inside the container,
+// cloning the repository and installing files, is the agent package's.
 package workspace
 
 import (
@@ -34,13 +34,13 @@ func StagedPath(index int) string {
 	return layout.FilesDir + "/" + strconv.Itoa(index)
 }
 
-// ErrNoBinary is a gnat binary for the container's architecture that isn't embedded, as
-// in a binary built without `make install`.
-var ErrNoBinary = errors.New("no linux gnat binary is embedded; build gnat with `make install`")
+// ErrNoBinary is a gnat-container binary for the container's architecture that isn't
+// embedded, as in a binary built without `make linux`.
+var ErrNoBinary = errors.New("no linux gnat-container binary is embedded; build gnat with `make install`")
 
-// Binary is the embedded linux gnat binary for the architecture (amd64 or arm64).
+// Binary is the embedded linux gnat-container binary for the architecture (amd64 or arm64).
 func Binary(arch string) ([]byte, error) {
-	data, err := binaries.ReadFile("bin/gnat-linux-" + arch)
+	data, err := binaries.ReadFile("bin/gnat-container-linux-" + arch)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w (for linux/%s)", ErrNoBinary, arch)
 	}

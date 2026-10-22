@@ -12,11 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kkestell/gnat/internal/control"
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/state"
-	"github.com/kkestell/gnat/internal/web"
 	"github.com/kkestell/gnat/internal/workspace"
 )
 
@@ -34,7 +32,7 @@ const (
 	readyInterval = 250 * time.Millisecond
 )
 
-// controlDockerfile is the control image: the control plane is the gnat binary alone.
+// controlDockerfile is the control image: the control plane is the gnat-container binary alone.
 const controlDockerfile = "FROM debian:bookworm-slim\n"
 
 //go:embed Dockerfile
@@ -216,7 +214,7 @@ func waitUntilReady(container, agent string) error {
 
 // webURL is where the host reaches the web UI that the control container publishes.
 func webURL(container string) (string, error) {
-	out, err := dockerOutput("port", container, strconv.Itoa(web.Port))
+	out, err := dockerOutput("port", container, strconv.Itoa(layout.WebPort))
 	if err != nil {
 		return "", err
 	}
@@ -268,7 +266,7 @@ func dockerArch() (string, error) {
 	}
 }
 
-// binaryFor is the embedded linux gnat binary for an architecture.
+// binaryFor is the embedded linux gnat-container binary for an architecture.
 var binaryFor = workspace.Binary
 
 // agentConfig is a tar of the agent's user-level config for its harness: instructions and
@@ -464,9 +462,9 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	// UI lists the repository's pull requests with the GitHub token, passed by name
 	// so its value stays out of the docker argv.
 	args := []string{"create", "--name", controlName, "--label", label,
-		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-v", logs + ":" + control.LogDir,
+		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-v", logs + ":" + layout.LogDir,
 		"--network", network, "--network-alias", state.Control,
-		"-p", "127.0.0.1::" + strconv.Itoa(web.Port), "-e", githubTokenVar, controlImage}
+		"-p", "127.0.0.1::" + strconv.Itoa(layout.WebPort), "-e", githubTokenVar, controlImage}
 	if _, err := execute(command{name: "docker", args: append(args, serve...), quiet: true,
 		env: []string{githubTokenVar + "=" + githubToken}}); err != nil {
 		return err

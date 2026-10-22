@@ -11,7 +11,7 @@ import (
 	"github.com/kkestell/gnat/internal/state"
 )
 
-// SendMain is `gnat internal send AGENT... [-m TEXT] [--now]`, which an agent runs inside
+// SendMain is `gnat-container send AGENT... [-m TEXT] [--now]`, which an agent runs inside
 // its container to message other agents in the swarm; args are those after `send`. It
 // returns an exit status: 2 for a usage error, 1 for any other failure.
 func SendMain(args []string) int {
@@ -19,13 +19,13 @@ func SendMain(args []string) int {
 }
 
 func runSend(args []string, sender string, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("gnat internal send", flag.ContinueOnError)
+	fs := flag.NewFlagSet("gnat-container send", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	message := fs.String("m", "", "the message; read from stdin if omitted")
 	fs.StringVar(message, "message", "", "the message; read from stdin if omitted")
 	now := fs.Bool("now", false, "deliver into each agent's running turn at its next tool call")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: gnat internal send AGENT... [-m TEXT] [--now]")
+		fmt.Fprintln(stderr, "usage: gnat-container send AGENT... [-m TEXT] [--now]")
 		fs.PrintDefaults()
 	}
 	agents, err := parseInterleaved(fs, args)
@@ -36,7 +36,7 @@ func runSend(args []string, sender string, stdin io.Reader, stdout, stderr io.Wr
 		return 2
 	}
 	if len(agents) == 0 {
-		fmt.Fprintln(stderr, "gnat internal send: expected at least one agent to message")
+		fmt.Fprintln(stderr, "gnat-container send: expected at least one agent to message")
 		fs.Usage()
 		return 2
 	}

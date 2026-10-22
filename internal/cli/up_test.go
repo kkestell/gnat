@@ -74,17 +74,17 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"network create --label gnat.name=demo gnat-demo",
 		"create --name gnat-demo-control --label gnat.name=demo --user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) +
 			" -v " + logs + ":/var/log/gnat --network gnat-demo --network-alias control -p 127.0.0.1::8080 -e GH_TOKEN gnat-control:latest" +
-			` /opt/gnat/gnat internal control serve alpha beta --setups {"alpha":{"harness":"claude","model":null,"effort":null},` +
+			` /opt/gnat/gnat-container control serve alpha beta --setups {"alpha":{"harness":"claude","model":null,"effort":null},` +
 			`"beta":{"harness":"ox","model":"m","effort":"high"}} --repo o/r`,
 		"cp -a - gnat-demo-control:/",
 		"start gnat-demo-control",
-		"exec gnat-demo-control /opt/gnat/gnat internal control status alpha",
+		"exec gnat-demo-control /opt/gnat/gnat-container control status alpha",
 		"volume create --label gnat.name=demo --label gnat.agent=alpha gnat-demo-alpha-workspace",
 		"volume create --label gnat.name=demo --label gnat.agent=alpha gnat-demo-alpha-claude",
 		"create --name gnat-demo-alpha --label gnat.name=demo --restart on-failure --user 1000 --workdir /workspace " +
 			"--network gnat-demo --network-alias alpha -v gnat-demo-alpha-workspace:/workspace " +
 			"-v gnat-demo-alpha-claude:/home/agent/.claude -e CLAUDE_CODE_OAUTH_TOKEN -e GH_TOKEN " +
-			"--entrypoint /opt/gnat/gnat gnat-agent:latest internal agent alpha --repo o/r --harness claude " +
+			"--entrypoint /opt/gnat/gnat-container gnat-agent:latest agent alpha --repo o/r --harness claude " +
 			"--file /opt/gnat-files/0:config/.env",
 		"cp -a - gnat-demo-alpha:/",
 		"cp -a - gnat-demo-alpha:/",
@@ -97,7 +97,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 			"--network gnat-demo --network-alias beta -v gnat-demo-beta-workspace:/workspace " +
 			"-v gnat-demo-beta-local-share-ox:/home/agent/.local/share/ox " +
 			"-v gnat-demo-beta-local-state-gnat:/home/agent/.local/state/gnat -e OPENROUTER_API_KEY -e GH_TOKEN " +
-			"--entrypoint /opt/gnat/gnat gnat-agent:latest internal agent beta --repo o/r --harness ox " +
+			"--entrypoint /opt/gnat/gnat-container gnat-agent:latest agent beta --repo o/r --harness ox " +
 			"--file /opt/gnat-files/0:config/.env --model m --effort high",
 		"cp -a - gnat-demo-beta:/",
 		"cp -a - gnat-demo-beta:/",

@@ -140,10 +140,10 @@ func TestFilesArchiveFailsOnAMissingFile(t *testing.T) {
 
 func TestBinaryArchiveInstallsTheBinaryAsRoot(t *testing.T) {
 	files := members(t, mustArchive(t)(BinaryArchive([]byte("ELF"))))
-	if got, want := names(files), []string{"opt/gnat/gnat"}; !reflect.DeepEqual(got, want) {
+	if got, want := names(files), []string{"opt/gnat/gnat-container"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
-	m := files["opt/gnat/gnat"]
+	m := files["opt/gnat/gnat-container"]
 	if m.header.Uid != 0 || m.header.Mode != 0o755 || string(m.data) != "ELF" {
 		t.Errorf("binary: uid %d, mode %o, %q", m.header.Uid, m.header.Mode, m.data)
 	}
@@ -164,7 +164,7 @@ func TestAgentInstructionsNameTeammatesAndForbidLeakingCredentials(t *testing.T)
 	}
 	for _, want := range []string{
 		"beta, gamma", "--now",
-		"`/opt/gnat/gnat internal send TEAMMATE... -m TEXT`",
+		"`/opt/gnat/gnat-container send TEAMMATE... -m TEXT`",
 		"at its next tool call",
 		"Never print", "`GH_TOKEN` and `OPENROUTER_API_KEY`",
 	} {
@@ -173,7 +173,7 @@ func TestAgentInstructionsNameTeammatesAndForbidLeakingCredentials(t *testing.T)
 		}
 	}
 	alone := AgentInstructions("", nil, "CLAUDE_CODE_OAUTH_TOKEN")
-	if strings.Contains(alone, "internal send") || !strings.Contains(alone, "Never print") ||
+	if strings.Contains(alone, "gnat-container send") || !strings.Contains(alone, "Never print") ||
 		!strings.Contains(alone, "You are the only agent in this swarm.") {
 		t.Errorf("alone: %s", alone)
 	}
