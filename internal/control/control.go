@@ -83,6 +83,8 @@ type Control struct {
 	// setups is each agent's harness, model, and effort, by name, for the web UI.
 	setups map[string]state.Agent
 	logDir string
+	// github is the agents' access to GitHub; nil if the control plane has none.
+	github *GitHub
 
 	mailboxes map[string]*Mailbox
 

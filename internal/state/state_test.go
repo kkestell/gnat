@@ -40,7 +40,7 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 		Name: "demo", Dockerfile: "/x/Dockerfile", Repo: "owner/repo",
 		Agents: []Agent{
 			{Name: "alpha", Instructions: "Be brief.", Model: "haiku", Harness: "claude"},
-			{Name: "beta", Instructions: "x", Effort: "high", Harness: "ox"},
+			{Name: "beta", Instructions: "x", Effort: "high", Harness: "ox", Merge: true},
 		},
 		Files: []File{},
 	}
@@ -71,7 +71,8 @@ func TestOnDiskFormatMatchesPythons(t *testing.T) {
       "instructions": "x",
       "model": null,
       "effort": null,
-      "harness": "claude"
+      "harness": "claude",
+      "merge": false
     }
   ],
   "files": [
@@ -98,6 +99,9 @@ func TestAgentsSavedWithoutAHarnessRunClaude(t *testing.T) {
 	s := mustLoad(t, "demo")
 	if s.Agents[0].Harness != "claude" {
 		t.Fatalf("harness %q", s.Agents[0].Harness)
+	}
+	if s.Agents[0].Merge {
+		t.Fatal("an agent saved without the merge field may merge")
 	}
 	if len(s.Files) != 0 {
 		t.Fatalf("files %v", s.Files)

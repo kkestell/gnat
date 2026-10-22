@@ -126,6 +126,10 @@ func respond(conn net.Conn, resp *protocol.Response) {
 
 // dispatch answers a request; nil when the caller hung up before the answer.
 func (c *Control) dispatch(req protocol.Request, r io.Reader) *protocol.Response {
+	if req.Op == protocol.OpGitHub {
+		// Who is asking is the secret's, never req.Agent.
+		return c.githubRequest(req)
+	}
 	if req.Agent == "" {
 		return protocol.Fail("bad request: missing agent")
 	}

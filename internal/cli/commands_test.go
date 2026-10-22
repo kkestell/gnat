@@ -291,10 +291,10 @@ func TestAgentsAreCreatedWithTheirHarnessAndListed(t *testing.T) {
 	useSwarm(t)
 	useExec(t, nil) // no containers running
 	out, _ := useOutput(t)
-	if err := createAgent("demo", "alpha", "x", "claude", "", "max"); err != nil {
+	if err := createAgent("demo", "alpha", "x", "claude", "", "max", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := createAgent("demo", "beta", "x", "ox", "", "minimal"); err != nil {
+	if err := createAgent("demo", "beta", "x", "ox", "", "minimal", false); err != nil {
 		t.Fatal(err)
 	}
 	swarm, err := state.Load("demo")
@@ -312,7 +312,7 @@ func TestAgentsAreCreatedWithTheirHarnessAndListed(t *testing.T) {
 	if err := listAgents("demo"); err != nil {
 		t.Fatal(err)
 	}
-	if want := "alpha\tclaude\t-\tmax\nbeta\tox\t-\tminimal\n"; out.String() != want {
+	if want := "alpha\tclaude\t-\tmax\t-\nbeta\tox\t-\tminimal\t-\n"; out.String() != want {
 		t.Errorf("got %q, want %q", out, want)
 	}
 }
@@ -321,11 +321,11 @@ func TestAnEffortMustBeOneTheHarnessTakes(t *testing.T) {
 	useSwarm(t)
 	useExec(t, nil)
 	useOutput(t)
-	err := createAgent("demo", "alpha", "x", "claude", "", "minimal")
+	err := createAgent("demo", "alpha", "x", "claude", "", "minimal", false)
 	if err == nil || !strings.Contains(err.Error(), "claude effort must be one of low, medium") {
 		t.Errorf("got %v", err)
 	}
-	err = createAgent("demo", "alpha", "x", "ox", "", "extreme")
+	err = createAgent("demo", "alpha", "x", "ox", "", "extreme", false)
 	if err == nil || !strings.Contains(err.Error(), "ox effort must be one of default, none") {
 		t.Errorf("got %v", err)
 	}
@@ -340,7 +340,7 @@ func TestCreateAgentRefusesReservedDuplicateAndInvalidNames(t *testing.T) {
 		{"alpha", "x", "already has an agent 'alpha'"},
 		{"-bad", "x", "agent name"},
 	} {
-		if err := createAgent("demo", c.name, c.instructions, "claude", "", ""); err == nil || !strings.Contains(err.Error(), c.want) {
+		if err := createAgent("demo", c.name, c.instructions, "claude", "", "", false); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
 		}
 	}
@@ -349,7 +349,7 @@ func TestCreateAgentRefusesReservedDuplicateAndInvalidNames(t *testing.T) {
 func TestAgentsAndFilesChangeOnlyWhileTheSwarmIsDown(t *testing.T) {
 	useSwarm(t)
 	useExec(t, listing([]string{"gnat-demo-control"}, nil, nil))
-	if err := createAgent("demo", "alpha", "x", "claude", "", ""); err == nil || !strings.Contains(err.Error(), "is up; run `gnat down demo`") {
+	if err := createAgent("demo", "alpha", "x", "claude", "", "", false); err == nil || !strings.Contains(err.Error(), "is up; run `gnat down demo`") {
 		t.Errorf("got %v", err)
 	}
 }

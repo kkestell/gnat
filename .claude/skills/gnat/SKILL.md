@@ -19,11 +19,11 @@ gnat is in active development, and every run is also a test of it. When you fini
 
 ```sh
 gnat create NAME --repo OWNER/NAME [--profile SWARM_PROFILE] [--dockerfile FILE] [--file HOST_PATH[:WORKSPACE_PATH]]...
-gnat agent create NAME AGENT [--profile PROFILE] [--instructions TEXT] [--harness claude|ox] [--model MODEL] [--effort LEVEL]
+gnat agent create NAME AGENT [--profile PROFILE] [--instructions TEXT] [--harness claude|ox] [--model MODEL] [--effort LEVEL] [--merge]
 gnat up NAME
 ```
 
-- `gnat list` and `gnat agent list NAME` (name, harness, model, effort) show what exists.
+- `gnat list` and `gnat agent list NAME` (name, harness, model, effort, merge) show what exists.
 - `gnat profiles list` and `gnat profiles list --swarm` show the user's agent profiles (role instructions and settings) and swarm profiles (a whole set of agents). Use one when it fits what the user asked for; flags override an agent profile's settings.
 - `--harness` defaults to `claude` (Claude Code). `ox` runs Ox: `--model` takes a qualified ID such as `openrouter:deepseek/deepseek-v4.1-flash`. Efforts: for claude, `low`, `medium`, `high`, `xhigh`, `max`; for ox, `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (the model must support it). Both default to the harness's own.
 - `--dockerfile` is optional, and must start `FROM gnat-agent`. Use it only for packages the repo's build or tests need that the base image lacks. The base image has build-essential, python3, uv, git, gh, and common CLI tools (`rg`, `fd`, `jq`, `sqlite3`, `ps`, `lsof`, ...). Once it exists (after any `gnat up`), check whether it already builds and tests the repo: `docker run --rm -e GH_TOKEN gnat-agent bash -c 'gh repo clone OWNER/NAME r && cd r && TEST_COMMAND'` with `GH_TOKEN` exported. If that passes, leave `--dockerfile` out; if not, install only what failed. The build context is the Dockerfile's directory.
