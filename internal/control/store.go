@@ -10,7 +10,8 @@ import (
 	_ "modernc.org/sqlite" // The database driver.
 )
 
-// schema is control.db's, the same as the Python version's so either can read the file.
+// schema is control.db's, the same as the Python version's so either can read the file,
+// with agent_ids added: the ID each agent's history belongs to (see recorded.Current).
 const schema = `
 CREATE TABLE IF NOT EXISTS messages (
     position INTEGER PRIMARY KEY, agent TEXT NOT NULL, urgent INTEGER NOT NULL,
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS statuses (
 CREATE TABLE IF NOT EXISTS usage (
     agent TEXT PRIMARY KEY, input_tokens INTEGER, cache_read_tokens INTEGER,
     cache_write_tokens INTEGER, output_tokens INTEGER, cost REAL);
+CREATE TABLE IF NOT EXISTS agent_ids (agent TEXT PRIMARY KEY, id TEXT NOT NULL);
 `
 
 // Connect opens the database at path (":memory:" for a throwaway one) and creates its

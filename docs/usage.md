@@ -13,13 +13,13 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat down SWARM` | Stop the containers. Clones, sessions, queued messages, and logs are kept. |
 | `gnat send SWARM [AGENT...] [-m TEXT] [--now \| --new] [--wait [--timeout SECONDS]]` | Queue a message. Reads stdin without `-m`. |
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
-| `gnat wait SWARM [AGENT...] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. |
+| `gnat wait SWARM [AGENT...] [--any] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. With `--any`, return as soon as at least one of them has (one already finished counts at once), printing the replies of those that have, each under its name, and on stderr the ones still busy (`still waiting on: alpha, gamma`); the exit status is for those that have. |
 | `gnat status SWARM [AGENT...]` | Show each agent's state, queue (see [messages](#messages)), time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
-| `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. |
+| `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. `HOST_PATH` is treated as `docker cp` treats it: a directory copied to an existing directory goes inside it, and to a path that doesn't exist creates that path with the directory's contents; a `PATH` ending in `/.` copies the directory's contents, so `AGENT:.` copies the clone's contents. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
 | `gnat agent create SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
-| `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
+| `gnat agent delete SWARM AGENT` | Remove an agent with its clone, sessions, and log (swarm down). |
 | `gnat agent list SWARM` | List agents: name, harness, model, effort, and `merge` if it may merge pull requests. |
 | `gnat profiles list [--swarm]` | List available agent profile names, or swarm profile names with `--swarm`, alphabetically. |
 | `gnat auth login claude\|ox` | Save a harness's credential in the system keyring. See [setup](setup.md#credentials). |
@@ -161,12 +161,14 @@ inside its container instead.
 ## Pull requests
 
 Agents reach GitHub's pull requests through the control plane, which holds the
-GitHub token and enforces the rules, with `gnat-container pr create|list|view|diff|checks|comment|review|merge`.
+GitHub token and enforces the rules, with `gnat-container pr create|list|view|diff|checks|comment|review|close|edit|merge`.
 Each agent has a secret `gnat up` generates for it, which is how the control
 plane knows who is asking. Pull requests are always on the swarm's repository,
 and one is opened only from a branch named `SWARM/AGENT/...` (the swarm's and the
 agent's own name; names that would make invalid git refs, such as `a..b` or
-`x.lock`, are refused). Only agents saved with `merge` (`gnat agent create --merge`,
+`x.lock`, are refused). An agent may close or edit (`pr edit NUMBER --title TEXT`,
+`--body TEXT`, or `--body-file FILE`) only a pull request whose head is one of its own
+branches in the swarm's repository. Only agents saved with `merge` (`gnat agent create --merge`,
 or `merge: true` in a profile) may run `gnat-container pr merge`. A definition
 saved without it gives no permission.
 
@@ -177,6 +179,8 @@ saved without it gives no permission.
 - Clones and sessions: Docker volumes named `gnat-SWARM-AGENT-*`. They survive `gnat down`, so the next `gnat up` picks up where agents left off.
 
 `gnat delete` removes all of it.
+
+Each agent gets an ID when it's created, saved in the definition, which tells it apart from an earlier agent with the same name. If you delete an agent and create another by that name, the new one starts fresh: `gnat status`, `gnat logs`, and the web UI show none of the old one's turns, usage, queued messages, or output. Agents created before gnat gave IDs keep their history.
 
 Usage totals in `gnat status` and the web UI come from what each harness reports. Claude Code's cost is at API list prices and isn't reported for stopped or crashed turns.
 
@@ -204,6 +208,15 @@ Every agent, waiting for replies:
 
 ```sh
 gnat send demo --wait -m "What files are in the repository root?"
+```
+
+Collecting replies as they come (wait again on the agents it says it is still waiting on, until it says none):
+
+```sh
+gnat send demo alpha -m "Count to 3, then say ALPHA."
+gnat send demo beta -m "Use Bash to run: python3 -c 'import time; time.sleep(30)'. Then say BETA."
+gnat wait demo alpha beta --any   # alpha's reply, then on stderr: still waiting on: beta
+gnat wait demo beta --any         # beta's reply, and nothing on stderr
 ```
 
 Separate clones:
@@ -263,5 +276,6 @@ Copying out and cleaning up:
 
 ```sh
 gnat cp demo alpha:notes.txt .
+gnat cp demo alpha:. alpha-clone
 gnat delete demo
 ```

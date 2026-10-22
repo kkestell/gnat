@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,8 +27,8 @@ import (
 
 // call sends one request to the control plane in this container, over the socket only
 // the container's own users can reach; tests replace it.
-var call = func(req protocol.Request) (*protocol.Response, error) {
-	return protocol.CallAddr(layout.ControlSocket, req, 0)
+var call = func(ctx context.Context, req protocol.Request) (*protocol.Response, error) {
+	return protocol.CallContext(ctx, layout.ControlSocket, req, 0)
 }
 
 // An AgentResult is an agent's status from a wait.
@@ -56,7 +57,7 @@ func WaitFor(agents []string, timeout *float64) ([]AgentResult, error) {
 				remaining := max(time.Until(deadline).Seconds(), 0)
 				req.Timeout = &remaining
 			}
-			resp, err := call(req)
+			resp, err := call(context.Background(), req)
 			if err != nil {
 				return nil, err
 			}
@@ -64,7 +65,7 @@ func WaitFor(agents []string, timeout *float64) ([]AgentResult, error) {
 		}
 		turns := make([]int, len(results))
 		for i, r := range results {
-			if r.Idle == nil || !*r.Idle {
+			if !r.idle() {
 				return results, nil
 			}
 			turns[i] = r.Turns
@@ -75,6 +76,92 @@ func WaitFor(agents []string, timeout *float64) ([]AgentResult, error) {
 		previous = turns
 	}
 }
+
+// WaitForAny waits for at least one agent to be idle, within a timeout in seconds (nil
+// for none), and returns the status of each agent that is idle then, or at the timeout,
+// of every agent, none of them idle. An agent already idle counts at once.
+func WaitForAny(agents []string, timeout *float64) ([]AgentResult, error) {
+	var deadline time.Time
+	if timeout != nil {
+		deadline = time.Now().Add(time.Duration(*timeout * float64(time.Second)))
+	}
+	results, err := look(agents)
+	if err != nil {
+		return nil, err
+	}
+	if idle := idleOnly(results); len(idle) > 0 {
+		return idle, nil
+	}
+
+	// Wait on every agent at once, and hang up on the rest when one is idle.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type answer struct {
+		i    int
+		resp *protocol.Response
+		err  error
+	}
+	answers := make(chan answer, len(agents))
+	for i, agent := range agents {
+		req := protocol.Request{Op: protocol.OpWait, Agent: agent}
+		if timeout != nil {
+			remaining := max(time.Until(deadline).Seconds(), 0)
+			req.Timeout = &remaining
+		}
+		go func() {
+			resp, err := call(ctx, req)
+			answers <- answer{i, resp, err}
+		}()
+	}
+	for range agents {
+		a := <-answers
+		if a.err != nil {
+			return nil, a.err
+		}
+		results[a.i] = AgentResult{agents[a.i], a.resp}
+		if !results[a.i].idle() {
+			continue // Timed out.
+		}
+		cancel()
+		// The others may have finished meanwhile too. This one is idle as its wait saw
+		// it: a message may have reached it since, but it did finish.
+		others := append(append([]string{}, agents[:a.i]...), agents[a.i+1:]...)
+		now, err := look(others)
+		if err != nil {
+			return nil, err
+		}
+		now = slices.Insert(now, a.i, results[a.i])
+		return idleOnly(now), nil
+	}
+	return results, nil
+}
+
+// look is each agent's status as it is now.
+func look(agents []string) ([]AgentResult, error) {
+	results := make([]AgentResult, 0, len(agents))
+	for _, agent := range agents {
+		zero := 0.0
+		resp, err := call(context.Background(), protocol.Request{Op: protocol.OpWait, Agent: agent, Timeout: &zero})
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, AgentResult{agent, resp})
+	}
+	return results, nil
+}
+
+func idleOnly(results []AgentResult) []AgentResult {
+	var idle []AgentResult
+	for _, r := range results {
+		if r.idle() {
+			idle = append(idle, r)
+		}
+	}
+	return idle
+}
+
+// idle is whether the wait found the agent idle.
+func (r AgentResult) idle() bool { return r.Idle != nil && *r.Idle }
 
 func equalInts(a, b []int) bool {
 	if len(a) != len(b) {
@@ -88,13 +175,13 @@ func equalInts(a, b []int) bool {
 	return true
 }
 
-// Report is each agent's final reply, headed by its name when there are several, and a
-// line for each agent whose last turn failed.
-func Report(results []AgentResult) (string, []string) {
+// Report is each agent's final reply, headed by its name if headed, and a line for each
+// agent whose last turn failed.
+func Report(results []AgentResult, headed bool) (string, []string) {
 	var out strings.Builder
 	var failures []string
 	for _, r := range results {
-		if len(results) > 1 {
+		if headed {
 			fmt.Fprintf(&out, "==> %s <==\n", r.Agent)
 		}
 		if r.Reply != nil && *r.Reply != "" {
@@ -243,7 +330,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		text, agents := p.positional[0], p.positional[1:]
 		for _, agent := range agents {
-			if _, err := call(protocol.Request{Op: protocol.OpSend, Agent: agent, Text: text,
+			if _, err := call(context.Background(), protocol.Request{Op: protocol.OpSend, Agent: agent, Text: text,
 				Now: p.bools["now"], New: p.bools["new"]}); err != nil {
 				return err
 			}
@@ -251,7 +338,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 		if !p.bools["wait"] {
 			return nil
 		}
-		return waitAndReport(agents, timeout, stdout, stderr)
+		return waitAndReport(agents, timeout, false, stdout, stderr)
 	case "stop":
 		p, err := parseArgs(args, nil, nil)
 		if err != nil {
@@ -261,7 +348,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 			return usageError("stop needs at least one agent")
 		}
 		for _, agent := range p.positional {
-			resp, err := call(protocol.Request{Op: protocol.OpStop, Agent: agent})
+			resp, err := call(context.Background(), protocol.Request{Op: protocol.OpStop, Agent: agent})
 			if err != nil {
 				return err
 			}
@@ -273,7 +360,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "wait":
-		p, err := parseArgs(args, nil, []string{"timeout"})
+		p, err := parseArgs(args, []string{"any"}, []string{"timeout"})
 		if err != nil {
 			return err
 		}
@@ -284,7 +371,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return waitAndReport(p.positional, timeout, stdout, stderr)
+		return waitAndReport(p.positional, timeout, p.bools["any"], stdout, stderr)
 	case "status":
 		p, err := parseArgs(args, nil, nil)
 		if err != nil {
@@ -294,7 +381,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 			return usageError("status needs at least one agent")
 		}
 		for _, agent := range p.positional {
-			resp, err := call(protocol.Request{Op: protocol.OpStatus, Agent: agent})
+			resp, err := call(context.Background(), protocol.Request{Op: protocol.OpStatus, Agent: agent})
 			if err != nil {
 				return err
 			}
@@ -309,25 +396,44 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 	return usageError(fmt.Sprintf("unknown command '%s': use serve, send, stop, wait, or status", command))
 }
 
-func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) error {
-	results, err := WaitFor(agents, timeout)
+// waitAndReport waits for every agent to be idle, or with anyOf for at least one, and
+// prints the replies of those that are, and with anyOf, which agents are still busy.
+func waitAndReport(agents []string, timeout *float64, anyOf bool, stdout, stderr io.Writer) error {
+	wait, waiting := WaitFor, ""
+	if anyOf {
+		wait, waiting = WaitForAny, "any of "
+	}
+	results, err := wait(agents, timeout)
 	if err != nil {
 		return err
 	}
 	var busy []string
 	for _, r := range results {
-		if r.Idle == nil || !*r.Idle {
+		if !r.idle() {
 			busy = append(busy, r.Agent)
 		}
 	}
 	if len(busy) > 0 {
-		fmt.Fprintf(stderr, "error: timed out waiting for %s\n", strings.Join(busy, ", "))
+		fmt.Fprintf(stderr, "error: timed out waiting for %s%s\n", waiting, strings.Join(busy, ", "))
 		return exitError(layout.TimeoutStatus)
 	}
-	out, failures := Report(results)
+	// With anyOf, which agents finished is news even when it is only one.
+	out, failures := Report(results, anyOf || len(results) > 1)
 	io.WriteString(stdout, out)
 	for _, failure := range failures {
 		fmt.Fprintln(stderr, failure)
+	}
+	if anyOf {
+		// So the operator can wait again on just these.
+		var still []string
+		for _, agent := range agents {
+			if !slices.ContainsFunc(results, func(r AgentResult) bool { return r.Agent == agent }) {
+				still = append(still, agent)
+			}
+		}
+		if len(still) > 0 {
+			fmt.Fprintf(stderr, "still waiting on: %s\n", strings.Join(still, ", "))
+		}
 	}
 	if len(failures) > 0 {
 		return exitError(1)
