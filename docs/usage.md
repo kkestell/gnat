@@ -133,6 +133,18 @@ Agents can message each other with `/opt/gnat/gnat-container send TEAMMATE... [-
 
 An agent whose daemon crashes restarts in the same container with its clone and session, and the turn it was running is reported as interrupted.
 
+## Who is asking
+
+`gnat up` gives each agent a secret that only it and the control plane have, and every
+request an agent makes to the control plane carries it: messages, the connection
+the agent's daemon keeps, the hook that delivers `--now` messages, git, and the pull
+request commands. The control plane takes who is asking from the secret, not from
+anything the request says, so a message labelled as from an agent is from that agent.
+An agent can send, take its own messages, and make the GitHub requests below; asking how
+other agents are doing, waiting on them, or stopping them is the operator's, whose
+commands (`gnat send`, `status`, `wait`, `stop`) reach the control plane by a socket
+inside its container instead.
+
 ## Pull requests
 
 Agents reach GitHub's pull requests through the control plane, which holds the

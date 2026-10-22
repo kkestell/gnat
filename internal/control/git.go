@@ -3,7 +3,6 @@ package control
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -42,10 +41,17 @@ const (
 	bodyIdle  = 30 * time.Second
 	bodyTotal = 10 * time.Minute
 	// agentSlots is how many requests one agent may have at once, and totalSlots how many
-	// all of them may; a request waits slotWait for one before being told to retry.
+	// all of them may; a request waits slotWait for one before being told to retry, which
+	// plain git doesn't, so it is a good deal longer than any of them should take: a push
+	// waits lockWait for its turn to change the mirror, which is long enough for a fetch
+	// from GitHub and a push to it ahead of it, each of which is cut off.
 	agentSlots = 3
 	totalSlots = 8
-	slotWait   = 30 * time.Second
+	slotWait   = 5 * time.Minute
+	lockWait   = gitTimeout + pushTimeout + 2*time.Minute
+	// pushTimeout is how long the push on to GitHub may take, whether or not it is making
+	// progress; the low-speed limit only catches one that isn't.
+	pushTimeout = 5 * time.Minute
 	// lowSpeedLimit and lowSpeedTime make git give up on a GitHub that has all but stopped
 	// answering, which would hold the mirror's lock.
 	lowSpeedLimit = 1000
@@ -100,13 +106,23 @@ while read -r old new ref; do
 	count=$((count + 1))
 done
 [ "$count" -gt 0 ] || exit 0
-# $@ now has the arguments the loop added; the first of them is "$GNAT_UPSTREAM" below.
-if out=$(git push --atomic "$GNAT_UPSTREAM" "$@" 2>&1); then
-	echo "gnat: pushed to GitHub" >&2
-else
+# $@ now has the refspecs the loop added.
+limit=
+if [ -n "$GNAT_PUSH_TIMEOUT" ] && command -v timeout >/dev/null 2>&1; then
+	limit="timeout $GNAT_PUSH_TIMEOUT"
+fi
+out=$($limit git push --atomic "$GNAT_UPSTREAM" "$@" 2>&1)
+case $? in
+0) echo "gnat: pushed to GitHub" >&2 ;;
+124)
+	echo "$out" >&2
+	refuse "GitHub took longer than ${GNAT_PUSH_TIMEOUT}s, so the push was cut off and nothing was recorded here; it may still have reached GitHub, so fetch to see, and push again"
+	;;
+*)
 	echo "$out" >&2
 	refuse "GitHub refused the push, so nothing was changed"
-fi
+	;;
+esac
 `
 
 // A GitProxy is git on the swarm's network, for agents that have no GitHub credential: the
@@ -121,7 +137,7 @@ fi
 type GitProxy struct {
 	GitConfig
 
-	hashes  map[string][sha256.Size]byte
+	who     func(secret string) string
 	root    string
 	gitPath string
 	env     []string
@@ -131,8 +147,10 @@ type GitProxy struct {
 	lock     chan struct{}
 	lastSync time.Time
 	lastHead time.Time
-	// syncs counts the fetches from GitHub.
-	syncs atomic.Int64
+	// syncs counts the fetches from GitHub, and synced is whether one has succeeded: until
+	// then the mirror is empty, and nothing may be served from it.
+	syncs  atomic.Int64
+	synced atomic.Bool
 
 	// agentSlots are the requests each agent may have at once, and slots all of them.
 	agentSlots map[string]chan struct{}
@@ -145,9 +163,10 @@ type GitProxy struct {
 	// fresh is how long a fetch from GitHub is reused by the next request; noSync leaves
 	// the mirror as it is; slotWait is how long a request waits for a place; maxPush and
 	// maxFetch are the largest bodies; bodyIdle is how long a body may stall.
-	fresh, slotWait, bodyIdle atomic.Int64
-	maxPush, maxFetch         atomic.Int64
-	noSync                    atomic.Bool
+	fresh, slotWait, lockWait, bodyIdle atomic.Int64
+	maxPush, maxFetch                   atomic.Int64
+	pushTimeout                         atomic.Int64
+	noSync                              atomic.Bool
 }
 
 // GitConfig is what a GitProxy is told.
@@ -159,8 +178,6 @@ type GitConfig struct {
 	Token string
 	// Upstream is where the repository is, https://github.com/OWNER/NAME.git if empty.
 	Upstream string
-	// Secrets is each agent's secret, by name.
-	Secrets map[string]string
 	// Dir is where the mirror is kept; a new temporary directory if empty.
 	Dir string
 }
@@ -173,7 +190,9 @@ func (c *Control) NewGitProxy(config GitConfig) (*GitProxy, error) {
 	}
 	g.fresh.Store(int64(syncFresh))
 	g.slotWait.Store(int64(slotWait))
+	g.lockWait.Store(int64(lockWait))
 	g.bodyIdle.Store(int64(bodyIdle))
+	g.pushTimeout.Store(int64(pushTimeout))
 	g.maxPush.Store(maxPushBytes)
 	g.maxFetch.Store(maxFetchBytes)
 	if err := checkRepo(g.Repo); err != nil {
@@ -182,14 +201,11 @@ func (c *Control) NewGitProxy(config GitConfig) (*GitProxy, error) {
 	if g.Upstream == "" {
 		g.Upstream = "https://github.com/" + g.Repo + ".git"
 	}
-	var err error
-	if g.hashes, err = c.hashSecrets(g.Secrets); err != nil {
-		return nil, err
-	}
-	g.Secrets = nil // Only the hashes are kept.
-	for agent := range g.hashes {
+	g.who = c.whoIs
+	for _, agent := range c.agents {
 		g.agentSlots[agent] = make(chan struct{}, agentSlots)
 	}
+	var err error
 	if g.gitPath, err = exec.LookPath("git"); err != nil {
 		return nil, errors.New("the control plane needs git")
 	}
@@ -276,7 +292,7 @@ func (g *GitProxy) git(ctx context.Context, dir string, args ...string) (string,
 // Sync brings the mirror up to date with GitHub: every branch and tag, and which branch is
 // the default.
 func (g *GitProxy) Sync(ctx context.Context) error {
-	if err := g.acquire(ctx, g.lock); err != nil {
+	if err := g.acquire(ctx, g.lock, &g.lockWait); err != nil {
 		return err
 	}
 	defer func() { <-g.lock }()
@@ -286,6 +302,7 @@ func (g *GitProxy) Sync(ctx context.Context) error {
 // sync is Sync, with the lock held.
 func (g *GitProxy) sync(ctx context.Context) error {
 	if g.noSync.Load() {
+		g.synced.Store(true)
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
@@ -298,6 +315,7 @@ func (g *GitProxy) sync(ctx context.Context) error {
 	}
 	g.lastSync = time.Now()
 	if time.Since(g.lastHead) < symrefFresh {
+		g.synced.Store(true)
 		return nil
 	}
 	out, err := g.git(ctx, mirror, "ls-remote", "--symref", g.Upstream, "HEAD")
@@ -311,6 +329,7 @@ func (g *GitProxy) sync(ctx context.Context) error {
 		}
 	}
 	g.lastHead = time.Now()
+	g.synced.Store(true)
 	return nil
 }
 
@@ -319,9 +338,13 @@ func (g *GitProxy) sync(ctx context.Context) error {
 // GitHub, which a push is sent to without force, has the last word on whether it was
 // current enough. A fetch doesn't wait for the lock: a push changing the mirror leaves it
 // consistent as it goes.
+//
+// The first fetch is waited for by everything, a clone as much as a push: until it has
+// succeeded the mirror has nothing in it, and a clone made then would be empty. If it
+// fails, so does what waited on it.
 func (g *GitProxy) refresh(ctx context.Context, push bool) error {
-	if push {
-		if err := g.acquire(ctx, g.lock); err != nil {
+	if push || !g.synced.Load() {
+		if err := g.acquire(ctx, g.lock, &g.lockWait); err != nil {
 			return err
 		}
 	} else {
@@ -332,7 +355,7 @@ func (g *GitProxy) refresh(ctx context.Context, push bool) error {
 		}
 	}
 	defer func() { <-g.lock }()
-	if time.Since(g.lastSync) < time.Duration(g.fresh.Load()) {
+	if g.synced.Load() && time.Since(g.lastSync) < time.Duration(g.fresh.Load()) {
 		return nil
 	}
 	return g.sync(ctx)
@@ -341,9 +364,9 @@ func (g *GitProxy) refresh(ctx context.Context, push bool) error {
 // errBusy is a request that waited for its turn as long as it will.
 var errBusy = errors.New("the control plane is busy; try again in a moment")
 
-// acquire takes a place in slots, waiting for one.
-func (g *GitProxy) acquire(ctx context.Context, slots chan struct{}) error {
-	timer := time.NewTimer(time.Duration(g.slotWait.Load()))
+// acquire takes a place in slots, waiting for one for as long as wait says.
+func (g *GitProxy) acquire(ctx context.Context, slots chan struct{}, wait *atomic.Int64) error {
+	timer := time.NewTimer(time.Duration(wait.Load()))
 	defer timer.Stop()
 	select {
 	case slots <- struct{}{}:
@@ -430,7 +453,7 @@ func (s *spooled) Close() error {
 func (g *GitProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	agent := ""
 	if _, secret, ok := r.BasicAuth(); ok {
-		agent = whoIs(g.hashes, secret)
+		agent = g.who(secret)
 	}
 	if agent == "" {
 		w.Header().Set("WWW-Authenticate", `Basic realm="gnat"`)
@@ -470,7 +493,7 @@ func (g *GitProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Each agent has a few requests at a time, so that one can't take all of them.
 	mine := g.agentSlots[agent]
-	if err := g.acquire(r.Context(), mine); err != nil {
+	if err := g.acquire(r.Context(), mine, &g.slotWait); err != nil {
 		g.busy(w, r, err)
 		return
 	}
@@ -489,13 +512,7 @@ func (g *GitProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		defer body.Close()
 	}
-	if err := g.acquire(r.Context(), g.slots); err != nil {
-		g.busy(w, r, err)
-		return
-	}
-	defer func() { <-g.slots }()
-
-	if rest == "info/refs" {
+	if rest == "info/refs" || !g.synced.Load() {
 		if err := g.refresh(r.Context(), push); err != nil {
 			if errors.Is(err, errBusy) {
 				g.busy(w, r, err)
@@ -508,17 +525,28 @@ func (g *GitProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if push && rest != "info/refs" {
 		// The push has arrived, and what remains is local, except for the push on to GitHub,
-		// which git gives up on if GitHub stalls.
-		if err := g.acquire(r.Context(), g.lock); err != nil {
+		// which is cut off after pushTimeout. It waits for its turn before it takes one of
+		// the places for running git, so those aren't all taken by pushes waiting.
+		if err := g.acquire(r.Context(), g.lock, &g.lockWait); err != nil {
 			g.busy(w, r, err)
 			return
 		}
 		defer func() { <-g.lock }()
 	}
+	// A push isn't counted: only one at a time can be running, by the lock it holds, and
+	// waiting here for a place that fetches have taken would hold up the pushes behind it.
+	if !push || rest == "info/refs" {
+		if err := g.acquire(r.Context(), g.slots, &g.slotWait); err != nil {
+			g.busy(w, r, err)
+			return
+		}
+		defer func() { <-g.slots }()
+	}
 
 	env := append([]string{"PATH=" + os.Getenv("PATH")}, g.env...)
 	env = append(env, "GIT_PROJECT_ROOT="+g.root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER="+agent,
-		"GNAT_PUSH_PREFIX="+prefix, "GNAT_PUSH_REFUSAL="+refusal, "GNAT_UPSTREAM="+g.Upstream)
+		"GNAT_PUSH_PREFIX="+prefix, "GNAT_PUSH_REFUSAL="+refusal, "GNAT_UPSTREAM="+g.Upstream,
+		fmt.Sprintf("GNAT_PUSH_TIMEOUT=%d", int(g.pushTimeout.Load()/int64(time.Second))))
 	handler := &cgi.Handler{Path: g.gitPath, Args: []string{"http-backend"}, Dir: g.root, Env: env}
 	backend := r.Clone(r.Context())
 	backend.URL.Path = "/" + mirrorName + "/" + rest

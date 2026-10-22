@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,9 +33,12 @@ type plane struct {
 	t       *testing.T
 	dir     string
 	control *Control
-	addr    string
-	cancel  context.CancelFunc
-	done    chan struct{}
+	// addr is where the operator's requests go, and agentAddr where the agents', whose
+	// secrets are secrets.
+	addr, agentAddr string
+	secrets         map[string]string
+	cancel          context.CancelFunc
+	done            chan struct{}
 }
 
 // startPlane starts a control plane for the named agents (default: alpha) with its logs
@@ -55,15 +59,31 @@ func startPlane(t *testing.T, dir string, agents ...string) *plane {
 	if testMaxRequestBytes > 0 {
 		c.MaxRequestBytes = testMaxRequestBytes
 	}
+	secrets := map[string]string{}
+	for _, agent := range agents {
+		secrets[agent] = agent + "-secret"
+	}
+	if err := c.SetSecrets(secrets); err != nil {
+		t.Fatal(err)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	agentsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &plane{t: t, dir: dir, control: c, addr: ln.Addr().String(), cancel: cancel, done: make(chan struct{})}
+	p := &plane{t: t, dir: dir, control: c, addr: ln.Addr().String(), agentAddr: agentsLn.Addr().String(),
+		secrets: secrets, cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(p.done)
-		c.Serve(ctx, ln)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); c.Serve(ctx, ln) }()
+		go func() { defer wg.Done(); c.ServeAgents(ctx, agentsLn) }()
+		wg.Wait()
 	}()
 	t.Cleanup(p.close)
 	return p
@@ -74,8 +94,21 @@ func (p *plane) close() {
 	<-p.done
 }
 
+// request makes a request as its op needs: what only agents can do goes to the agents'
+// address, with the secret of the agent it is by, if the request has none of its own. A
+// request that isn't the operator's and names no agent is sent as it is.
 func (p *plane) request(req protocol.Request) (*protocol.Response, error) {
-	return protocol.CallAddr(p.addr, req, 5*time.Second)
+	addr := p.addr
+	switch {
+	case req.Secret != "" || req.Op == protocol.OpGitHub:
+		addr = p.agentAddr
+	case req.Op == protocol.OpTake || req.Op == protocol.OpOutput:
+		addr, req.Secret = p.agentAddr, p.secrets[req.Agent]
+	case req.Op == protocol.OpSend && req.Sender != "":
+		// Whose message it is is the sender's secret's.
+		addr, req.Secret = p.agentAddr, p.secrets[req.Sender]
+	}
+	return protocol.CallAddr(addr, req, 5*time.Second)
 }
 
 // must is a request that has to succeed.
@@ -175,13 +208,13 @@ type fakeDaemon struct {
 
 func (p *plane) attach(agent string) *fakeDaemon {
 	p.t.Helper()
-	conn, err := net.DialTimeout("tcp", p.addr, 5*time.Second)
+	conn, err := net.DialTimeout("tcp", p.agentAddr, 5*time.Second)
 	if err != nil {
 		p.t.Fatal(err)
 	}
 	d := &fakeDaemon{t: p.t, conn: conn, r: bufio.NewReader(conn)}
 	p.t.Cleanup(func() { conn.Close() })
-	d.send(protocol.Request{Op: protocol.OpAttach, Agent: agent})
+	d.send(protocol.Request{Op: protocol.OpAttach, Agent: agent, Secret: p.secrets[agent]})
 	return d
 }
 
@@ -817,13 +850,6 @@ func TestBadLinesFromADaemonAreAnsweredAndLogged(t *testing.T) {
 	}
 }
 
-func TestAnUnknownAgentCantAttach(t *testing.T) {
-	p := startPlane(t, t.TempDir())
-	if got := p.attach("beta").receive(); !reflect.DeepEqual(got, (protocol.Line{Type: "error", Error: "no agent 'beta'"})) {
-		t.Fatalf("got %+v", got)
-	}
-}
-
 func TestAnEventLineOver64KiBReachesTheControlPlane(t *testing.T) {
 	// A long thinking block makes one Claude event longer than a typical line limit.
 	p := startPlane(t, t.TempDir())
@@ -984,3 +1010,16 @@ func TestWaitWithoutATimeoutAlwaysReportsTheAgentIdle(t *testing.T) {
 		}
 	}
 }
+
+// rawAgentConn is a connection to the agents' address, for requests to send by hand.
+func (p *plane) rawAgentConn() net.Conn {
+	p.t.Helper()
+	conn, err := net.DialTimeout("tcp", p.agentAddr, 5*time.Second)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	p.t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+func bufioReader(conn net.Conn) *bufio.Reader { return bufio.NewReader(conn) }

@@ -3,8 +3,6 @@ package control
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,19 +46,14 @@ type GitHub struct {
 	Repo  string
 	Token string
 	// API is GitHub's API, GitHubAPI if empty.
-	API string
-	// Secrets is each agent's secret, by name.
-	Secrets map[string]string
-	Client  *http.Client
-
-	hashes map[string][sha256.Size]byte
+	API    string
+	Client *http.Client
 
 	identityMu *sync.Mutex
 	who        *protocol.GitIdentity
 }
 
-// EnableGitHub lets the agents act on GitHub through the control plane. An agent without
-// a secret, or with an empty one, can't.
+// EnableGitHub lets the agents act on GitHub through the control plane.
 func (c *Control) EnableGitHub(g GitHub) error {
 	if err := checkRepo(g.Repo); err != nil {
 		return err
@@ -71,60 +64,17 @@ func (c *Control) EnableGitHub(g GitHub) error {
 	if g.Client == nil {
 		g.Client = &http.Client{Timeout: githubTimeout}
 	}
-	var err error
-	if g.hashes, err = c.hashSecrets(g.Secrets); err != nil {
-		return err
-	}
-	g.Secrets = nil // Only the hashes are kept.
 	g.identityMu = &sync.Mutex{}
 	c.github = &g
 	return nil
 }
 
-// hashSecrets is each agent's secret hashed, for comparing a presented one with. An
-// agent without a secret, or with an empty one, has none to present.
-func (c *Control) hashSecrets(secrets map[string]string) (map[string][sha256.Size]byte, error) {
-	hashes := map[string][sha256.Size]byte{}
-	for agent, secret := range secrets {
-		if c.mailboxes[agent] == nil {
-			return nil, fmt.Errorf("a secret for '%s', which is not an agent of this swarm", agent)
-		}
-		if secret != "" {
-			hashes[agent] = sha256.Sum256([]byte(secret))
-		}
-	}
-	return hashes, nil
-}
-
-// whoIs is the agent the secret belongs to, or "" if it is nobody's. It compares in
-// constant time with every agent's, so how long it takes says nothing about which agent
-// came closest.
-func (g *GitHub) whoIs(secret string) string { return whoIs(g.hashes, secret) }
-
-// whoIs is the agent whose hashed secret in hashes is secret, or "" if it is nobody's.
-func whoIs(hashes map[string][sha256.Size]byte, secret string) string {
-	if secret == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(secret))
-	found := ""
-	for agent, hash := range hashes {
-		if subtle.ConstantTimeCompare(sum[:], hash[:]) == 1 {
-			found = agent
-		}
-	}
-	return found
-}
-
-// githubRequest carries out a request on GitHub for the agent whose secret it has.
-func (c *Control) githubRequest(req protocol.Request) *protocol.Response {
+// githubRequest carries out a request on GitHub for the agent, who has been identified by
+// its secret.
+func (c *Control) githubRequest(agent string, req protocol.Request) *protocol.Response {
 	g := c.github
 	if g == nil {
-		return protocol.Fail("unauthorized: this swarm's control plane has no GitHub access")
-	}
-	agent := g.whoIs(req.Secret)
-	if agent == "" {
-		return protocol.Fail("unauthorized: the agent secret is missing or wrong")
+		return protocol.Fail("this swarm's control plane has no GitHub access")
 	}
 	if req.GitHub == nil {
 		return protocol.Fail("bad request: missing github")

@@ -21,6 +21,9 @@ const (
 	// GitPort is the port the control container serves git on, to the swarm's network
 	// only: the agents' clone, fetch, and push.
 	GitPort = 7001
+	// ControlSocket is where the control plane takes the operator's commands, which
+	// `gnat` runs in the control container; only the container's own user can use it.
+	ControlSocket = "/tmp/gnat-control.sock"
 	// WebPort is the port the UI is served on inside the control container.
 	WebPort = 8080
 	// TimeoutStatus is `wait`'s exit status when it gives up, as timeout(1)'s.
