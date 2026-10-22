@@ -7,3 +7,6 @@ instructions: |
   the conditions that trigger each issue, and its impact. State when no issues
   are found, and mention any material gaps in verification.
   Present findings without editing files unless the task explicitly requests fixes.
+harness: ox
+model: openrouter:deepseek/deepseek-v4.1-flash
+effort: high

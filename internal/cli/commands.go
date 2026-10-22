@@ -82,14 +82,18 @@ func timeoutFlag(c *cobra.Command, timeout *float64) {
 const agentsUsage = " [AGENT...]"
 
 func createCommand() *cobra.Command {
-	var dockerfile, repo string
+	var dockerfile, repo, profile string
 	var files []string
 	c := &cobra.Command{
 		Use: "create SWARM", Short: "define a new swarm", Args: cobra.ExactArgs(1),
-		RunE: action(func(_ *cobra.Command, args []string) error {
+		RunE: action(func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("profile") {
+				return createFromProfile(args[0], dockerfile, repo, files, profile)
+			}
 			return create(args[0], dockerfile, repo, files)
 		}).run,
 	}
+	c.Flags().StringVar(&profile, "profile", "", "add the agents of the named YAML `PROFILE` in gnat's config profiles/swarms directory")
 	c.Flags().StringVar(&dockerfile, "dockerfile", "", "Dockerfile extending gnat-agent for the agent image (default: gnat-agent)")
 	c.Flags().StringVar(&repo, "repo", "", "GitHub repository each agent clones, `OWNER/NAME`")
 	c.Flags().StringArrayVar(&files, "file", nil, "copy a file outside source control into each agent's /workspace "+
@@ -252,7 +256,7 @@ func agentCommands() *cobra.Command {
 		}
 		return createAgent(args[0], args[1], resolved.Instructions, resolved.Harness, resolved.Model, resolved.Effort)
 	}).run
-	create.Flags().StringVar(&profileName, "profile", "", "load agent settings from the named YAML `PROFILE` in gnat's config profiles directory")
+	create.Flags().StringVar(&profileName, "profile", "", "load agent settings from the named YAML `PROFILE` in gnat's config profiles/agents directory")
 	create.Flags().StringVar(&options.Instructions, "instructions", "", "additional instructions for the agent")
 	create.Flags().StringVar(&options.Harness, "harness", state.DefaultHarness,
 		"the program the agent runs its turns with ("+strings.Join(harness.Names(), ", ")+")")
@@ -294,24 +298,60 @@ func fileCommands() *cobra.Command {
 }
 
 func create(name, dockerfile, repo string, fileSpecs []string) error {
-	if err := state.CheckName(name, "swarm name"); err != nil {
+	swarm, err := newSwarm(name, dockerfile, repo, fileSpecs)
+	if err != nil {
 		return err
 	}
-	if exists, err := state.Exists(name); err != nil {
+	if err := state.Save(swarm); err != nil {
 		return err
+	}
+	fmt.Fprintf(stdout, "created swarm %s\n", name)
+	return nil
+}
+
+// createFromProfile creates a swarm with a swarm profile's agents, or nothing if any is invalid.
+func createFromProfile(name, dockerfile, repo string, fileSpecs []string, profile string) error {
+	swarm, err := newSwarm(name, dockerfile, repo, fileSpecs)
+	if err != nil {
+		return err
+	}
+	agents, err := loadSwarmProfile(profile)
+	if err != nil {
+		return err
+	}
+	for _, a := range agents {
+		if a, err = checkAgent(swarm, a); err != nil {
+			return fmt.Errorf("swarm profile %q: %w", profile, err)
+		}
+		swarm.Agents = append(swarm.Agents, a)
+	}
+	if err := state.Save(swarm); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "created swarm %s with agents %s\n", name, strings.Join(agentNames(swarm.Agents), ", "))
+	return nil
+}
+
+// newSwarm checks a new swarm's settings and returns it, unsaved and without agents.
+func newSwarm(name, dockerfile, repo string, fileSpecs []string) (*state.Swarm, error) {
+	if err := state.CheckName(name, "swarm name"); err != nil {
+		return nil, err
+	}
+	if exists, err := state.Exists(name); err != nil {
+		return nil, err
 	} else if exists {
-		return fmt.Errorf("swarm '%s' already exists", name)
+		return nil, fmt.Errorf("swarm '%s' already exists", name)
 	}
 	if dockerfile != "" {
 		abs, err := filepath.Abs(dockerfile)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if real, err := filepath.EvalSymlinks(abs); err == nil {
 			abs = real
 		}
 		if !isFile(abs) {
-			return fmt.Errorf("dockerfile not found: %s", abs)
+			return nil, fmt.Errorf("dockerfile not found: %s", abs)
 		}
 		dockerfile = abs
 	}
@@ -319,17 +359,13 @@ func create(name, dockerfile, repo string, fileSpecs []string) error {
 	for _, spec := range fileSpecs {
 		file, err := state.ParseFile(spec)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if files, err = addFile(files, file); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	if err := state.Save(&state.Swarm{Name: name, Dockerfile: dockerfile, Repo: repo, Files: files}); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "created swarm %s\n", name)
-	return nil
+	return &state.Swarm{Name: name, Dockerfile: dockerfile, Repo: repo, Files: files}, nil
 }
 
 func addFile(files []state.File, file state.File) ([]state.File, error) {
@@ -414,35 +450,45 @@ func createAgent(swarmName, agentName, instructions, harnessName, model, effort 
 	if err != nil {
 		return err
 	}
-	if err := state.CheckName(agentName, "agent name"); err != nil {
-		return err
-	}
-	if agentName == state.Control {
-		return fmt.Errorf("'%s' is reserved for the control plane", state.Control)
-	}
-	for _, a := range swarm.Agents {
-		if a.Name == agentName {
-			return fmt.Errorf("swarm '%s' already has an agent '%s'", swarm.Name, agentName)
-		}
-	}
-	h, err := harness.Get(harnessName)
+	a, err := checkAgent(swarm, state.Agent{
+		Name: agentName, Instructions: instructions, Model: model, Effort: effort, Harness: harnessName,
+	})
 	if err != nil {
 		return err
-	}
-	if effort != "" && !slices.Contains(h.Efforts(), effort) {
-		return fmt.Errorf("%s effort must be one of %s", h.Name(), strings.Join(h.Efforts(), ", "))
 	}
 	if err := requireDown(swarm.Name); err != nil {
 		return err
 	}
-	swarm.Agents = append(swarm.Agents, state.Agent{
-		Name: agentName, Instructions: instructions, Model: model, Effort: effort, Harness: h.Name(),
-	})
+	swarm.Agents = append(swarm.Agents, a)
 	if err := state.Save(swarm); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "created agent %s in swarm %s\n", agentName, swarm.Name)
 	return nil
+}
+
+// checkAgent checks that a can join swarm, returning it with its harness's canonical name.
+func checkAgent(swarm *state.Swarm, a state.Agent) (state.Agent, error) {
+	if err := state.CheckName(a.Name, "agent name"); err != nil {
+		return a, err
+	}
+	if a.Name == state.Control {
+		return a, fmt.Errorf("'%s' is reserved for the control plane", state.Control)
+	}
+	for _, existing := range swarm.Agents {
+		if existing.Name == a.Name {
+			return a, fmt.Errorf("swarm '%s' already has an agent '%s'", swarm.Name, a.Name)
+		}
+	}
+	h, err := harness.Get(a.Harness)
+	if err != nil {
+		return a, err
+	}
+	if a.Effort != "" && !slices.Contains(h.Efforts(), a.Effort) {
+		return a, fmt.Errorf("%s effort must be one of %s", h.Name(), strings.Join(h.Efforts(), ", "))
+	}
+	a.Harness = h.Name()
+	return a, nil
 }
 
 func deleteAgent(swarmName, agentName string) error {

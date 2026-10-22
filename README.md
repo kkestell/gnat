@@ -26,11 +26,14 @@ gnat down demo
 `gnat COMMAND -h` lists each command's flags.
 
 For reusable agent settings, save `instructions`, `harness`, `model`, and
-`effort` in `~/.config/gnat/profiles/coder.yaml`, then run
+`effort` in `~/.config/gnat/profiles/agents/coder.yaml`, then run
 `gnat agent create demo alpha --profile coder`. Explicit flags override profile
 settings, for example `--profile coder --effort max`. `gnat profiles list`
 lists available names; see [agent profiles](docs/usage.md#agent-profiles) for
-the format.
+the format. A [swarm profile](docs/usage.md#swarm-profiles) in
+`~/.config/gnat/profiles/swarms/team.yaml` lists a swarm's agents, each from an
+agent profile with its own settings, so
+`gnat create demo --repo OWNER/NAME --profile team` creates them all.
 
 ## Docs
 

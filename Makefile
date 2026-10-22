@@ -28,12 +28,14 @@ install: linux install-profiles
 # Seed the config directory without replacing profiles the user has customized.
 install-profiles:
 	@profile_dir="$${XDG_CONFIG_HOME:-$$HOME/.config}/gnat/profiles"; \
-		mkdir -p "$$profile_dir" || exit 1; \
-		for profile in profiles/*.yaml; do \
-			target="$$profile_dir/$${profile##*/}"; \
-			if [ ! -e "$$target" ] && [ ! -L "$$target" ]; then \
-				cp "$$profile" "$$target" || exit 1; \
-			fi; \
+		for kind in agents swarms; do \
+			mkdir -p "$$profile_dir/$$kind" || exit 1; \
+			for profile in profiles/$$kind/*.yaml; do \
+				target="$$profile_dir/$$kind/$${profile##*/}"; \
+				if [ ! -e "$$target" ] && [ ! -L "$$target" ]; then \
+					cp "$$profile" "$$target" || exit 1; \
+				fi; \
+			done; \
 		done
 
 test:

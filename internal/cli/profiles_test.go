@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -177,15 +178,19 @@ func TestProfilesList(t *testing.T) {
 func TestProfilesUseHomeConfigByDefault(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
-	if got, want := profilesDirectory(), filepath.Join(os.Getenv("HOME"), ".config", "gnat", "profiles"); got != want {
+	profiles := filepath.Join(os.Getenv("HOME"), ".config", "gnat", "profiles")
+	if got, want := profilesDirectory(), filepath.Join(profiles, "agents"); got != want {
 		t.Errorf("profiles directory = %q, want %q", got, want)
+	}
+	if got, want := swarmProfilesDirectory(), filepath.Join(profiles, "swarms"); got != want {
+		t.Errorf("swarm profiles directory = %q, want %q", got, want)
 	}
 }
 
 func TestBundledProfilesCreateAgents(t *testing.T) {
-	for _, name := range []string{"coder", "reviewer", "researcher"} {
+	for _, name := range []string{"coder", "reviewer", "researcher", "orchestrator"} {
 		t.Run(name, func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join("..", "..", "profiles", name+".yaml"))
+			data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "agents", name+".yaml"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,5 +201,141 @@ func TestBundledProfilesCreateAgents(t *testing.T) {
 				t.Fatalf("status %d: %s", status, errs)
 			}
 		})
+	}
+}
+
+func TestBundledSwarmProfilesCreateSwarms(t *testing.T) {
+	bundled := func(kind string) map[string]string {
+		paths, err := filepath.Glob(filepath.Join("..", "..", "profiles", kind, "*.yaml"))
+		if err != nil || len(paths) == 0 {
+			t.Fatalf("bundled %s profiles: %v, %v", kind, paths, err)
+		}
+		files := map[string]string{}
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files[filepath.Base(path)] = string(data)
+		}
+		return files
+	}
+	swarms := bundled("swarms")
+	for file := range swarms {
+		name := strings.TrimSuffix(file, ".yaml")
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			useExec(t, nil)
+			useProfiles(t, bundled("agents"))
+			useSwarmProfiles(t, swarms)
+			if status, _, errs := runGnat(t, "create", "demo", "--repo", "o/r", "--profile", name); status != 0 {
+				t.Fatalf("status %d: %s", status, errs)
+			}
+		})
+	}
+}
+
+func useSwarmProfiles(t *testing.T, files map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(swarmProfilesDirectory(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range files {
+		if err := writeFile(filepath.Join(swarmProfilesDirectory(), name), content); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCreateSwarmFromProfile(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	useExec(t, nil)
+	useProfiles(t, map[string]string{
+		"orchestrator.yaml": "instructions: Coordinate.\n",
+		"coder.yaml":        "instructions: Write code.\neffort: low\n",
+	})
+	useSwarmProfiles(t, map[string]string{"team.yaml": `agents:
+  - name: lead
+    profile: orchestrator
+    model: opus
+    effort: high
+  - name: sonnet
+    count: 2
+    profile: coder
+    model: sonnet
+  - name: flash
+    count: 1
+    profile: coder
+    harness: ox
+    model: openrouter:deepseek/deepseek-v4.1-flash
+    effort: high
+  - name: plain
+    instructions: ""
+`})
+	status, out, errs := runGnat(t, "create", "demo", "--repo", "o/r", "--profile", "team")
+	if status != 0 || out != "created swarm demo with agents lead, sonnet-1, sonnet-2, flash-1, plain\n" {
+		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
+	}
+	swarm, err := state.Load("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []state.Agent{
+		{Name: "lead", Instructions: "Coordinate.", Harness: "claude", Model: "opus", Effort: "high"},
+		{Name: "sonnet-1", Instructions: "Write code.", Harness: "claude", Model: "sonnet", Effort: "low"},
+		{Name: "sonnet-2", Instructions: "Write code.", Harness: "claude", Model: "sonnet", Effort: "low"},
+		{Name: "flash-1", Instructions: "Write code.", Harness: "ox", Model: "openrouter:deepseek/deepseek-v4.1-flash", Effort: "high"},
+		{Name: "plain", Harness: state.DefaultHarness},
+	}
+	if swarm.Repo != "o/r" || !slices.Equal(swarm.Agents, want) {
+		t.Errorf("swarm = %+v, want agents %+v", swarm, want)
+	}
+}
+
+func TestSwarmProfileErrorsDoNotCreateSwarms(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml, want string
+	}{
+		{name: "missing", want: "load swarm profile"},
+		{name: "../team", want: "swarm profile name"},
+		{name: "team", yaml: "agents: []\n", want: "has no agents"},
+		{name: "team", yaml: "agents:\n  - name: a\n    count: -1\n", want: "negative count"},
+		{name: "team", yaml: "agents:\n  - name: a\n    efort: max\n", want: "field efort not found"},
+		{name: "team", yaml: "agents:\n  - name: a\n---\nagents: []\n", want: "single YAML document"},
+		{name: "team", yaml: "agents:\n  - name: a\n    profile: missing\n", want: "load profile"},
+		{name: "team", yaml: "agents:\n  - name: a\n    effort: extreme\n", want: "claude effort must be one of"},
+		{name: "team", yaml: "agents:\n  - name: a\n    harness: nope\n", want: "unknown harness"},
+		{name: "team", yaml: "agents:\n  - count: 2\n", want: "agent name"},
+		{name: "team", yaml: "agents:\n  - name: control\n", want: "reserved"},
+		{name: "team", yaml: "agents:\n  - name: a-1\n  - name: a\n    count: 1\n", want: "already has an agent 'a-1'"},
+	} {
+		t.Run(tc.name+"/"+tc.want, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			useExec(t, nil)
+			useProfiles(t, nil)
+			files := map[string]string{}
+			if tc.yaml != "" {
+				files["team.yaml"] = tc.yaml
+			}
+			useSwarmProfiles(t, files)
+			status, _, errs := runGnat(t, "create", "demo", "--repo", "o/r", "--profile", tc.name)
+			if status == 0 || !strings.Contains(errs, tc.want) {
+				t.Fatalf("status %d, stderr %q; want %q", status, errs, tc.want)
+			}
+			if exists, err := state.Exists("demo"); err != nil || exists {
+				t.Fatalf("swarm exists = %v, err = %v", exists, err)
+			}
+		})
+	}
+}
+
+func TestSwarmProfilesList(t *testing.T) {
+	useProfiles(t, map[string]string{"coder.yaml": "instructions: x\n"})
+	useSwarmProfiles(t, map[string]string{"team.yaml": "agents: []\n", "big.yaml": "", "notes.txt": "ignored"})
+	if status, out, errs := runGnat(t, "profiles", "list", "--swarm"); status != 0 || out != "big\nteam\n" {
+		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
+	}
+	if status, out, errs := runGnat(t, "profiles", "list"); status != 0 || out != "coder\n" {
+		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
 	}
 }

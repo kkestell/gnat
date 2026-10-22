@@ -5,3 +5,6 @@ instructions: |
   Add or update tests when they help verify the behavior, and run checks proportional
   to the change. Explain what changed, what you verified, and any remaining limits.
   Commit, push, or open a pull request when the task asks for it.
+harness: claude
+model: claude-sonnet-5-5
+effort: high

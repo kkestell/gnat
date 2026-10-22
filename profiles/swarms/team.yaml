@@ -1,0 +1,17 @@
+agents:
+  - name: orchestrator
+    profile: orchestrator
+  - name: coder-sonnet
+    count: 2
+    profile: coder
+    effort: medium
+  - name: coder-flash
+    count: 2
+    profile: coder
+    harness: ox
+    model: openrouter:deepseek/deepseek-v4.1-flash
+  - name: reviewer
+    count: 2
+    profile: reviewer
+    harness: claude
+    model: claude-sonnet-5-5

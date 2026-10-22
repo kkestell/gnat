@@ -6,7 +6,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 
 | Command | Description |
 | --- | --- |
-| `gnat create SWARM --repo OWNER/NAME [--dockerfile FILE] [--file PATH]...` | Define a swarm. |
+| `gnat create SWARM --repo OWNER/NAME [--profile NAME] [--dockerfile FILE] [--file PATH]...` | Define a swarm. `--profile` adds a [swarm profile](#swarm-profiles)'s agents. |
 | `gnat delete SWARM` | Bring the swarm down and delete it, with its logs, clones, and sessions. |
 | `gnat list` | List swarms. |
 | `gnat up SWARM` | Build images and start the control plane and one container per agent. Returns once the control plane answers. |
@@ -21,7 +21,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat agent create SWARM AGENT [--profile NAME] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. |
 | `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
 | `gnat agent list SWARM` | List agents. |
-| `gnat profiles list` | List available profile names, alphabetically. |
+| `gnat profiles list [--swarm]` | List available agent profile names, or swarm profile names with `--swarm`, alphabetically. |
 | `gnat auth login claude\|ox` | Save a harness's credential in the system keyring. See [setup](setup.md#credentials). |
 | `gnat auth logout claude\|ox` | Remove a harness's saved credential. |
 | `gnat file add SWARM HOST_PATH[:WORKSPACE_PATH]` | Add a file for every clone (swarm down). See [setup](setup.md#files-outside-source-control). |
@@ -30,14 +30,18 @@ Commands for a swarm take its name first. Commands that address agents take thei
 
 ## Agent profiles
 
-`make install` includes three profiles from the repository's `profiles/`
-directory: `coder` implements changes, `reviewer` reports code review findings,
-and `researcher` investigates questions and compares options. They provide role
-instructions and use the default harness, model, and effort. Existing profile
-files are preserved during installation, so you can customize them.
+`make install` includes four agent profiles from the repository's
+`profiles/agents` directory: `coder` implements changes, `reviewer` reports
+code review findings, `researcher` investigates questions and compares options,
+and `orchestrator` hands out work to its teammates, has their pull requests
+reviewed, and merges them. They provide role instructions. `orchestrator` runs
+`claude-opus-5-5`, `coder` runs `claude-sonnet-5-5`, and `reviewer` runs
+`openrouter:deepseek/deepseek-v4.1-flash` on Ox, each at `high` effort;
+`researcher` uses the default harness, model, and effort. Existing profile files
+are preserved during installation, so you can customize them.
 
-Save reusable agent settings in `~/.config/gnat/profiles/NAME.yaml`
-(`$XDG_CONFIG_HOME/gnat/profiles/NAME.yaml` when set). For example,
+Save reusable agent settings in `~/.config/gnat/profiles/agents/NAME.yaml`
+(`$XDG_CONFIG_HOME/gnat/profiles/agents/NAME.yaml` when set). For example,
 `coder.yaml`:
 
 ```yaml
@@ -70,6 +74,49 @@ without parsing the files and prints nothing if the directory does not exist.
 
 Settings are copied into the swarm definition when an agent is created. Editing
 or removing a profile later does not change existing agents.
+
+## Swarm profiles
+
+A swarm profile lists the agents to create with a swarm. Save it in
+`~/.config/gnat/profiles/swarms/NAME.yaml`
+(`$XDG_CONFIG_HOME/gnat/profiles/swarms/NAME.yaml` when set). `make install`
+includes `team`, from the repository's `profiles/swarms` directory:
+
+```yaml
+agents:
+  - name: orchestrator
+    profile: orchestrator
+  - name: coder-sonnet
+    count: 2
+    profile: coder
+    effort: medium
+  - name: coder-flash
+    count: 2
+    profile: coder
+    harness: ox
+    model: openrouter:deepseek/deepseek-v4.1-flash
+  - name: reviewer
+    count: 2
+    profile: reviewer
+    harness: claude
+    model: claude-sonnet-5-5
+```
+
+```sh
+gnat profiles list --swarm
+gnat create demo --repo OWNER/NAME --profile team
+```
+
+That creates `orchestrator`, `coder-sonnet-1`, `coder-sonnet-2`, `coder-flash-1`,
+`coder-flash-2`, `reviewer-1`, and `reviewer-2`, in that order. Each entry needs a
+`name`. With `count`, it creates that many agents named `NAME-1` through
+`NAME-COUNT`; without it, one agent named `NAME`. `profile` names an
+[agent profile](#agent-profiles) to start from, and `instructions`, `harness`,
+`model`, and `effort` replace its settings, the way flags do for
+`gnat agent create`; an empty value clears one. The file has the same rules as an
+agent profile: one YAML document, unknown settings rejected. If any agent is
+invalid, `gnat create` creates nothing. Add or remove agents afterwards with
+`gnat agent create` and `gnat agent delete`.
 
 ## Messages
 
