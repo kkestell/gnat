@@ -325,6 +325,8 @@ func TestCallDoesntResendARequestTheControlPlaneTookAndDropped(t *testing.T) {
 }
 
 func TestConnectingRetriesUntilTheControlPlaneIsUp(t *testing.T) {
+	// No secret, whatever the environment running the tests has (a gnat container sets one).
+	t.Setenv(state.SecretVar, "")
 	// Nothing listens yet: take a free port, release it, and listen on it later.
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

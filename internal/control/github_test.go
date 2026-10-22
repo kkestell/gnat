@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -281,6 +283,93 @@ func TestGitHubMergeNeedsThePermission(t *testing.T) {
 	p.refused(gh("merger-secret", protocol.GitHubRequest{Action: protocol.PRMerge}), "number is required")
 }
 
+// pull is a pull request as GitHub answers for it, from head in the repository repo.
+func pull(number int, head, repo, state string) map[string]any {
+	headRepo := any(nil)
+	if repo != "" {
+		headRepo = map[string]any{"full_name": repo}
+	}
+	owner, _, _ := strings.Cut(repo, "/")
+	return map[string]any{
+		"number": number, "state": state, "html_url": "https://github.com/o/r/pull/" + fmt.Sprint(number),
+		"head": map[string]any{"ref": head, "label": owner + ":" + head, "repo": headRepo},
+	}
+}
+
+func TestGitHubClosesAndEditsOnlyTheAgentsOwnPullRequests(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.answers["GET /repos/o/r/pulls/5"] = pull(5, "demo/alpha/x", "o/r", "open")
+	f.answers["PATCH /repos/o/r/pulls/5"] = pull(5, "demo/alpha/x", "o/r", "closed")
+	p := githubPlane(t, f)
+	closing := gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 5})
+	if resp := p.must(closing); resp.Output != "Closed #5: https://github.com/o/r/pull/5\n" {
+		t.Errorf("got %q", resp.Output)
+	}
+	editing := gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PREdit, Number: 5, Title: "New", Body: "Text"})
+	if resp := p.must(editing); resp.Output != "Edited #5: https://github.com/o/r/pull/5\n" {
+		t.Errorf("got %q", resp.Output)
+	}
+	p.must(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PREdit, Number: 5, Body: "Only text"}))
+	got := f.asked()
+	if len(got) != 6 {
+		t.Fatalf("asked %+v", got)
+	}
+	for i, want := range []map[string]any{{"state": "closed"}, {"title": "New", "body": "Text"}, {"body": "Only text"}} {
+		check, change := got[2*i], got[2*i+1]
+		if check.method != "GET" || change.method != "PATCH" || change.path != "/repos/o/r/pulls/5" || !reflect.DeepEqual(change.body, want) {
+			t.Errorf("asked %+v then %+v, want a PATCH of %v", check, change, want)
+		}
+	}
+}
+
+func TestGitHubRefusesToCloseOrEditOthersPullRequests(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.answers["GET /repos/o/r/pulls/5"] = pull(5, "demo/beta/x", "o/r", "open")
+	// A fork's branch named like one of alpha's isn't alpha's.
+	f.answers["GET /repos/o/r/pulls/6"] = pull(6, "demo/alpha/x", "someone/r", "open")
+	// Nor is one whose fork is gone.
+	f.answers["GET /repos/o/r/pulls/7"] = pull(7, "demo/alpha/x", "", "open")
+	f.answers["GET /repos/o/r/pulls/8"] = pull(8, "demo/alpha/", "o/r", "open")
+	f.answers["GET /repos/o/r/pulls/9"] = pull(9, "main", "o/r", "open")
+	f.answers["GET /repos/o/r/pulls/10"] = pull(10, "demo/alphabet/x", "o/r", "open")
+	p := githubPlane(t, f)
+	for _, n := range []int{5, 6, 7, 8, 9, 10} {
+		for _, r := range []protocol.GitHubRequest{
+			{Action: protocol.PRClose, Number: n}, {Action: protocol.PREdit, Number: n, Title: "t"},
+		} {
+			p.refused(gh("alpha-secret", r), "may only close or edit pull requests from its own branches, named demo/alpha/NAME")
+		}
+	}
+	// The secret says who is asking, not the request, and merging rights don't help.
+	forged := gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 6})
+	forged.Agent = "alpha"
+	p.refused(forged, "agent 'beta' may only close or edit")
+	p.refused(gh("merger-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 5}), "agent 'merger' may only close or edit")
+	for _, r := range f.asked() {
+		if r.method != "GET" {
+			t.Fatalf("GitHub was asked to %s %s", r.method, r.path)
+		}
+	}
+}
+
+func TestGitHubCloseAndEditCheckTheirArguments(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.answers["GET /repos/o/r/pulls/5"] = pull(5, "demo/alpha/x", "o/r", "closed")
+	p := githubPlane(t, f)
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRClose}), "number is required")
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PREdit, Title: "t"}), "number is required")
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PREdit, Number: 5}), "needs a title or a body")
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PREdit, Number: 5, Title: "  "}), "needs a title")
+	if got := f.asked(); len(got) != 0 {
+		t.Fatalf("GitHub was asked: %+v", got)
+	}
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 5}), "#5 is already closed")
+	f.answers["GET /repos/o/r/pulls/5"] = map[string]any{"state": "closed", "merged_at": "2026-10-22T00:00:00Z",
+		"head": map[string]any{"ref": "demo/alpha/x", "repo": map[string]any{"full_name": "o/r"}}}
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 5}), "#5 is already merged")
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 4}), "404 Not Found")
+}
+
 func TestGitHubMergeReportsWhatGitHubRefuses(t *testing.T) {
 	f := newFakeGitHub(t)
 	f.status["PUT /repos/o/r/pulls/5/merge"] = http.StatusMethodNotAllowed
@@ -302,11 +391,12 @@ func TestGitHubOnlyEverTouchesTheSwarmsRepository(t *testing.T) {
 		{Action: protocol.PRReview, Number: 1, Review: protocol.ReviewApprove},
 		{Action: protocol.PRCreate, Title: "t", Head: "demo/merger/x"}, // Asks for the default branch.
 		{Action: protocol.PRCreate, Title: "t", Head: "demo/merger/x", Base: "main"}, {Action: protocol.PRMerge, Number: 1},
+		{Action: protocol.PRClose, Number: 1}, {Action: protocol.PREdit, Number: 1, Title: "t"},
 	} {
 		_, _ = p.request(gh("merger-secret", a)) // GitHub answers 404; only where it was asked matters.
 	}
 	got := f.asked()
-	if len(got) != 10 {
+	if len(got) != 12 {
 		t.Fatalf("asked %+v", got)
 	}
 	defaultBranch := false

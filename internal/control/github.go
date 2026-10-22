@@ -38,7 +38,8 @@ var repoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z`)
 // agent can talk to the control plane without the gnat-container commands, so nothing
 // the request says about who is asking, or where, is believed. The agent is whoever's
 // secret it carries, the repository is always Repo, and the head of a pull request must
-// be under that agent's own branch prefix (see state.BranchPrefix).
+// be under that agent's own branch prefix (see state.BranchPrefix), both to open one and
+// to close or edit it.
 type GitHub struct {
 	// Swarm is the swarm's name, the first part of every agent's branch prefix.
 	Swarm string
@@ -158,6 +159,39 @@ func (g *GitHub) do(ctx context.Context, c *Control, agent string, r protocol.Gi
 			return "", fmt.Errorf("agent '%s' is not allowed to merge pull requests", agent)
 		}
 		return g.merge(ctx, r)
+	case protocol.PRClose:
+		if err := needNumber(); err != nil {
+			return "", err
+		}
+		p, err := g.own(ctx, agent, r.Number)
+		if err != nil {
+			return "", err
+		}
+		if p.state() != "open" {
+			return "", fmt.Errorf("#%d is already %s", r.Number, p.state())
+		}
+		return g.update(ctx, "Closed", r.Number, map[string]any{"state": "closed"})
+	case protocol.PREdit:
+		if err := needNumber(); err != nil {
+			return "", err
+		}
+		changes := map[string]any{}
+		if r.Title != "" {
+			if strings.TrimSpace(r.Title) == "" {
+				return "", errors.New("a pull request needs a title")
+			}
+			changes["title"] = r.Title
+		}
+		if r.Body != "" {
+			changes["body"] = r.Body
+		}
+		if len(changes) == 0 {
+			return "", errors.New("an edit needs a title or a body")
+		}
+		if _, err := g.own(ctx, agent, r.Number); err != nil {
+			return "", err
+		}
+		return g.update(ctx, "Edited", r.Number, changes)
 	}
 	return "", fmt.Errorf("unknown action '%s'", r.Action)
 }
@@ -204,6 +238,34 @@ func (g *GitHub) create(ctx context.Context, agent string, r protocol.GitHubRequ
 	return fmt.Sprintf("Created pull request #%d: %s\n", made.Number, made.HTMLURL), nil
 }
 
+// own is a pull request whose head is one of the agent's own branches, in the swarm's
+// repository rather than a fork with a branch of the same name; any other is refused.
+func (g *GitHub) own(ctx context.Context, agent string, number int) (pullJSON, error) {
+	prefix, err := state.BranchPrefix(g.Swarm, agent)
+	if err != nil {
+		return pullJSON{}, err
+	}
+	var p pullJSON
+	if err := g.json(ctx, "GET", fmt.Sprintf("/pulls/%d", number), nil, &p); err != nil {
+		return pullJSON{}, err
+	}
+	ours := p.Head.Repo != nil && strings.EqualFold(p.Head.Repo.FullName, g.Repo)
+	if !ours || !strings.HasPrefix(p.Head.Ref, prefix) || p.Head.Ref == prefix {
+		return pullJSON{}, fmt.Errorf("agent '%s' may only close or edit pull requests from its own branches, named %sNAME; #%d is from %q",
+			agent, prefix, number, p.Head.Label)
+	}
+	return p, nil
+}
+
+// update changes a pull request and says what was done to it.
+func (g *GitHub) update(ctx context.Context, done string, number int, changes map[string]any) (string, error) {
+	var p pullJSON
+	if err := g.json(ctx, "PATCH", fmt.Sprintf("/pulls/%d", number), changes, &p); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s #%d: %s\n", done, number, p.HTMLURL), nil
+}
+
 type pullJSON struct {
 	Number   int     `json:"number"`
 	Title    string  `json:"title"`
@@ -217,8 +279,13 @@ type pullJSON struct {
 	Mergeable      *bool  `json:"mergeable"`
 	MergeableState string `json:"mergeable_state"`
 	Head           struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref   string `json:"ref"`
+		SHA   string `json:"sha"`
+		Label string `json:"label"`
+		// Repo is null if the head's repository, a fork, was deleted.
+		Repo *struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`

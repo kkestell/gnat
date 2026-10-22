@@ -58,6 +58,18 @@ func TestACommandsOwnStatusIsPassedThrough(t *testing.T) {
 	}
 }
 
+func TestWaitAnyPassesItOn(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"), agent("beta", "claude"))
+	f := useExec(t, listing([]string{"gnat-demo-control"}, nil, nil))
+	if status, _, errs := runGnat(t, "wait", "demo", "--any", "--timeout", "5"); status != 0 {
+		t.Fatalf("status %d, stderr %q", status, errs)
+	}
+	want := "docker exec gnat-demo-control /opt/gnat/gnat-container control wait alpha beta --any --timeout 5.0"
+	if last := f.lines()[len(f.lines())-1]; last != want {
+		t.Errorf("got %q, want %q", last, want)
+	}
+}
+
 func TestFlagsMayFollowPositionals(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"), agent("beta", "claude"))
 	f := useExec(t, listing([]string{"gnat-demo-control"}, nil, nil))

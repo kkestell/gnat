@@ -72,6 +72,12 @@ func TestCommandsSendTheirRequestWithTheSecret(t *testing.T) {
 		{[]string{"merge", "3"}, "", protocol.GitHubRequest{Action: protocol.PRMerge, Number: 3}},
 		{[]string{"merge", "3", "--squash"}, "", protocol.GitHubRequest{Action: protocol.PRMerge, Number: 3, Method: protocol.MergeSquash}},
 		{[]string{"merge", "3", "--rebase"}, "", protocol.GitHubRequest{Action: protocol.PRMerge, Number: 3, Method: protocol.MergeRebase}},
+		{[]string{"close", "#3"}, "", protocol.GitHubRequest{Action: protocol.PRClose, Number: 3}},
+		{[]string{"edit", "3", "--title", "T"}, "", protocol.GitHubRequest{Action: protocol.PREdit, Number: 3, Title: "T"}},
+		{[]string{"edit", "--body", "B", "3"}, "", protocol.GitHubRequest{Action: protocol.PREdit, Number: 3, Body: "B"}},
+		{[]string{"edit", "3", "--title", "T", "--body-file", file}, "",
+			protocol.GitHubRequest{Action: protocol.PREdit, Number: 3, Title: "T", Body: "from a file"}},
+		{[]string{"edit", "3", "--body-file", "-"}, "piped", protocol.GitHubRequest{Action: protocol.PREdit, Number: 3, Body: "piped"}},
 	} {
 		got := fake(t, "the output\n", nil)
 		out, errs, status := do(c.args, c.stdin)
@@ -93,6 +99,10 @@ func TestUsageErrorsSendNothing(t *testing.T) {
 		{"merge", "1", "--squash", "--rebase"},
 		{"create", "--title", "T", "--body", "a", "--body-file", "x"},
 		{"view", "1", "--nope"},
+		{"close"}, {"close", "1", "2"}, {"close", "1", "--body", "x"},
+		{"edit"}, {"edit", "1"}, {"edit", "1", "--title", " "}, {"edit", "1", "--body", ""},
+		{"edit", "1", "--title", "T", "--body", "  "}, {"edit", "1", "--body-file", "-"},
+		{"edit", "1", "--body", "a", "--body-file", "x"},
 	} {
 		got := fake(t, "", nil)
 		if _, _, status := do(args, ""); status != 2 {

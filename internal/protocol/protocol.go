@@ -8,6 +8,7 @@ package protocol
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +48,10 @@ const (
 	PRComment = "pr_comment"
 	PRReview  = "pr_review"
 	PRMerge   = "pr_merge"
+	// PRClose and PREdit act only on a pull request from one of the asking agent's own
+	// branches.
+	PRClose = "pr_close"
+	PREdit  = "pr_edit"
 	// GitIdentityAction asks who commits should be by: the name and email of the GitHub account
 	// the control plane's token belongs to (Response.Identity).
 	GitIdentityAction = "git_identity"
@@ -103,7 +108,7 @@ type GitHubRequest struct {
 	Number int `json:"number,omitempty"`
 	// Title, Body, Head, Base, and Draft are the pull request to create; Head is a
 	// branch name, and an empty Base is the repository's default branch. Body is also a
-	// comment's or review's text.
+	// comment's or review's text. An edit sets the Title and Body that aren't empty.
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
 	Head  string `json:"head,omitempty"`
@@ -214,15 +219,21 @@ func Call(host string, req Request, timeout time.Duration) (*Response, error) {
 
 // CallAddr is Call to a "host:port" address, or to the Unix socket at an absolute path.
 func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error) {
+	return CallContext(context.Background(), addr, req, timeout)
+}
+
+// CallContext is CallAddr that hangs up when ctx is done, with ctx's error.
+func CallContext(ctx context.Context, addr string, req Request, timeout time.Duration) (*Response, error) {
 	network := "tcp"
 	if strings.HasPrefix(addr, "/") {
 		network = "unix"
 	}
-	conn, err := net.DialTimeout(network, addr, timeout)
+	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	defer context.AfterFunc(ctx, func() { conn.Close() })()
 	if timeout > 0 {
 		_ = conn.SetDeadline(time.Now().Add(timeout))
 	}
@@ -243,6 +254,9 @@ func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error
 		}
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, &RequestError{Message: fmt.Sprintf("%s didn't respond: %v", host, err), NoResponse: true}
 	}
 	if len(reply) == 0 {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/recorded"
+	"github.com/kkestell/gnat/internal/state"
 	"github.com/kkestell/gnat/internal/web"
 )
 
@@ -45,6 +47,12 @@ type plane struct {
 // and database in dir.
 func startPlane(t *testing.T, dir string, agents ...string) *plane {
 	t.Helper()
+	return startPlaneWithIDs(t, dir, nil, agents...)
+}
+
+// startPlaneWithIDs is startPlane for agents with the IDs in ids.
+func startPlaneWithIDs(t *testing.T, dir string, ids map[string]string, agents ...string) *plane {
+	t.Helper()
 	if len(agents) == 0 {
 		agents = []string{"alpha"}
 	}
@@ -52,7 +60,11 @@ func startPlane(t *testing.T, dir string, agents ...string) *plane {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(agents, db, nil, dir)
+	setups := map[string]state.Agent{}
+	for agent, id := range ids {
+		setups[agent] = state.Agent{Name: agent, ID: id}
+	}
+	c, err := New(agents, db, setups, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,15 +363,12 @@ func TestWaitForPassesAgainWhenAnAgentWasWokenAfterItWasChecked(t *testing.T) {
 		{Idle: &idle, Turns: 2}, {Idle: &idle, Turns: 1},
 	}
 	var requests []string
-	t.Cleanup(func(old func(protocol.Request) (*protocol.Response, error)) func() {
-		return func() { call = old }
-	}(call))
-	call = func(req protocol.Request) (*protocol.Response, error) {
+	useCall(t, func(_ context.Context, req protocol.Request) (*protocol.Response, error) {
 		requests = append(requests, req.Agent)
 		next := statuses[0]
 		statuses = statuses[1:]
 		return next, nil
-	}
+	})
 	results, err := WaitFor([]string{"alpha", "beta"}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -372,6 +381,20 @@ func TestWaitForPassesAgainWhenAnAgentWasWokenAfterItWasChecked(t *testing.T) {
 	}
 }
 
+// useCall has the commands' requests go to f for the rest of the test.
+func useCall(t *testing.T, f func(context.Context, protocol.Request) (*protocol.Response, error)) {
+	old := call
+	t.Cleanup(func() { call = old })
+	call = f
+}
+
+// useCall has the commands' requests go to the control plane p.
+func (p *plane) useCall() {
+	useCall(p.t, func(ctx context.Context, req protocol.Request) (*protocol.Response, error) {
+		return protocol.CallContext(ctx, p.addr, req, 5*time.Second)
+	})
+}
+
 func result(reply *string, exit *int, turns int) AgentResult {
 	return AgentResult{Response: &protocol.Response{Reply: reply, Exit: exit, Turns: turns}}
 }
@@ -381,7 +404,7 @@ func TestReportHeadsRepliesByAgentAndListsFailures(t *testing.T) {
 	_ = one
 	a := result(str("hi\n"), zero, 1)
 	a.Agent = "alpha"
-	out, failures := Report([]AgentResult{a})
+	out, failures := Report([]AgentResult{a}, false)
 	if out != "hi\n" || len(failures) != 0 {
 		t.Fatalf("got %q, %v", out, failures)
 	}
@@ -392,7 +415,7 @@ func TestReportHeadsRepliesByAgentAndListsFailures(t *testing.T) {
 	out, failures = Report([]AgentResult{
 		named("alpha", result(str("hi"), zero, 1)), named("beta", result(nil, &two, 1)),
 		named("gamma", result(nil, nil, 1)), named("delta", result(nil, nil, 0)), named("epsilon", epsilon),
-	})
+	}, true)
 	if want := "==> alpha <==\nhi\n==> beta <==\n==> gamma <==\n==> delta <==\n==> epsilon <==\n"; out != want {
 		t.Fatalf("got %q", out)
 	}
@@ -408,7 +431,7 @@ func TestReportGivesTheHarnessReasonForAFailure(t *testing.T) {
 	exit := 1
 	r := result(nil, &exit, 1)
 	r.Agent, r.Error = "alpha", str("rate limited")
-	_, failures := Report([]AgentResult{r})
+	_, failures := Report([]AgentResult{r}, false)
 	if want := []string{"alpha: its last turn failed with status 1: rate limited"}; !reflect.DeepEqual(failures, want) {
 		t.Fatalf("got %q", failures)
 	}
@@ -723,7 +746,7 @@ func TestRecordedWriteReadsTheStatusOfADownSwarm(t *testing.T) {
 	p.close()
 
 	var out strings.Builder
-	if err := recorded.Write(dir, []string{"alpha", "beta", "gamma"}, &out); err != nil {
+	if err := recorded.Write(dir, []string{"alpha", "beta", "gamma"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	var got []map[string]any
@@ -751,7 +774,7 @@ func TestRecordedWriteReadsTheStatusOfADownSwarm(t *testing.T) {
 func TestRecordedWriteWithoutADatabase(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "never-up")
 	var out strings.Builder
-	if err := recorded.Write(dir, []string{"alpha"}, &out); err != nil {
+	if err := recorded.Write(dir, []string{"alpha"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"turns":0`) {
@@ -759,6 +782,136 @@ func TestRecordedWriteWithoutADatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("created %s: %v", dir, err)
+	}
+}
+
+// recordsOf is how many records events.jsonl in dir has for the agent.
+func recordsOf(t *testing.T, dir, agent string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, EventsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var head struct{ Agent string }
+		if json.Unmarshal([]byte(line), &head) == nil && head.Agent == agent {
+			n++
+		}
+	}
+	return n
+}
+
+// recordedStatus is the agent's status as `gnat status` reads it while the swarm is down.
+func recordedStatus(t *testing.T, dir, agent string, ids map[string]string) map[string]any {
+	t.Helper()
+	var out strings.Builder
+	if err := recorded.Write(dir, []string{agent}, ids, &out); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestAnAgentCreatedAgainByTheSameNameStartsFresh(t *testing.T) {
+	dir := t.TempDir()
+	first := startPlaneWithIDs(t, dir, map[string]string{"alpha": "one", "beta": "b"}, "alpha", "beta")
+	alpha, beta := first.attach("alpha"), first.attach("beta")
+	for _, p := range []struct {
+		agent  string
+		daemon *fakeDaemon
+	}{{"alpha", alpha}, {"beta", beta}} {
+		first.send(p.agent, "work")
+		p.daemon.receive()
+		p.daemon.event(events.NewUsage(events.UsageTotals{InputTokens: i64(10), Cost: f64(0.25)}))
+		p.daemon.turnEnd("done", "")
+		p.daemon.done(0, false)
+		first.wait(p.agent)
+	}
+	first.send("alpha", "next")
+	first.send("alpha", "mid-turn")
+	alpha.receive()
+	first.close()
+
+	// alpha is deleted and created again while the swarm is down: the new one has another ID.
+	ids := map[string]string{"alpha": "two", "beta": "b"}
+	fresh := map[string]any{"ok": true, "agent": "alpha", "state": "down", "since_active": nil, "queued": 0.0, "turns": 0.0, "exit": nil,
+		"stopped": false, "reply": nil, "error": nil,
+		"usage": map[string]any{"input_tokens": nil, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": nil, "cost": nil}}
+	if got := recordedStatus(t, dir, "alpha", ids); !reflect.DeepEqual(got, fresh) {
+		t.Fatalf("got %v, want %v", got, fresh)
+	}
+	if got := recordedStatus(t, dir, "beta", ids); got["turns"] != 1.0 {
+		t.Fatalf("beta lost its history: %v", got)
+	}
+
+	second := startPlaneWithIDs(t, dir, ids, "alpha", "beta")
+	s := second.status("alpha")
+	if s.Queued != 0 || s.Turns != 0 || s.Exit != nil || s.Reply != nil || s.Usage.InputTokens != nil {
+		t.Fatalf("got %+v", s)
+	}
+	if log := second.log("alpha"); log != "" {
+		t.Fatalf("alpha's log has its predecessor's: %q", log)
+	}
+	if n := recordsOf(t, dir, "alpha"); n != 0 {
+		t.Fatalf("events.jsonl has %d of its predecessor's records", n)
+	}
+	if s := second.status("beta"); s.Turns != 1 || *s.Usage.InputTokens != 10 || recordsOf(t, dir, "beta") == 0 {
+		t.Fatalf("beta lost its history: %+v", s)
+	}
+	// The interrupted turn was the old alpha's, so it isn't reported to the new one.
+	alpha = second.attach("alpha")
+	second.send("alpha", "hello")
+	if got := alpha.receive(); got.Text != "hello" {
+		t.Fatalf("got %+v", got)
+	}
+	alpha.done(0, false)
+	second.wait("alpha")
+	second.close()
+
+	// Its own history it keeps, and coming up again forgets no one, so leaves events.jsonl be.
+	before, err := os.Stat(filepath.Join(dir, EventsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := startPlaneWithIDs(t, dir, ids, "alpha", "beta").status("alpha"); got.Turns != 1 {
+		t.Fatalf("got %+v", got)
+	}
+	if after, err := os.Stat(filepath.Join(dir, EventsFile)); err != nil || !os.SameFile(before, after) {
+		t.Fatalf("events.jsonl was rewritten: %v", err)
+	}
+}
+
+func TestAnAgentWithoutAnIDKeepsItsHistoryUntilReplacedByOneWithAnID(t *testing.T) {
+	dir := t.TempDir()
+	first := startPlane(t, dir)
+	daemon := first.attach("alpha")
+	first.send("alpha", "work")
+	daemon.receive()
+	daemon.done(0, false)
+	first.wait("alpha")
+	first.close()
+	// Saved before agents had IDs, it keeps its history every time it comes back up.
+	for range 2 {
+		p := startPlane(t, dir)
+		if got := p.status("alpha").Turns; got != 1 {
+			t.Fatalf("got %d turns", got)
+		}
+		p.close()
+	}
+	if got := recordedStatus(t, dir, "alpha", nil); got["turns"] != 1.0 {
+		t.Fatalf("got %v", got)
+	}
+	// Deleted and created again, it has an ID the database never recorded.
+	ids := map[string]string{"alpha": "new"}
+	if got := recordedStatus(t, dir, "alpha", ids); got["turns"] != 0.0 {
+		t.Fatalf("got %v", got)
+	}
+	if got := startPlaneWithIDs(t, dir, ids).status("alpha").Turns; got != 0 {
+		t.Fatalf("got %d turns", got)
 	}
 }
 
@@ -889,12 +1042,7 @@ func TestALineOverTheLimitIsAnsweredWithAnError(t *testing.T) {
 
 func TestMainStatusAndStopPrintLikePythons(t *testing.T) {
 	p := startPlane(t, t.TempDir())
-	t.Cleanup(func(old func(protocol.Request) (*protocol.Response, error)) func() {
-		return func() { call = old }
-	}(call))
-	call = func(req protocol.Request) (*protocol.Response, error) {
-		return protocol.CallAddr(p.addr, req, 5*time.Second)
-	}
+	p.useCall()
 
 	var out, errOut strings.Builder
 	if code := run([]string{"status", "alpha"}, &out, &errOut); code != 0 {
@@ -929,6 +1077,98 @@ func TestMainStatusAndStopPrintLikePythons(t *testing.T) {
 	}
 	if q := p.status("alpha").Queued; q != 1 {
 		t.Fatalf("queued %d", q)
+	}
+}
+
+func TestMainWaitAnyReturnsOnTheFirstAgentToFinish(t *testing.T) {
+	p := startPlane(t, t.TempDir(), "alpha", "beta", "gamma")
+	p.useCall()
+	daemons := map[string]*fakeDaemon{}
+	for _, agent := range []string{"alpha", "beta", "gamma"} {
+		daemons[agent] = p.attach(agent)
+		p.send(agent, "work")
+		daemons[agent].receive()
+	}
+
+	type ran struct {
+		code        int
+		out, errOut string
+	}
+	waitAny := func(args ...string) <-chan ran {
+		finished := make(chan ran, 1)
+		go func() {
+			var out, errOut strings.Builder
+			code := run(append([]string{"wait", "--any"}, args...), &out, &errOut)
+			finished <- ran{code, out.String(), errOut.String()}
+		}()
+		return finished
+	}
+	finished := waitAny("alpha", "beta", "gamma")
+	select {
+	case r := <-finished:
+		t.Fatalf("returned with every agent busy: %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+	daemons["beta"].turnEnd("from beta", "")
+	daemons["beta"].done(0, false)
+	r := <-finished
+	if r.code != 0 || r.out != "==> beta <==\nfrom beta\n" || r.errOut != "still waiting on: alpha, gamma\n" {
+		t.Fatalf("got %+v", r)
+	}
+	for _, agent := range []string{"alpha", "gamma"} {
+		if s := p.status(agent).State; s != "busy" {
+			t.Fatalf("%s: %s", agent, s)
+		}
+	}
+
+	// Agents already finished count at once, and a failed last turn exits 1.
+	daemons["alpha"].turnEnd("", "rate limited")
+	daemons["alpha"].done(1, false)
+	p.waitUntil("alpha is idle", func() bool { return p.status("alpha").State == "idle" })
+	r = <-waitAny("alpha", "beta", "gamma")
+	if r.code != 1 || r.out != "==> alpha <==\n==> beta <==\nfrom beta\n" ||
+		r.errOut != "alpha: its last turn failed with status 1: rate limited\nstill waiting on: gamma\n" {
+		t.Fatalf("got %+v", r)
+	}
+
+	// With none left busy, there is nothing still to wait on.
+	r = <-waitAny("alpha", "beta")
+	if r.code != 1 || r.out != "==> alpha <==\n==> beta <==\nfrom beta\n" ||
+		r.errOut != "alpha: its last turn failed with status 1: rate limited\n" {
+		t.Fatalf("got %+v", r)
+	}
+
+	r = <-waitAny("gamma", "--timeout", "0.1")
+	if r.code != layout.TimeoutStatus || r.out != "" || r.errOut != "error: timed out waiting for any of gamma\n" {
+		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestWaitForAnyHangsUpOnTheOthersWhenOneFinishes(t *testing.T) {
+	idle, busy := true, false
+	hungUp := make(chan string, 2)
+	useCall(t, func(ctx context.Context, req protocol.Request) (*protocol.Response, error) {
+		if *req.Timeout == 0 {
+			return &protocol.Response{Idle: &busy}, nil
+		}
+		if req.Agent == "beta" {
+			return &protocol.Response{Idle: &idle, Turns: 1}, nil
+		}
+		<-ctx.Done()
+		hungUp <- req.Agent
+		return nil, ctx.Err()
+	})
+	results, err := WaitForAny([]string{"alpha", "beta", "gamma"}, f64(60))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Agent != "beta" || results[0].Turns != 1 {
+		t.Fatalf("got %+v", results)
+	}
+	got := []string{<-hungUp, <-hungUp}
+	slices.Sort(got)
+	if !reflect.DeepEqual(got, []string{"alpha", "gamma"}) {
+		t.Fatalf("got %v", got)
 	}
 }
 

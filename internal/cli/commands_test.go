@@ -155,6 +155,42 @@ func TestCpCopiesFromARunningAgentRelativeToItsClone(t *testing.T) {
 	}
 }
 
+func TestCpKeepsALastDotForTheDirectorysContents(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"))
+	f := useExec(t, listing([]string{"gnat-demo-alpha"}, nil, nil))
+	for _, source := range []string{"alpha:.", "alpha:./", "alpha:out/.", "alpha:out/./", "alpha:/workspace/.", "alpha:/.", "alpha:out/"} {
+		if err := copyOut("demo", source, "here"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var cps []string
+	for _, l := range f.lines() {
+		if strings.HasPrefix(l, "docker cp") {
+			cps = append(cps, strings.TrimPrefix(l, "docker cp gnat-demo-alpha:"))
+		}
+	}
+	want := []string{"/workspace/. here", "/workspace/. here", "/workspace/out/. here", "/workspace/out/. here",
+		"/workspace/. here", "/. here", "/workspace/out here"}
+	if !reflect.DeepEqual(cps, want) {
+		t.Errorf("got %v, want %v", cps, want)
+	}
+
+	// Down, the clone's contents are under its volume and copied from the temporary container.
+	f = useExec(t, listing(nil, []string{"gnat-demo-alpha-workspace", "gnat-demo-alpha-claude"},
+		func(c command) (result, error) {
+			if c.args[0] == "create" {
+				return result{stdout: "tmp1\n"}, nil
+			}
+			return result{}, nil
+		}))
+	if err := copyOut("demo", "alpha:.", "here"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.lines(), "docker cp tmp1:/workspace/. here") {
+		t.Errorf("got %v", f.lines())
+	}
+}
+
 func TestCpCopiesFromADownAgentsVolumes(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"))
 	f := useExec(t, listing(nil, []string{"gnat-demo-alpha-workspace", "gnat-demo-alpha-claude"},
@@ -483,6 +519,80 @@ func TestStatusOfADownSwarmReadsWhatTheControlPlaneRecorded(t *testing.T) {
 	}
 }
 
+func TestAnAgentDeletedAndCreatedAgainWhileDownStartsFresh(t *testing.T) {
+	useSwarm(t, agent("beta", "claude"))
+	exec := useExec(t, nil) // down, with no volumes
+	out, _ := useOutput(t)
+	if err := createAgent("demo", "alpha", "x", "claude", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	swarm, _ := state.Load("demo")
+	old, _ := swarm.Agent("alpha")
+	// The swarm was up, and alpha worked and wrote to its log.
+	dir, _ := state.LogsDirectory("demo")
+	db, err := control.Prepare(dir, []string{"alpha", "beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.New([]string{"alpha", "beta"}, db, map[string]state.Agent{"alpha": old}, dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		"UPDATE statuses SET turns = 3, exit = 1 WHERE agent = 'alpha'",
+		"UPDATE statuses SET turns = 2, exit = 0 WHERE agent = 'beta'",
+		"INSERT INTO messages (agent, urgent, text, new) VALUES ('alpha', 0, 'next', 0)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	log := filepath.Join(dir, "alpha.log")
+	if err := writeFile(log, "the old alpha's work\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deleteAgent("demo", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := createAgent("demo", "alpha", "x", "claude", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	swarm, _ = state.Load("demo")
+	if a, _ := swarm.Agent("alpha"); a.ID == "" || a.ID == old.ID {
+		t.Fatalf("the new alpha's ID is %q, the old one's %q", a.ID, old.ID)
+	}
+	out.Reset()
+	if err := status("demo", nil); err != nil {
+		t.Fatal(err)
+	}
+	if want := "beta\tdown\t0 queued\t2 turns\nalpha\tdown\t0 queued\t0 turns\n"; out.String() != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	exec.calls = nil
+	if err := logs("demo", []string{"alpha"}, "+1", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := exec.calls[0].args; got[len(got)-1] != log {
+		t.Fatalf("tailed %v", got)
+	}
+	if data, err := os.ReadFile(log); err != nil || len(data) != 0 {
+		t.Errorf("alpha's log is %q, %v", data, err)
+	}
+
+	// A gnat from before IDs left the log of an agent it deleted.
+	gamma := filepath.Join(dir, "gamma.log")
+	if err := writeFile(gamma, "the old gamma's work\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := createAgent("demo", "gamma", "x", "claude", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(gamma); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("gamma's old log is still there: %v", err)
+	}
+}
+
 func TestSwarmFiles(t *testing.T) {
 	useSwarm(t)
 	useExec(t, nil)
@@ -731,5 +841,26 @@ func TestSetAgentMovesAnAgentOffAHarnessGnatNoLongerHas(t *testing.T) {
 	}
 	if swarm, _ := state.Load("demo"); swarm.Agents[0].Harness != "claude" {
 		t.Errorf("got %+v", swarm.Agents[0])
+	}
+}
+
+func TestSetAgentKeepsItsID(t *testing.T) {
+	// One from before IDs must not get one, or the control plane would take it for a new
+	// agent and forget its history.
+	for _, id := range []string{"abc123", ""} {
+		useSwarm(t, state.Agent{Name: "alpha", ID: id, Instructions: "x", Harness: "claude"})
+		useExec(t, nil)
+		useProfiles(t, map[string]string{"p.yaml": "instructions: y\n"})
+		if status, _, errs := runGnat(t, "agent", "set", "demo", "alpha", "--profile", "p", "--harness", "ox", "--model", "m"); status != 0 {
+			t.Fatalf("status %d: %s", status, errs)
+		}
+		swarm, err := state.Load("demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := state.Agent{Name: "alpha", ID: id, Instructions: "y", Harness: "ox", Model: "m"}
+		if swarm.Agents[0] != want {
+			t.Errorf("got %+v, want %+v", swarm.Agents[0], want)
+		}
 	}
 }

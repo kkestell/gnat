@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -165,6 +166,7 @@ func stopCommand() *cobra.Command {
 
 func waitCommand() *cobra.Command {
 	var timeout float64
+	var anyOf bool
 	c := &cobra.Command{
 		Use: "wait SWARM" + agentsUsage, Args: cobra.MinimumNArgs(1),
 		Short: "wait for agents to finish every message sent to them and print their replies",
@@ -174,8 +176,10 @@ func waitCommand() *cobra.Command {
 		if cmd.Flags().Changed("timeout") {
 			t = &timeout
 		}
-		return wait(args[0], args[1:], t)
+		return wait(args[0], args[1:], t, anyOf)
 	}).run
+	c.Flags().BoolVar(&anyOf, "any", false, "return once at least one of the agents has finished, "+
+		"printing the replies of those that have, each under its name, and the ones still busy; one already finished counts at once")
 	timeoutFlag(c, &timeout)
 	return c
 }
@@ -192,7 +196,11 @@ func copyCommand() *cobra.Command {
 		Use:   "cp SWARM AGENT:PATH HOST_PATH",
 		Short: "copy a file or directory out of an agent's container or clone",
 		Long: "Copy a file or directory out of an agent's container or clone.\n\n" +
-			"A relative PATH is in the agent's clone, /workspace. A HOST_PATH of - writes a tar to stdout.",
+			"A relative PATH is in the agent's clone, /workspace. A HOST_PATH of - writes a tar to stdout.\n\n" +
+			"HOST_PATH is treated as docker cp treats it. A directory copied to an existing directory goes inside it, " +
+			"and to a path that doesn't exist creates that path with the directory's contents. " +
+			"A PATH ending in /. copies the directory's contents instead, so AGENT:. copies the clone's contents. " +
+			"A file copied to an existing directory goes inside it, and to any other path is written to that path.",
 		Args: cobra.ExactArgs(3),
 		RunE: action(func(_ *cobra.Command, args []string) error { return copyOut(args[0], args[1], args[2]) }).run,
 	}
@@ -378,6 +386,9 @@ func createFromProfile(name, dockerfile, repo string, fileSpecs []string, profil
 		if a, err = checkAgent(swarm, a); err != nil {
 			return fmt.Errorf("swarm profile %q: %w", profile, err)
 		}
+		if a.ID, err = newAgentID(); err != nil {
+			return err
+		}
 		swarm.Agents = append(swarm.Agents, a)
 	}
 	if err := state.Save(swarm); err != nil {
@@ -512,6 +523,13 @@ func createAgent(swarmName, agentName, instructions, harnessName, model, effort 
 		return err
 	}
 	if err := requireDown(swarm.Name); err != nil {
+		return err
+	}
+	if a.ID, err = newAgentID(); err != nil {
+		return err
+	}
+	// A log an earlier agent by its name left (deleted by a gnat before IDs) isn't its own.
+	if err := removeLog(swarm.Name, a.Name); err != nil {
 		return err
 	}
 	swarm.Agents = append(swarm.Agents, a)
@@ -650,7 +668,23 @@ func deleteAgent(swarmName, agentName string) error {
 			return err
 		}
 	}
+	// The control plane forgets the rest of its history at the next `up`, by its ID.
+	if err := removeLog(swarm.Name, agent.Name); err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout, "deleted agent %s in swarm %s\n", agent.Name, swarm.Name)
+	return nil
+}
+
+// removeLog removes the agent's log from the swarm's logs on the host, if it's there.
+func removeLog(swarm, agent string) error {
+	logs, err := state.LogsDirectory(swarm)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(logs, agent+".log")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return nil
 }
 
@@ -870,7 +904,7 @@ func stop(swarmName string, agentArgs []string) error {
 	return docker(append([]string{"exec", container}, controlCommand(append([]string{"stop"}, agentNames(agents)...)...)...)...)
 }
 
-func wait(swarmName string, agentArgs []string, timeout *float64) error {
+func wait(swarmName string, agentArgs []string, timeout *float64, anyOf bool) error {
 	swarm, err := state.Load(swarmName)
 	if err != nil {
 		return err
@@ -880,6 +914,9 @@ func wait(swarmName string, agentArgs []string, timeout *float64) error {
 		return err
 	}
 	args := append([]string{"wait"}, agentNames(agents)...)
+	if anyOf {
+		args = append(args, "--any")
+	}
 	if timeout != nil {
 		args = append(args, "--timeout", formatFloat(*timeout))
 	}
@@ -965,7 +1002,7 @@ func status(swarmName string, agentArgs []string) error {
 	if up {
 		out, err = dockerOutput(append([]string{"exec", controlName}, controlCommand(append([]string{"status"}, agentNames(agents)...)...)...)...)
 	} else {
-		out, err = recordedStatus(swarm.Name, agentNames(agents))
+		out, err = recordedStatus(swarm.Name, agentNames(agents), agentIDs(agents))
 	}
 	if err != nil {
 		return err
@@ -987,15 +1024,15 @@ func status(swarmName string, agentArgs []string) error {
 	return nil
 }
 
-// recordedStatus is the agents' status lines from what the swarm's control plane last
-// recorded on the host.
-func recordedStatus(swarm string, agents []string) (string, error) {
+// recordedStatus is the agents' status lines, given their IDs, from what the swarm's
+// control plane last recorded on the host.
+func recordedStatus(swarm string, agents []string, ids map[string]string) (string, error) {
 	dir, err := state.LogsDirectory(swarm)
 	if err != nil {
 		return "", err
 	}
 	var out strings.Builder
-	err = recorded.Write(dir, agents, &out)
+	err = recorded.Write(dir, agents, ids, &out)
 	return out.String(), err
 }
 
@@ -1016,14 +1053,21 @@ func copyOut(swarmName, source, destination string) error {
 	if !strings.HasPrefix(path, "/") {
 		path = layout.ContainerWorkspace + "/" + path
 	}
+	// docker cp copies a directory's contents for SRC/., so keep a last "." part through
+	// the cleaning.
+	contents := specifiesContents(path)
 	path = cleanPosix(path)
+	from := path
+	if contents {
+		from = strings.TrimSuffix(path, "/") + "/."
+	}
 	container := containerName(swarm.Name, agent.Name)
 	running, err := containers(swarm.Name)
 	if err != nil {
 		return err
 	}
 	if slices.Contains(running, container) {
-		return docker("cp", container+":"+path, destination)
+		return docker("cp", container+":"+from, destination)
 	}
 	// The swarm is down, but the agent's clone and sessions are on its volumes: mount
 	// them in a container that never runs, just to copy from.
@@ -1062,7 +1106,7 @@ func copyOut(swarmName, source, destination string) error {
 		return err
 	}
 	temporary := strings.TrimSpace(out)
-	copyErr := docker("cp", temporary+":"+path, destination)
+	copyErr := docker("cp", temporary+":"+from, destination)
 	if err := dockerQuiet("rm", temporary); copyErr == nil {
 		copyErr = err
 	}
@@ -1079,6 +1123,13 @@ func cleanPosix(p string) string {
 		}
 	}
 	return "/" + strings.Join(parts, "/")
+}
+
+// specifiesContents reports whether a path's last part is ".", which docker cp takes to
+// mean the directory's contents rather than the directory.
+func specifiesContents(p string) bool {
+	p = strings.TrimRight(p, "/")
+	return p == "." || strings.HasSuffix(p, "/.")
 }
 
 func logs(swarmName string, agentArgs []string, lines string, follow bool) error {
