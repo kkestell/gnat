@@ -28,7 +28,10 @@ commands:
   comment NUMBER (--body TEXT | --body-file FILE)
   review NUMBER (--approve | --request-changes | --comment) [--body TEXT | --body-file FILE]
   merge NUMBER [--merge | --squash | --rebase]   (only for agents allowed to merge)
+  close NUMBER
+  edit NUMBER [--title TITLE] [--body TEXT | --body-file FILE]
 
+close and edit work only on pull requests from your own branches.
 A body of "-" for --body-file is read from stdin.`
 
 // call makes a request to the control plane; a variable so tests can fake it.
@@ -85,7 +88,7 @@ func run(args []string, secret string, stdin io.Reader, stdout, stderr io.Writer
 		needsNumber = false
 		fs.StringVar(&status, "state", "open", "open, closed, merged, or all")
 		fs.IntVar(&limit, "limit", 30, "the most pull requests to list")
-	case "view", "diff", "checks":
+	case "view", "diff", "checks", "close":
 	case "comment":
 		fs.StringVar(&body, "body", "", "the comment")
 		fs.StringVar(&bodyFile, "body-file", "", "read the comment from `FILE` (- for stdin)")
@@ -99,6 +102,10 @@ func run(args []string, secret string, stdin io.Reader, stdout, stderr io.Writer
 		fs.BoolVar(&merge, "merge", false, "merge with a merge commit (the default)")
 		fs.BoolVar(&squash, "squash", false, "squash and merge")
 		fs.BoolVar(&rebase, "rebase", false, "rebase and merge")
+	case "edit":
+		fs.StringVar(&title, "title", "", "its new title")
+		fs.StringVar(&body, "body", "", "its new description")
+		fs.StringVar(&bodyFile, "body-file", "", "read its new description from `FILE` (- for stdin)")
 	default:
 		fmt.Fprintf(stderr, "gnat-container pr: unknown command '%s'\n%s\n", name, usage)
 		return 2
@@ -116,17 +123,25 @@ func run(args []string, secret string, stdin io.Reader, stdout, stderr io.Writer
 	}
 
 	req, err := request(name, positional, needsNumber, func() (string, error) {
+		text, err := body, error(nil)
 		switch {
 		case flagSet(fs, "body") && flagSet(fs, "body-file"):
 			return "", usageError("use --body or --body-file, not both")
 		case bodyFile == "-":
-			data, err := io.ReadAll(stdin)
-			return string(data), err
+			var data []byte
+			data, err = io.ReadAll(stdin)
+			text = string(data)
 		case bodyFile != "":
-			data, err := os.ReadFile(bodyFile)
-			return string(data), err
+			var data []byte
+			data, err = os.ReadFile(bodyFile)
+			text = string(data)
 		}
-		return body, nil
+		// An edit leaves an empty body as it is, so one given empty can't clear it.
+		given := flagSet(fs, "body") || flagSet(fs, "body-file")
+		if err == nil && name == "edit" && given && strings.TrimSpace(text) == "" {
+			err = usageError("the description can't be empty")
+		}
+		return text, err
 	}, func(r *protocol.GitHubRequest) error {
 		switch name {
 		case "create":
@@ -143,6 +158,14 @@ func run(args []string, secret string, stdin io.Reader, stdout, stderr io.Writer
 			}
 		case "list":
 			r.State, r.Limit = status, limit
+		case "edit":
+			r.Title = title
+			switch {
+			case !flagSet(fs, "title") && !flagSet(fs, "body") && !flagSet(fs, "body-file"):
+				return usageError("give --title, --body, or --body-file")
+			case flagSet(fs, "title") && strings.TrimSpace(title) == "":
+				return usageError("--title can't be empty")
+			}
 		case "review":
 			switch {
 			case count(approve, changes, comment) != 1:
@@ -194,6 +217,7 @@ func run(args []string, secret string, stdin io.Reader, stdout, stderr io.Writer
 var actions = map[string]string{
 	"create": protocol.PRCreate, "list": protocol.PRList, "view": protocol.PRView, "diff": protocol.PRDiff,
 	"checks": protocol.PRChecks, "comment": protocol.PRComment, "review": protocol.PRReview, "merge": protocol.PRMerge,
+	"close": protocol.PRClose, "edit": protocol.PREdit,
 }
 
 // request is the request for a command: its pull request number if it takes one, then
@@ -218,7 +242,7 @@ func request(name string, positional []string, needsNumber bool, text func() (st
 		return protocol.Request{}, err
 	}
 	switch name {
-	case "create", "comment", "review":
+	case "create", "comment", "review", "edit":
 		body, err := text()
 		if err != nil {
 			return protocol.Request{}, err
