@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { AgentState, RECENT_ITEMS, columns, dollars, setupLine, uptime, usageSummary } from "../src/swarm";
+import { AgentState, RECENT_ITEMS, columns, dollars, setupLine, uptime, usageSummary, type Tool } from "../src/swarm";
 
 function state(events: unknown[]): AgentState {
   const agent = new AgentState();
@@ -12,6 +12,7 @@ test("each kind of event goes in the transcript", () => {
     { type: "swarm_message", text: "**go**", sender: "beta", new: true, mid_turn: false },
     { type: "thought", text: "hidden" },
     { type: "message", text: "Let me *look*." },
+    { type: "swarm_sent", to: "gamma", text: "on it" },
     { type: "tool_call", id: "t1", name: "Task", input: { description: "explore" } },
     { type: "message", text: "inside", parent: "t1" },
     { type: "tool_call", id: "t2", name: "edit", title: "Edit a.py", input: {}, parent: "t1" },
@@ -25,6 +26,7 @@ test("each kind of event goes in the transcript", () => {
     { kind: "session" },
     { kind: "message", text: "**go**", sender: "beta", midTurn: false },
     { kind: "text", text: "Let me *look*." },
+    { kind: "sent", text: "on it", to: "gamma" },
     {
       kind: "tool", summary: "Task: explore", output: "(no output)", error: false, items: [
         { kind: "text", text: "inside" },
@@ -51,8 +53,7 @@ test("the card keeps the transcript's latest entries", () => {
     { item: { kind: "session" }, nested: false },
     { item: { kind: "message", text: "fix it", sender: "beta", midTurn: false }, nested: false },
     { item: { kind: "text", text: "On it." }, nested: false },
-    { item: agent.items[3]!, nested: false },
-    { item: { kind: "tool", summary: "Bash: make", output: "boom", error: true, items: [] }, nested: true },
+    { tools: [agent.items[3] as Tool, { kind: "tool", summary: "Bash: make", output: "boom", error: true, items: [] }] },
     { item: { kind: "text", text: "Done." }, nested: false },
     { item: { kind: "notice", text: "the turn was stopped" }, nested: false },
   ]);
@@ -61,7 +62,26 @@ test("the card keeps the transcript's latest entries", () => {
 test("the card keeps only the latest entries", () => {
   const agent = state(Array.from({ length: RECENT_ITEMS + 5 }, (_, i) => ({ type: "message", text: String(i) })));
   expect(agent.recent.length).toBe(RECENT_ITEMS);
-  expect(agent.recent[0]!.item).toEqual({ kind: "text", text: "5" });
+  expect(agent.recent[0]).toEqual({ item: { kind: "text", text: "5" }, nested: false });
+});
+
+test("the card puts tool calls in a row on one line", () => {
+  const agent = state([
+    { type: "tool_call", id: "t1", name: "Read", input: { file_path: "a.py" } },
+    { type: "tool_call", id: "t2", name: "Task", input: { description: "explore" } },
+    { type: "message", text: "inside", parent: "t2" },
+    { type: "tool_call", id: "t3", name: "Bash", input: { command: "make" }, parent: "t2" },
+    { type: "tool_call", id: "t4", name: "Bash", input: { command: "make test" } },
+    { type: "message", text: "Done." },
+    { type: "tool_call", id: "t5", name: "Bash", input: { command: "git push" } },
+  ]);
+  expect(agent.recent.map(line => ("tools" in line ? line.tools.map(tool => tool.summary) : line.item))).toEqual([
+    ["Read: a.py", "Task: explore"],
+    { kind: "text", text: "inside" },
+    ["Bash: make", "Bash: make test"],
+    { kind: "text", text: "Done." },
+    ["Bash: git push"],
+  ]);
 });
 
 test("usage events are totalled, and a done turn's usage isn't counted again", () => {

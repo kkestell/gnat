@@ -39,7 +39,8 @@ import (
 // message an agent receives (the sender is an agent's name, null for the operator; new
 // is true when it started a fresh session), and {"type": "swarm_done", "exit",
 // "stopped"} when its turn ends, with a null exit if the agent restarted before the turn
-// could finish, and stopped true if `gnat stop` ended it.
+// could finish, and stopped true if `gnat stop` ended it. A message one agent sends
+// another is also the sender's {"type": "swarm_sent", "to", "text"}.
 const EventsFile = "events.jsonl"
 
 // DefaultMaxRequestBytes is the longest line the control plane reads. One event can be

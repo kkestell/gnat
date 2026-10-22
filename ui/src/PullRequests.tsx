@@ -35,8 +35,11 @@ export function PullRequests() {
   }, []);
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-r border-white/15 bg-sidebar">
-      <ul className="min-h-0 flex-1 overflow-y-auto">
+    <aside className="flex w-80 shrink-0 flex-col overflow-hidden rounded-xl bg-card shadow-xl shadow-black/60 ring-1 ring-white/10">
+      <div className="bg-zinc-800/70 px-4 py-2">
+        <h2 className="font-semibold text-zinc-100">Pull requests</h2>
+      </div>
+      <ul className="min-h-0 flex-1 overflow-y-auto border-t border-white/5">
         {error && !pulls && <li className="px-4 py-2.5 text-xs italic text-zinc-600">couldn't load pull requests</li>}
         {pulls?.length === 0 && <li className="px-4 py-2.5 text-xs italic text-zinc-600">none yet</li>}
         {pulls &&
@@ -59,8 +62,7 @@ function Pull({ pull, now }: { pull: PullRequest; now: number }) {
       rel="noopener noreferrer"
       className={`block px-4 py-2.5 hover:bg-white/5 ${pull.state === "open" ? "" : "opacity-60"}`}
     >
-      <div className="line-clamp-2 text-sm leading-snug text-zinc-200">{pull.title}</div>
-      <div className="mt-1.5 flex items-center gap-2 text-xs">
+      <div className="flex items-center gap-2 text-xs">
         <span className={`shrink-0 rounded px-1.5 py-px font-medium tabular-nums ${BADGES[badge]}`}>
           #{pull.number} {badge}
         </span>
@@ -73,6 +75,7 @@ function Pull({ pull, now }: { pull: PullRequest; now: number }) {
         )}
         <span className="ml-auto shrink-0 text-zinc-500">{ago(pull.updated_at, now)}</span>
       </div>
+      <div className="mt-1.5 line-clamp-2 text-sm leading-snug text-zinc-200">{pull.title}</div>
       <div className="mt-1 truncate font-mono text-xs text-zinc-500">{pull.branch}</div>
     </a>
   );

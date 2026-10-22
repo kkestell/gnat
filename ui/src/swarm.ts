@@ -1,6 +1,6 @@
 // The swarm as the page shows it: each agent's transcript, usage, and latest entries, built
-// from gnat's events (see internal/events, and the control plane's swarm_message and
-// swarm_done).
+// from gnat's events (see internal/events, and the control plane's swarm_message,
+// swarm_sent, and swarm_done).
 
 // An agent's name, and its harness, model, and effort (null for the harness's default).
 // An agent without a setup has only its name.
@@ -19,6 +19,8 @@ export type Swarm = { repo: string; started_at: string };
 export type Item =
   // A message sent to the agent.
   | { kind: "message"; text: string; sender?: string; midTurn: boolean }
+  // A message the agent sent another.
+  | { kind: "sent"; text: string; to: string }
   // Text the agent wrote.
   | { kind: "text"; text: string }
   // A tool call, with any subagent's events inside it, and its output once it's done.
@@ -27,18 +29,17 @@ export type Item =
   | { kind: "session" }
   | { kind: "notice"; text: string };
 
-// One of a transcript's latest entries, as a card shows them.
-export type Recent = {
-  item: Item;
-  // Whether a subagent's event wrote it.
-  nested: boolean;
-};
+export type Tool = Item & { kind: "tool" };
+
+// A line of a card: one of a transcript's latest entries (nested if a subagent's event
+// wrote it), or tool calls made one after another.
+export type Recent = { item: Item; nested: boolean } | { tools: Tool[] };
 
 export const USAGE_FIELDS = ["input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "cost"] as const;
 export type Usage = Partial<Record<(typeof USAGE_FIELDS)[number], number>>;
 
-// How many of the transcript's latest entries a card keeps, enough to fill the tallest
-// card; it shows as much of their end as fits.
+// How many lines of the transcript's latest entries a card keeps, enough to fill the
+// tallest card; it shows as much of their end as fits.
 export const RECENT_ITEMS = 40;
 
 // The input field that best describes a call, for tools that have one.
@@ -50,7 +51,7 @@ export class AgentState {
   usage: Usage = {};
   recent: Recent[] = [];
   // Each tool call, by id, so its result and any subagent's events can go in it.
-  private tools = new Map<string, Item & { kind: "tool" }>();
+  private tools = new Map<string, Tool>();
 
   // Adds one event. Records in other formats, from older versions of gnat, are skipped.
   apply(event: unknown): void {
@@ -70,6 +71,9 @@ export class AgentState {
         this.add(this.items, { kind: "message", text: String(e.text ?? ""), sender: e.sender || undefined, midTurn: Boolean(e.mid_turn) }, false);
         break;
       }
+      case "swarm_sent":
+        this.add(this.items, { kind: "sent", text: String(e.text ?? ""), to: String(e.to ?? "") }, false);
+        break;
       case "message": {
         this.add(parent, { kind: "text", text: String(e.text ?? "").trim() }, nested);
         break;
@@ -105,10 +109,16 @@ export class AgentState {
     this.add(this.items, { kind: "notice", text }, false);
   }
 
-  // Adds the item to the transcript (or the tool call) it belongs in, and to the latest.
+  // Adds the item to the transcript (or the tool call) it belongs in, and to the latest,
+  // where a tool call joins any right before it.
   private add(parent: Item[], item: Item, nested: boolean): void {
     parent.push(item);
-    this.recent.push({ item, nested });
+    const last = this.recent.at(-1);
+    if (item.kind === "tool" && last && "tools" in last) {
+      last.tools.push(item);
+      return;
+    }
+    this.recent.push(item.kind === "tool" ? { tools: [item] } : { item, nested });
     this.recent.splice(0, this.recent.length - RECENT_ITEMS);
   }
 }

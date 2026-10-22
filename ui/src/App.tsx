@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown.js";
 import { PullRequests } from "./PullRequests";
-import { AgentState, columns, dollars, setupLine, uptime, usageSummary, type Agent, type Item, type Recent, type Swarm } from "./swarm";
+import { AgentState, columns, dollars, setupLine, uptime, usageSummary, type Agent, type Item, type Recent, type Swarm, type Tool } from "./swarm";
 import "./index.css";
 
 // The swarm's agents, a card each, kept up to date from the control plane's event stream.
@@ -11,6 +11,11 @@ export function App() {
   const states = useRef(new Map<string, AgentState>());
   const [, redraw] = useReducer((n: number) => n + 1, 0);
   const [shown, setShown] = useState<string | null>(null);
+  const [sidebar, setSidebar] = useState(() => localStorage.getItem("sidebar") !== "hidden");
+  const toggleSidebar = () => {
+    localStorage.setItem("sidebar", sidebar ? "hidden" : "shown");
+    setSidebar(!sidebar);
+  };
 
   useEffect(() => {
     fetch("/agents")
@@ -55,6 +60,13 @@ export function App() {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-baseline gap-3 border-b border-white/10 bg-header px-4 py-3">
+        <button
+          className={`self-center py-0.5 ${BUTTON}`}
+          title={sidebar ? "Hide pull requests" : "Show pull requests"}
+          onClick={toggleSidebar}
+        >
+          <SidebarIcon />
+        </button>
         <SwarmInfo />
         {costs.length > 0 && (
           <span className="ml-auto tabular-nums text-zinc-400">
@@ -62,9 +74,9 @@ export function App() {
           </span>
         )}
       </header>
-      <div className="flex min-h-0 flex-1">
-        <PullRequests />
-        <main className="flex min-w-0 flex-1 gap-4 p-6">
+      <div className="flex min-h-0 flex-1 gap-4 p-4">
+        {sidebar && <PullRequests />}
+        <main className="flex min-w-0 flex-1 gap-4">
           {columns(agents).map((column, i) => (
             <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
               {column.map(agent => (
@@ -80,6 +92,24 @@ export function App() {
 }
 
 const EMPTY = new AgentState();
+
+function Spinner() {
+  return (
+    <svg viewBox="0 0 16 16" className="size-3.5 shrink-0 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="8" cy="8" r="6" className="opacity-25" />
+      <path d="M14 8a6 6 0 0 0-6-6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SidebarIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" />
+      <path d="M6 2.75v10.5" />
+    </svg>
+  );
+}
 
 // The swarm's repository, linked to GitHub, and how long it's been up.
 function SwarmInfo() {
@@ -134,19 +164,42 @@ function Card({ agent, state, onMaximize }: { agent: Agent; state: AgentState; o
 // The end of the transcript's latest entries, as much as fits.
 function Preview({ recent }: { recent: Recent[] }) {
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden border-t border-white/5 px-4 py-2 text-xs leading-5">
+    <div className="relative flex min-h-0 flex-1 flex-col justify-end gap-2 overflow-hidden border-t border-white/5 px-4 py-2 text-xs leading-5">
       {/* Fades out the entries cut off at the top. */}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-10 bg-linear-to-b from-card to-transparent" />
       {recent.length === 0 && <div className="mb-auto italic text-zinc-600">no activity yet</div>}
-      {recent.map(({ item, nested }, i) => (
-        <div key={i} className={`shrink-0 ${nested ? "pl-4" : ""}`}>
-          {item.kind === "tool" ? (
-            <div className={`truncate font-mono ${item.error ? "text-red-400" : "text-zinc-500"}`}>{item.summary}</div>
-          ) : (
-            <ItemView item={item} />
-          )}
-        </div>
-      ))}
+      {recent.map((line, i) =>
+        "tools" in line ? (
+          <div key={i} className="shrink-0">
+            <Tools tools={line.tools} latest={i === recent.length - 1} />
+          </div>
+        ) : (
+          <div key={i} className={`shrink-0 ${line.nested ? "pl-4" : ""}`}>
+            <ItemView item={line.item} />
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
+// Tool calls made one after another: the latest call while they're the latest thing the
+// agent did, then how many there were.
+function Tools({ tools, latest }: { tools: Tool[]; latest: boolean }) {
+  if (latest) {
+    const tool = tools.at(-1)!;
+    return (
+      <div className="flex items-center gap-1.5 text-zinc-500">
+        <Spinner />
+        <span className={`min-w-0 truncate font-mono ${tool.error ? "text-red-400" : "text-zinc-600"}`}>{tool.summary}</span>
+      </div>
+    );
+  }
+  const failed = tools.filter(tool => tool.error).length;
+  return (
+    <div className="truncate font-mono text-zinc-500">
+      Called {tools.length} {tools.length === 1 ? "tool" : "tools"}
+      {failed > 0 && <span className="text-red-400"> ({failed} failed)</span>}
     </div>
   );
 }
@@ -196,7 +249,7 @@ function TranscriptDialog({ agent, state, onClose }: { agent: Agent; state: Agen
 
 function Items({ items }: { items: Item[] }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       {items.map((item, i) => (
         <ItemView key={i} item={item} />
       ))}
@@ -208,9 +261,18 @@ function ItemView({ item }: { item: Item }) {
   switch (item.kind) {
     case "message":
       return (
-        <div className="font-bold text-zinc-100 [overflow-wrap:anywhere]">
-          {item.midTurn && <div className="text-xs">mid-turn</div>}
-          {item.sender && <div>from {item.sender}:</div>}
+        <div className="my-1 w-fit max-w-[85%] rounded-lg rounded-tl-sm bg-zinc-800 px-3 py-1.5 text-zinc-200 [overflow-wrap:anywhere]">
+          <div className="text-xs text-zinc-400">
+            From {item.sender ?? "operator"}
+            {item.midTurn && " (mid-turn)"}:
+          </div>
+          <Markdown text={item.text} />
+        </div>
+      );
+    case "sent":
+      return (
+        <div className="my-1 ml-auto w-fit max-w-[85%] rounded-lg rounded-tr-sm bg-zinc-700/60 px-3 py-1.5 text-zinc-200 [overflow-wrap:anywhere]">
+          <div className="text-xs text-zinc-400">To {item.to}:</div>
           <Markdown text={item.text} />
         </div>
       );

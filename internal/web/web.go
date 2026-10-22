@@ -21,7 +21,7 @@ import (
 // TODO(control): internal/control's control plane should implement this; it
 // owns the swarm's agents, their setups, and the recorded events: the records
 // Watch returns wrap internal/events' events with the agent's name, plus the
-// control plane's own swarm_message and swarm_done events.
+// control plane's own swarm_message, swarm_sent, and swarm_done events.
 type Events interface {
 	// Agents are the swarm's agents, in order, one card each.
 	Agents() []string

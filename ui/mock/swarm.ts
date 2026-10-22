@@ -48,6 +48,17 @@ function tool(name: string, input: Record<string, unknown>, output: string, extr
   ];
 }
 
+// A message to another agent: the call that sends it, the control plane's record of it,
+// and the call's result.
+function sent(to: string, text: string): Event[] {
+  const call = id();
+  return [
+    { type: "tool_call", id: call, name: "Bash", input: { command: `/opt/gnat/gnat-container send ${to} -m '${text}'` } },
+    { type: "swarm_sent", to, text },
+    { type: "tool_result", id: call, error: false, output: `sent to ${to}` },
+  ];
+}
+
 // A turn like a real one: a message, some tool calls, a reply.
 function summaryTurn(): Event[] {
   return [
@@ -86,6 +97,7 @@ function featureTurn(): Event[] {
     ...tool("Bash", { command: "python3 src/hello.py --json", description: "Try the flag" }, '{"greeting": "hello from the workspace"}'),
     ...tool("Bash", { command: "git push -u origin add-json-flag && gh pr create --fill" },
       "https://github.com/kkestell/swarm-test/pull/12"),
+    ...sent("gamma", "Can you review PR #12 when you get a chance?"),
     { type: "message", text:
       "Opened **#12**: https://github.com/kkestell/swarm-test/pull/12\n\n" +
       "| Flag | Output |\n|:--|:--|\n| (none) | `hello from the workspace` |\n| `--json` | `{\"greeting\": ...}` |\n\n" +

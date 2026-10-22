@@ -214,6 +214,9 @@ func (c *Control) dispatch(req protocol.Request, r io.Reader) *protocol.Response
 		if err := mailbox.Put(Message{req.Text, req.Sender, req.New}, req.Now, false); err != nil {
 			return protocol.Fail(err.Error())
 		}
+		if req.Sender != "" {
+			c.record(req.Sender, events.Event{"type": "swarm_sent", "to": req.Agent, "text": req.Text})
+		}
 		return protocol.OK()
 	case protocol.OpStop:
 		// Only a running turn can be stopped. The daemon reads the stop before any later

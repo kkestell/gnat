@@ -667,10 +667,14 @@ func TestAgentsMessageEachOther(t *testing.T) {
 	if got, want := p.log("beta"), ">>> (mid-turn) [from alpha] now\n>>> [from alpha] fix the tests\n"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	for _, e := range p.recorded() {
-		if e["sender"] != "alpha" {
-			t.Fatalf("got %v", e)
-		}
+	want := []events.Event{
+		{"type": "swarm_sent", "to": "beta", "text": "fix the tests"},
+		{"type": "swarm_sent", "to": "beta", "text": "now"},
+		{"type": "swarm_message", "text": "now", "sender": "alpha", "new": false, "mid_turn": true},
+		{"type": "swarm_message", "text": "fix the tests", "sender": "alpha", "new": false, "mid_turn": false},
+	}
+	if got := p.recorded(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
 	}
 }
 
