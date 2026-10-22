@@ -123,7 +123,7 @@ func TestWaitUntilReadyRetriesUntilTheControlPlaneAnswers(t *testing.T) {
 	if len(f.calls) != 3 {
 		t.Errorf("%d calls", len(f.calls))
 	}
-	want := "docker exec gnat-demo-control /opt/gnat/gnat internal control status alpha"
+	want := "docker exec gnat-demo-control /opt/gnat/gnat-container control status alpha"
 	if f.lines()[0] != want {
 		t.Errorf("got %q, want %q", f.lines()[0], want)
 	}

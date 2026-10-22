@@ -1,18 +1,17 @@
 .PHONY: build install install-profiles linux ui test lint clean
 
 # The linux binaries containers run, embedded in the gnat binary and copied to
-# /opt/gnat/gnat by `gnat up`: static, for each architecture Docker may run on. The
-# `container` tag leaves out the embed, so they don't contain themselves.
+# /opt/gnat/gnat-container by `gnat up`: static, for each architecture Docker may run on.
 BIN_DIR := internal/workspace/bin
 ARCHES := amd64 arm64
 
 linux:
 	for arch in $(ARCHES); do \
-		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -tags container -trimpath -ldflags="-s -w" \
-			-o $(BIN_DIR)/gnat-linux-$$arch ./cmd/gnat || exit 1; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags="-s -w" \
+			-o $(BIN_DIR)/gnat-container-linux-$$arch ./cmd/gnat-container || exit 1; \
 	done
 
-# Build the web UI (ui/) into internal/web/dist, which the gnat binary embeds. The
+# Build the web UI (ui/) into internal/web/dist, which the gnat-container binary embeds. The
 # build is checked in, so rerun this and commit the result after changing ui/.
 ui:
 	cd ui && bun install && bun run build
@@ -49,4 +48,4 @@ lint:
 	cd ui && bun run typecheck
 
 clean:
-	rm -f gnat $(BIN_DIR)/gnat-linux-*
+	rm -f gnat $(BIN_DIR)/gnat-container-linux-*

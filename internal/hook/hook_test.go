@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/protocol"
 )
 
@@ -42,7 +43,7 @@ func runHookWith(t *testing.T, f *fakeCall) (stdout, stderr string, status int) 
 	if !reflect.DeepEqual(f.requests, want) {
 		t.Fatalf("requests = %+v", f.requests)
 	}
-	if f.timeouts[0] != TimeoutSeconds*time.Second {
+	if f.timeouts[0] != layout.HookTimeoutSeconds*time.Second {
 		t.Errorf("timeout = %v", f.timeouts[0])
 	}
 	return out.String(), errOut.String(), status

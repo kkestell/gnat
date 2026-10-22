@@ -184,3 +184,21 @@ func CallAddr(addr string, req Request, timeout time.Duration) (*Response, error
 	}
 	return &resp, nil
 }
+
+// StatusLine is an agent's status as `status` prints it: every field, as the response
+// carries them all.
+func StatusLine(agent string, r *Response) any {
+	return struct {
+		Agent       string   `json:"agent"`
+		OK          bool     `json:"ok"`
+		State       string   `json:"state"`
+		Queued      int      `json:"queued"`
+		Turns       int      `json:"turns"`
+		Exit        *int     `json:"exit"`
+		Stopped     bool     `json:"stopped"`
+		Reply       *string  `json:"reply"`
+		Error       *string  `json:"error"`
+		Usage       any      `json:"usage"`
+		SinceActive *float64 `json:"since_active"`
+	}{agent, true, r.State, r.Queued, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
+}

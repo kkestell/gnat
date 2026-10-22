@@ -13,10 +13,10 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
-	"github.com/kkestell/gnat/internal/control"
 	"github.com/kkestell/gnat/internal/events"
 	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/layout"
+	"github.com/kkestell/gnat/internal/recorded"
 	"github.com/kkestell/gnat/internal/render"
 	"github.com/kkestell/gnat/internal/state"
 )
@@ -55,7 +55,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(
 		createCommand(), deleteCommand(), listCommand(), upCommand(), downCommand(),
 		sendCommand(), stopCommand(), waitCommand(), statusCommand(), copyCommand(),
-		logsCommand(), webCommand(), agentCommands(), fileCommands(), profileCommands(), authCommands(), internalCommand(),
+		logsCommand(), webCommand(), agentCommands(), fileCommands(), profileCommands(), authCommands(),
 	)
 	return root
 }
@@ -76,7 +76,7 @@ func group(use, short string, subcommands ...*cobra.Command) *cobra.Command {
 
 func timeoutFlag(c *cobra.Command, timeout *float64) {
 	c.Flags().Float64Var(timeout, "timeout", 0, fmt.Sprintf(
-		"give up waiting after `SECONDS`, with exit status %d", control.TimeoutStatus))
+		"give up waiting after `SECONDS`, with exit status %d", layout.TimeoutStatus))
 }
 
 const agentsUsage = " [AGENT...]"
@@ -752,7 +752,7 @@ func wait(swarmName string, agentArgs []string, timeout *float64) error {
 	return docker(append([]string{"exec", container}, controlCommand(args...)...)...)
 }
 
-// agentStatus is a line of `gnat internal control status`: the control plane's view of
+// agentStatus is a line of `gnat-container control status`: the control plane's view of
 // an agent.
 type agentStatus struct {
 	Agent       string         `json:"agent"`
@@ -857,7 +857,7 @@ func recordedStatus(swarm string, agents []string) (string, error) {
 		return "", err
 	}
 	var out strings.Builder
-	err = control.WriteRecorded(dir, agents, &out)
+	err = recorded.Write(dir, agents, &out)
 	return out.String(), err
 }
 

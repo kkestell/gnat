@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/kkestell/gnat/internal/control"
+	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/state"
 )
 
@@ -388,7 +389,7 @@ func TestSendReadsStdinWhenThereIsNoMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := f.lines()[len(f.lines())-1]
-	if want := "docker exec gnat-demo-control /opt/gnat/gnat internal control send from a pipe\n beta --now"; last != want {
+	if want := "docker exec gnat-demo-control /opt/gnat/gnat-container control send from a pipe\n beta --now"; last != want {
 		t.Errorf("got %q, want %q", last, want)
 	}
 	if out.String() != "queued message for beta\n" {
@@ -404,16 +405,16 @@ func TestSendReadsStdinWhenThereIsNoMessage(t *testing.T) {
 func TestSendWaitPassesTheControlPlanesStatusThrough(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"))
 	f := useExec(t, listing([]string{"gnat-demo-control"}, nil, func(c command) (result, error) {
-		return result{}, &exitError{Code: control.TimeoutStatus}
+		return result{}, &exitError{Code: layout.TimeoutStatus}
 	}))
 	useOutput(t)
 	text := "hi"
 	err := send("demo", nil, sendOptions{message: &text, wait: true, timeout: ptr(600.0)})
-	if exitStatus(err) != control.TimeoutStatus {
+	if exitStatus(err) != layout.TimeoutStatus {
 		t.Fatalf("got %v", err)
 	}
 	last := f.lines()[len(f.lines())-1]
-	if want := "docker exec gnat-demo-control /opt/gnat/gnat internal control send hi alpha --wait --timeout 600.0"; last != want {
+	if want := "docker exec gnat-demo-control /opt/gnat/gnat-container control send hi alpha --wait --timeout 600.0"; last != want {
 		t.Errorf("got %q, want %q", last, want)
 	}
 }
@@ -427,7 +428,7 @@ func TestStatusMergesContainerStates(t *testing.T) {
 			return result{stdout: "gnat-demo-control\trunning\ngnat-demo-alpha\trunning\n"}, nil
 		case strings.HasPrefix(args, "ps -a"):
 			return result{stdout: "gnat-demo-control\ngnat-demo-alpha\n"}, nil
-		case strings.Contains(args, "internal control status"):
+		case strings.Contains(args, "gnat-container control status"):
 			return result{stdout: `{"agent": "alpha", "state": "idle", "queued": 1, "turns": 2, "exit": 0, "stopped": false}` + "\n" +
 				`{"agent": "beta", "state": "busy", "queued": 0, "turns": 0, "exit": null, "stopped": false}` + "\n"}, nil
 		}

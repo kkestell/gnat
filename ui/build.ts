@@ -1,4 +1,4 @@
-// Builds the UI into internal/web/dist, which the gnat binary embeds.
+// Builds the UI into internal/web/dist, which the gnat-container binary embeds.
 import tailwind from "bun-plugin-tailwind";
 import { rm } from "node:fs/promises";
 import path from "node:path";

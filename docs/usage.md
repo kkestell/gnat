@@ -126,7 +126,7 @@ Each agent works through its queue one message at a time, continuing one session
 - `--now` delivers the message into the running turn after the agent's next tool call. If the turn ends first, it starts the next turn, ahead of the queue.
 - `gnat stop` ends the running turn; the agent goes on to its next message.
 
-Agents can message each other with `/opt/gnat/gnat internal send TEAMMATE... [--now] -m TEXT`, which their instructions describe. Two agents can reply to each other forever; watch `gnat logs` and `gnat down` if they do.
+Agents can message each other with `/opt/gnat/gnat-container send TEAMMATE... [--now] -m TEXT`, which their instructions describe. Two agents can reply to each other forever; watch `gnat logs` and `gnat down` if they do.
 
 An agent whose daemon crashes restarts in the same container with its clone and session, and the turn it was running is reported as interrupted.
 

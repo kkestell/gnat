@@ -29,7 +29,7 @@ func (f *fileFlags) Set(value string) error {
 	return nil
 }
 
-// Main is `gnat internal agent NAME --repo REPO ...`; args exclude those words. It runs
+// Main is `gnat-container agent NAME --repo REPO ...`; args exclude those words. It runs
 // until the process is killed, and returns only an exit status for a failure to start.
 func Main(args []string) int {
 	return run(args, os.Stderr, serve)
@@ -37,7 +37,7 @@ func Main(args []string) int {
 
 // run parses args and sets the workspace up; serve then runs the daemon.
 func run(args []string, stderr io.Writer, serve func(name string, h harness.Harness, model, effort string)) int {
-	fs := flag.NewFlagSet("gnat internal agent", flag.ContinueOnError)
+	fs := flag.NewFlagSet("gnat-container agent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	repo := fs.String("repo", "", "GitHub repository to work in")
 	var files fileFlags
@@ -46,7 +46,7 @@ func run(args []string, stderr io.Writer, serve func(name string, h harness.Harn
 	model := fs.String("model", "", "the model")
 	effort := fs.String("effort", "", "the effort")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: gnat internal agent NAME --repo REPO [--file STAGED:PATH]... [--harness H] [--model M] [--effort E]")
+		fmt.Fprintln(stderr, "usage: gnat-container agent NAME --repo REPO [--file STAGED:PATH]... [--harness H] [--model M] [--effort E]")
 		fs.PrintDefaults()
 	}
 	names, err := parseInterleaved(fs, args)
@@ -67,13 +67,13 @@ func run(args []string, stderr io.Writer, serve func(name string, h harness.Harn
 		problem = harnessErr.Error()
 	}
 	if problem != "" {
-		fmt.Fprintf(stderr, "gnat internal agent: %s\n", problem)
+		fmt.Fprintf(stderr, "gnat-container agent: %s\n", problem)
 		fs.Usage()
 		return 2
 	}
 	name := names[0]
 
-	// The harness, its hooks, and its tools inherit this; the hook and `internal send`
+	// The harness, its hooks, and its tools inherit this; the hook and `gnat-container send`
 	// need it.
 	os.Setenv(state.AgentVar, name)
 

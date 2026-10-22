@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/state"
 	"github.com/kkestell/gnat/internal/web"
@@ -21,9 +22,6 @@ import (
 	// from GitHub over TLS.
 	_ "golang.org/x/crypto/x509roots/fallback"
 )
-
-// TimeoutStatus is `wait`'s exit status when it gives up, as timeout(1)'s.
-const TimeoutStatus = 124
 
 // call sends one request to the control plane in this container; tests replace it.
 var call = func(req protocol.Request) (*protocol.Response, error) {
@@ -181,7 +179,7 @@ func (p *parsed) timeout() (*float64, error) {
 	return &t, nil
 }
 
-// Main runs `gnat internal control`: serve, the control plane itself, or one of the
+// Main runs `gnat-container control`: serve, the control plane itself, or one of the
 // commands the host runs in its container (send, stop, wait, status). It returns the
 // exit status.
 func Main(args []string) int {
@@ -196,7 +194,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case exitError:
 		return int(e)
 	case usageError:
-		fmt.Fprintf(stderr, "gnat internal control: error: %s\n", e)
+		fmt.Fprintf(stderr, "gnat-container control: error: %s\n", e)
 		return 2
 	}
 	fmt.Fprintf(stderr, "error: %s\n", err)
@@ -298,7 +296,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 			if err != nil {
 				return err
 			}
-			line, err := protocol.Encode(statusLine(agent, resp))
+			line, err := protocol.Encode(protocol.StatusLine(agent, resp))
 			if err != nil {
 				return err
 			}
@@ -307,24 +305,6 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	return usageError(fmt.Sprintf("unknown command '%s': use serve, send, stop, wait, or status", command))
-}
-
-// statusLine is an agent's status as `status` prints it: every field, as the response
-// carries them all.
-func statusLine(agent string, r *protocol.Response) any {
-	return struct {
-		Agent       string   `json:"agent"`
-		OK          bool     `json:"ok"`
-		State       string   `json:"state"`
-		Queued      int      `json:"queued"`
-		Turns       int      `json:"turns"`
-		Exit        *int     `json:"exit"`
-		Stopped     bool     `json:"stopped"`
-		Reply       *string  `json:"reply"`
-		Error       *string  `json:"error"`
-		Usage       any      `json:"usage"`
-		SinceActive *float64 `json:"since_active"`
-	}{agent, true, r.State, r.Queued, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
 }
 
 func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) error {
@@ -340,7 +320,7 @@ func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) 
 	}
 	if len(busy) > 0 {
 		fmt.Fprintf(stderr, "error: timed out waiting for %s\n", strings.Join(busy, ", "))
-		return exitError(TimeoutStatus)
+		return exitError(layout.TimeoutStatus)
 	}
 	out, failures := Report(results)
 	io.WriteString(stdout, out)
@@ -357,11 +337,11 @@ func waitAndReport(agents []string, timeout *float64, stdout, stderr io.Writer) 
 // UI shows the repository's pull requests with GH_TOKEN, if it's set.
 func serve(agents []string, setups map[string]state.Agent, repo string) error {
 	swarm := web.Swarm{Repo: repo, Started: time.Now(), Token: os.Getenv("GH_TOKEN")}
-	db, err := Prepare(LogDir, agents)
+	db, err := Prepare(layout.LogDir, agents)
 	if err != nil {
 		return err
 	}
-	c, err := New(agents, db, setups, LogDir)
+	c, err := New(agents, db, setups, layout.LogDir)
 	if err != nil {
 		return err
 	}
@@ -375,7 +355,7 @@ func serve(agents []string, setups map[string]state.Agent, repo string) error {
 	var wg sync.WaitGroup
 	for _, run := range []func() error{
 		func() error { return c.Serve(ctx, ln) },
-		func() error { return web.Serve(ctx, fmt.Sprintf("0.0.0.0:%d", web.Port), c, swarm) },
+		func() error { return web.Serve(ctx, fmt.Sprintf("0.0.0.0:%d", layout.WebPort), c, swarm) },
 	} {
 		wg.Add(1)
 		go func() {

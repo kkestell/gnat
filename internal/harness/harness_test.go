@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/kkestell/gnat/internal/events"
-	"github.com/kkestell/gnat/internal/hook"
 	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/state"
 )
@@ -159,8 +158,8 @@ func TestSettingsInstallTheHook(t *testing.T) {
 
 func TestTheHarnessWaitsTwiceAsLongOnTheHookAsTheHookDoesOnTheControlPlane(t *testing.T) {
 	hooks := hookSettings()["hooks"].(map[string]any)["PostToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)
-	if got := hooks[0].(map[string]any)["timeout"]; got != hook.TimeoutSeconds*2 {
-		t.Errorf("timeout = %v, want %d", got, hook.TimeoutSeconds*2)
+	if got := hooks[0].(map[string]any)["timeout"]; got != layout.HookTimeoutSeconds*2 {
+		t.Errorf("timeout = %v, want %d", got, layout.HookTimeoutSeconds*2)
 	}
 }
 
