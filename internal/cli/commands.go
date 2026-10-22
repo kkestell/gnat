@@ -192,7 +192,11 @@ func copyCommand() *cobra.Command {
 		Use:   "cp SWARM AGENT:PATH HOST_PATH",
 		Short: "copy a file or directory out of an agent's container or clone",
 		Long: "Copy a file or directory out of an agent's container or clone.\n\n" +
-			"A relative PATH is in the agent's clone, /workspace. A HOST_PATH of - writes a tar to stdout.",
+			"A relative PATH is in the agent's clone, /workspace. A HOST_PATH of - writes a tar to stdout.\n\n" +
+			"HOST_PATH is treated as docker cp treats it. A directory copied to an existing directory goes inside it, " +
+			"and to a path that doesn't exist creates that path with the directory's contents. " +
+			"A PATH ending in /. copies the directory's contents instead, so AGENT:. copies the clone's contents. " +
+			"A file copied to an existing directory goes inside it, and to any other path is written to that path.",
 		Args: cobra.ExactArgs(3),
 		RunE: action(func(_ *cobra.Command, args []string) error { return copyOut(args[0], args[1], args[2]) }).run,
 	}
@@ -890,14 +894,21 @@ func copyOut(swarmName, source, destination string) error {
 	if !strings.HasPrefix(path, "/") {
 		path = layout.ContainerWorkspace + "/" + path
 	}
+	// docker cp copies a directory's contents for SRC/., so keep a last "." part through
+	// the cleaning.
+	contents := specifiesContents(path)
 	path = cleanPosix(path)
+	from := path
+	if contents {
+		from = strings.TrimSuffix(path, "/") + "/."
+	}
 	container := containerName(swarm.Name, agent.Name)
 	running, err := containers(swarm.Name)
 	if err != nil {
 		return err
 	}
 	if slices.Contains(running, container) {
-		return docker("cp", container+":"+path, destination)
+		return docker("cp", container+":"+from, destination)
 	}
 	// The swarm is down, but the agent's clone and sessions are on its volumes: mount
 	// them in a container that never runs, just to copy from.
@@ -931,7 +942,7 @@ func copyOut(swarmName, source, destination string) error {
 		return err
 	}
 	temporary := strings.TrimSpace(out)
-	copyErr := docker("cp", temporary+":"+path, destination)
+	copyErr := docker("cp", temporary+":"+from, destination)
 	if err := dockerQuiet("rm", temporary); copyErr == nil {
 		copyErr = err
 	}
@@ -948,6 +959,13 @@ func cleanPosix(p string) string {
 		}
 	}
 	return "/" + strings.Join(parts, "/")
+}
+
+// specifiesContents reports whether a path's last part is ".", which docker cp takes to
+// mean the directory's contents rather than the directory.
+func specifiesContents(p string) bool {
+	p = strings.TrimRight(p, "/")
+	return p == "." || strings.HasSuffix(p, "/.")
 }
 
 func logs(swarmName string, agentArgs []string, lines string, follow bool) error {

@@ -15,7 +15,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
 | `gnat wait SWARM [AGENT...] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. |
 | `gnat status SWARM [AGENT...]` | Show each agent's state, queue, time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
-| `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. |
+| `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. `HOST_PATH` is treated as `docker cp` treats it: a directory copied to an existing directory goes inside it, and to a path that doesn't exist creates that path with the directory's contents; a `PATH` ending in `/.` copies the directory's contents, so `AGENT:.` copies the clone's contents. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
 | `gnat agent create SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
@@ -261,5 +261,6 @@ Copying out and cleaning up:
 
 ```sh
 gnat cp demo alpha:notes.txt .
+gnat cp demo alpha:. alpha-clone
 gnat delete demo
 ```
