@@ -23,6 +23,12 @@ After changing `ui/`, also `make ui`, `cd ui && bun test && bun run typecheck`, 
 
 Containers run a separate binary, `gnat-container` (`cmd/gnat-container`, a static linux build at `/opt/gnat/gnat-container`, embedded in `gnat` and copied in by `gnat up`); what ran as Python modules there are its subcommands, `gnat-container control|agent|hook|send` (`layout.Command`). The two binaries share no code beyond the small packages below: `gnat` must not link `control`, `agent`, or `hook`, and `gnat-container` must not link `cli`, `keyring`, or `workspace`. Check with `go list -deps ./cmd/gnat` and `go list -deps ./cmd/gnat-container`. The host reads `control.db` through `recorded`, never `control`. SQLite is `modernc.org/sqlite` (pure Go).
 
+## Threat model
+
+Agents are cooperative, not adversarial. The goal is that an agent's mistake, or instructions it picks up from something it reads, can't do broad damage: no GitHub credential in agent containers, only the swarm's repository, only the agent's own branches, merging only when granted, and no glaring holes. Defending against an agent that deliberately attacks the control plane or its teammates over the swarm network is out of scope: no web UI authentication, no per-agent networks, no encryption on the bridge. When a simpler option meets the goal, take it; don't add hardening beyond this without asking.
+
+gnat also doesn't assume a team structure. A swarm needn't have an orchestrator or a reviewer; it may be all coders driven by an operator from a terminal. What gnat tells every agent is facts (commands, rules, what's refused); roles and workflow belong in profiles.
+
 ## Testing with a live swarm
 
 Use `kkestell/gnat-sandbox`, a private throwaway repository with a tiny Python library (`wordtools.py`, tests via `python3 -m unittest`), for end-to-end runs: agents may push, open pull requests, and merge there. The active `gh` account may not be `kkestell`, so run gnat with `GH_TOKEN=$(gh auth token --user kkestell)`. Close leftover pull requests and delete their branches before a fresh run, and `gnat delete` the swarm afterwards.
