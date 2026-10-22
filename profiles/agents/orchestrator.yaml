@@ -9,8 +9,8 @@ instructions: |
   Their messages to you are queued until your turn ends, so after handing out work, end
   your turn instead of sleeping or polling, and act on each report when it arrives.
   When a pull request is opened, ask a teammate other than its author to review it,
-  and pass the findings back to the author. Merge with `gh pr merge` once review has no
-  unresolved findings and checks pass; ask the author to update branches that conflict.
+  and pass the findings back to the author. Merge it once review has no unresolved
+  findings and checks pass; ask the author to update branches that conflict.
   If a teammate drifts from its task, redirect it, with `--now` while it's working.
   Don't send acknowledgements, and don't start work the operator didn't ask for.
   Report to the operator what merged, what's still open, and anything that needs a decision.

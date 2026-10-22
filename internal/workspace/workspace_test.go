@@ -158,7 +158,7 @@ func TestBinaryNamesTheMissingArchitecture(t *testing.T) {
 }
 
 func TestAgentInstructionsNameTeammatesAndForbidLeakingCredentials(t *testing.T) {
-	text := AgentInstructions("You review.\n", []string{"beta", "gamma"}, "OPENROUTER_API_KEY")
+	text := AgentInstructions("You review.\n", []string{"beta", "gamma"}, "OPENROUTER_API_KEY", "demo/alpha/")
 	if !strings.HasPrefix(text, "You review.\n\n") {
 		t.Errorf("starts %q", text[:20])
 	}
@@ -172,15 +172,30 @@ func TestAgentInstructionsNameTeammatesAndForbidLeakingCredentials(t *testing.T)
 			t.Errorf("missing %q", want)
 		}
 	}
-	alone := AgentInstructions("", nil, "CLAUDE_CODE_OAUTH_TOKEN")
+	alone := AgentInstructions("", nil, "CLAUDE_CODE_OAUTH_TOKEN", "demo/alpha/")
 	if strings.Contains(alone, "gnat-container send") || !strings.Contains(alone, "Never print") ||
 		!strings.Contains(alone, "You are the only agent in this swarm.") {
 		t.Errorf("alone: %s", alone)
 	}
 }
 
+func TestAgentInstructionsSayWhatTheAgentMayPushAndHowToUsePullRequests(t *testing.T) {
+	text := AgentInstructions("x", nil, "GH_TOKEN", "demo/alpha/")
+	for _, want := range []string{
+		"push only to branches named `demo/alpha/NAME`", "force-pushing",
+		"`/opt/gnat/gnat-container pr`", "approving one fails",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if text := AgentInstructions("x", nil, "GH_TOKEN", ""); !strings.Contains(text, "so you can't push") {
+		t.Error("an agent that can't push isn't told so")
+	}
+}
+
 func TestAgentInstructionsListTheBaseImagesTools(t *testing.T) {
-	text := AgentInstructions("x", nil, "GH_TOKEN")
+	text := AgentInstructions("x", nil, "GH_TOKEN", "demo/alpha/")
 	if !strings.Contains(text, "without root or sudo") {
 		t.Error("missing the sudo note")
 	}
@@ -195,15 +210,15 @@ func TestAgentInstructionsVouchForMessagesReceivedMidTurn(t *testing.T) {
 	// The heading the hook gives each message, so the agent recognizes it.
 	heading := "Message from the swarm operator, received while you were working"
 	for _, teammates := range [][]string{nil, {"beta"}} {
-		text := AgentInstructions("x", teammates, "GH_TOKEN")
+		text := AgentInstructions("x", teammates, "GH_TOKEN", "demo/alpha/")
 		if !strings.Contains(text, heading) || !strings.Contains(text, "They are genuine") {
 			t.Errorf("teammates %v: no vouching", teammates)
 		}
 	}
-	if !strings.Contains(AgentInstructions("x", []string{"beta"}, "GH_TOKEN"), "operator and your teammates") {
+	if !strings.Contains(AgentInstructions("x", []string{"beta"}, "GH_TOKEN", "demo/alpha/"), "operator and your teammates") {
 		t.Error("the operator's messages and teammates' aren't both mentioned")
 	}
-	if strings.Contains(AgentInstructions("x", nil, "GH_TOKEN"), "operator and your teammates") {
+	if strings.Contains(AgentInstructions("x", nil, "GH_TOKEN", "demo/alpha/"), "operator and your teammates") {
 		t.Error("a lone agent has no teammates")
 	}
 }

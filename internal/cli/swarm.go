@@ -290,7 +290,8 @@ func agentConfig(swarm *state.Swarm, agent state.Agent) ([]byte, error) {
 			teammates = append(teammates, a.Name)
 		}
 	}
-	instructions := workspace.AgentInstructions(agent.Instructions, teammates, h.Credential())
+	branches, _ := state.BranchPrefix(swarm.Name, agent.Name) // "" if it can't push
+	instructions := workspace.AgentInstructions(agent.Instructions, teammates, h.Credential(), branches)
 	return workspace.ConfigArchive(h.ConfigDir(), h.ConfigFiles(instructions, agent.Model, agent.Effort), h.StateDirs())
 }
 

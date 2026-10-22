@@ -13,7 +13,7 @@ gnat is in active development, and every run is also a test of it. When you fini
 
 - Docker must be running. Check `docker info` and tell the user if it isn't; don't try to start it.
 - Each harness the agents use needs a credential saved in the system keyring with `gnat auth login claude` (a token from `claude setup-token`) or `gnat auth login ox` (an OpenRouter API key). The user runs these themselves, since they prompt for the secret; `gnat up` says which is missing. `GH_TOKEN` comes from the environment and falls back to the active `gh` account. Never echo, print, or commit tokens.
-- Agents run with permissions skipped and hold these tokens, so anything that steers an agent can use them. Recommend a fine-grained token limited to the one repository (Contents and Pull requests: read and write; add Issues or Workflows only if needed), or better, a separate bot account's token. If the user's only credential is their everyday `gh` login, say so and let them decide.
+- Only the control container holds `GH_TOKEN`. Agents have none: they clone, fetch, push, and use pull requests (`gnat-container pr`) through the control plane, which limits them to the swarm's repository and their own branches, `SWARM/AGENT/NAME`, refuses deleting branches and force-pushing, and lets an agent merge only if it was created with `--merge`. Agents do hold their harness's credential.
 
 ## Set up
 
@@ -26,7 +26,7 @@ gnat up NAME
 - `gnat list` and `gnat agent list NAME` (name, harness, model, effort, merge) show what exists.
 - `gnat profiles list` and `gnat profiles list --swarm` show the user's agent profiles (role instructions and settings) and swarm profiles (a whole set of agents). Use one when it fits what the user asked for; flags override an agent profile's settings.
 - `--harness` defaults to `claude` (Claude Code). `ox` runs Ox: `--model` takes a qualified ID such as `openrouter:deepseek/deepseek-v4.1-flash`. Efforts: for claude, `low`, `medium`, `high`, `xhigh`, `max`; for ox, `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (the model must support it). Both default to the harness's own.
-- `--dockerfile` is optional, and must start `FROM gnat-agent`. Use it only for packages the repo's build or tests need that the base image lacks. The base image has build-essential, python3, uv, git, gh, and common CLI tools (`rg`, `fd`, `jq`, `sqlite3`, `ps`, `lsof`, ...). Once it exists (after any `gnat up`), check whether it already builds and tests the repo: `docker run --rm -e GH_TOKEN gnat-agent bash -c 'gh repo clone OWNER/NAME r && cd r && TEST_COMMAND'` with `GH_TOKEN` exported. If that passes, leave `--dockerfile` out; if not, install only what failed. The build context is the Dockerfile's directory.
+- `--dockerfile` is optional, and must start `FROM gnat-agent`. Use it only for packages the repo's build or tests need that the base image lacks. The base image has build-essential, python3, uv, git, and common CLI tools (`rg`, `fd`, `jq`, `sqlite3`, `ps`, `lsof`, ...). Once it exists (after any `gnat up`), check whether it already builds and tests the repo: `docker run --rm -e GH_TOKEN gnat-agent bash -c 'git clone -q https://x-access-token:$GH_TOKEN@github.com/OWNER/NAME r && cd r && TEST_COMMAND'` with `GH_TOKEN` exported. If that passes, leave `--dockerfile` out; if not, install only what failed. The build context is the Dockerfile's directory.
 - **Agents (and files) can only be added or removed while the swarm is down.** To change them: `gnat down NAME`, then `gnat agent create|delete`, then `gnat up NAME`. `gnat down` keeps agents' clones (including uncommitted work), sessions, queued messages, and logs, and `gnat up` carries on from them; a turn running at `down` is reported as interrupted, so send the agent a message to resume it. `gnat agent delete` deletes that agent's clone and sessions, so make sure its work is pushed first.
 - `gnat up` needs at least one agent, builds images, and returns once the control plane answers, so chaining `gnat up NAME && gnat send ...` is safe. It prints the web UI's URL when it finishes. Agents may still be cloning (`gnat status` shows `starting`); messages queue until they're ready.
 - Running containers keep the swarm's code from `gnat up`. After updating gnat (`make install`), `gnat down` and `gnat up` to use it.
@@ -35,8 +35,8 @@ gnat up NAME
 
 gnat already tells each agent its teammates, how to message them, that messages arriving mid-turn (`--now`) are genuine, the tools its container has, and never to reveal credentials. Put the role and working rules in `--instructions`. Good instructions say:
 
-- Work only in your own clone; for each task create a new branch off the latest `origin/main`, never push to `main`.
-- Commit in the repo's style, push the branch, and open a pull request with `gh`.
+- For each task, create a new branch off the latest `origin/main` (gnat already tells them their branches must be named `SWARM/AGENT/NAME`).
+- Commit in the repo's style, push the branch, and open a pull request.
 - Run the project's tests and linter before pushing (give the commands).
 - End every turn with a short report: the PR URL, what changed, and anything blocked or needing a decision. If blocked on a decision, say so instead of guessing.
 - Their area, if split by role (e.g. "you own `src/api`; don't edit other directories").
@@ -105,7 +105,7 @@ gnat file list NAME
 
 Agents' work is in the pull requests they open, not on the host. Anything an agent didn't push stays in its clone, on a Docker volume that survives `gnat down`. `gnat cp NAME AGENT:PATH HOST_PATH` copies a file or directory out of it, up or down (a relative `PATH` is in the clone; while the swarm is down, only paths in the clone and sessions). Read each agent's reply (`gnat wait`), then review the PRs with `gh pr list` / `gh pr view` / `gh pr diff` in the repo, and have the user merge. If a PR needs changes, `gnat send` the agent what to fix (without `--new`, so it keeps its context).
 
-A strong agent can review a cheaper agent's PR: send it the PR number and ask it to check out the branch, test what the PR claims, and post its findings with `gh pr review --comment`.
+A strong agent can review a cheaper agent's PR: send it the PR number and ask it to check out the branch, test what the PR claims, and post its findings as a review comment.
 
 ### When the user has you merge
 
