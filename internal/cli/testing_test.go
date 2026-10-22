@@ -64,3 +64,22 @@ func agent(name, harness string) state.Agent {
 }
 
 func writeFile(path, content string) error { return os.WriteFile(path, []byte(content), 0o644) }
+
+// useSecrets replaces the system keyring with a map, which it returns, starting with
+// secrets.
+func useSecrets(t *testing.T, secrets map[string]string) map[string]string {
+	t.Helper()
+	if secrets == nil {
+		secrets = map[string]string{}
+	}
+	savedGet, savedSet, savedDelete := getSecret, setSecret, deleteSecret
+	getSecret = func(account string) (string, error) { return secrets[account], nil }
+	setSecret = func(account, secret string) error { secrets[account] = secret; return nil }
+	deleteSecret = func(account string) (bool, error) {
+		_, ok := secrets[account]
+		delete(secrets, account)
+		return ok, nil
+	}
+	t.Cleanup(func() { getSecret, setSecret, deleteSecret = savedGet, savedSet, savedDelete })
+	return secrets
+}

@@ -99,7 +99,7 @@ func TestEveryHarnessFillsInTheInterface(t *testing.T) {
 				t.Fatalf("Get(%q) = %v, %v", name, h, err)
 			}
 			for field, value := range map[string]string{
-				"program": h.Program(), "credential": h.Credential(),
+				"program": h.Program(), "credential": h.Credential(), "credential name": h.CredentialName(),
 				"credential source": h.CredentialSource(), "config dir": h.ConfigDir(),
 			} {
 				if value == "" {

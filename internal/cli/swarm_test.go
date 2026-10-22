@@ -2,14 +2,11 @@ package cli
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/state"
 )
 
@@ -142,80 +139,6 @@ func TestWaitUntilReadyGivesUpWithTheLastError(t *testing.T) {
 	err := waitUntilReady("gnat-demo-control", "alpha")
 	if err == nil || !strings.Contains(err.Error(), "didn't answer within 30 seconds: refused") {
 		t.Errorf("got %v", err)
-	}
-}
-
-func TestLoadCredentialNamesHowToGetOne(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("OPENROUTER_API_KEY", "")
-	ox, _ := harness.Get("ox")
-	_, err := loadCredential(ox)
-	want := "OPENROUTER_API_KEY is not set; create an OpenRouter API key and put it in " + dir + "/gnat/.env"
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("got %v, want %q", err, want)
-	}
-	t.Setenv("OPENROUTER_API_KEY", "k")
-	if got, err := loadCredential(ox); err != nil || got != "k" {
-		t.Errorf("got %q, %v", got, err)
-	}
-}
-
-func TestCredentialsComeFromGnatsOwnEnvFileNotTheCurrentDirectorys(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-	t.Setenv("OPENROUTER_API_KEY", "")
-	wd, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(wd) })
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFile(".env", "OPENROUTER_API_KEY=project\n"); err != nil {
-		t.Fatal(err)
-	}
-	ox, _ := harness.Get("ox")
-	if _, err := loadCredential(ox); err == nil || !strings.Contains(err.Error(), "is not set") {
-		t.Errorf("got %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "config", "gnat"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFile(filepath.Join(dir, "config", "gnat", ".env"), "OPENROUTER_API_KEY=gnat\n"); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := loadCredential(ox); err != nil || got != "gnat" {
-		t.Errorf("got %q, %v", got, err)
-	}
-}
-
-func TestDotenv(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".env")
-	text := `# comment
-A=plain
-export B = spaced  
-C="double # not a comment\n\"quoted\""
-D='single \n literal'
-E=unquoted # a comment
-F=
-G=a#b
-NOVALUE
-`
-	if err := writeFile(path, text); err != nil {
-		t.Fatal(err)
-	}
-	got, err := dotenv(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{
-		"A": "plain", "B": "spaced", "C": "double # not a comment\n\"quoted\"",
-		"D": `single \n literal`, "E": "unquoted", "F": "", "G": "a#b",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-	if got, err := dotenv(path + ".missing"); err != nil || len(got) != 0 {
-		t.Errorf("a missing file: %v, %v", got, err)
 	}
 }
 

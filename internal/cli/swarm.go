@@ -227,25 +227,11 @@ func webURL(container string) (string, error) {
 	return "http://" + fields[0], nil
 }
 
-// loadCredential is the harness's credential, such as a Claude Code OAuth token.
-func loadCredential(h harness.Harness) (string, error) {
-	value, err := setting(h.Credential())
-	if err != nil {
-		return "", err
-	}
-	if value == "" {
-		return "", fmt.Errorf("%s is not set; %s and put it in %s or the environment",
-			h.Credential(), h.CredentialSource(), envPath())
-	}
-	return value, nil
-}
-
 // loadGithubToken is the GitHub token agents clone, push, and open pull requests with;
 // by default gh's.
 func loadGithubToken() (string, error) {
-	token, err := setting(githubTokenVar)
-	if token != "" || err != nil {
-		return token, err
+	if token := os.Getenv(githubTokenVar); token != "" {
+		return token, nil
 	}
 	res, err := execute(command{name: "gh", args: []string{"auth", "token"}, capture: true})
 	if err != nil {

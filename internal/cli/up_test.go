@@ -15,9 +15,7 @@ import (
 // docker that answers like a working one.
 func useUp(t *testing.T, respond func(c command) (result, error)) *fakeExec {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "claude-secret")
-	t.Setenv("OPENROUTER_API_KEY", "ox-secret")
+	useSecrets(t, map[string]string{"claude": "claude-secret", "ox": "ox-secret"})
 	t.Setenv("GH_TOKEN", "gh-secret")
 	saved := binaryFor
 	binaryFor = func(arch string) ([]byte, error) { return []byte("ELF-" + arch), nil }
@@ -208,12 +206,13 @@ func TestUpRefusesWithoutAgentsCredentialsOrBinary(t *testing.T) {
 	}
 
 	useSwarm(t, agent("alpha", "claude"))
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-	if err := up("demo"); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN is not set; run `claude setup-token`") {
+	secrets := useSecrets(t, nil)
+	if err := up("demo"); err == nil || !strings.Contains(err.Error(),
+		"no Claude Code OAuth token is saved; run `claude setup-token`, then run `gnat auth login claude`") {
 		t.Errorf("got %v", err)
 	}
 
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "x")
+	secrets["claude"] = "x"
 	binaryFor = func(string) ([]byte, error) { return nil, errNoBinary }
 	if err := up("demo"); err != errNoBinary {
 		t.Errorf("got %v", err)

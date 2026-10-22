@@ -7,6 +7,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261020153306-9f2b28d4331a
+	golang.org/x/term v0.47.0
 	modernc.org/sqlite v1.61.0
 )
 

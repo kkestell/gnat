@@ -9,6 +9,7 @@ func newOx() *ox {
 			name:             "ox",
 			program:          "ox-server",
 			credential:       "OPENROUTER_API_KEY",
+			credentialName:   "OpenRouter API key",
 			credentialSource: "create an OpenRouter API key",
 			efforts:          []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"},
 			configDir:        layout.AgentHome + "/.config/ox",

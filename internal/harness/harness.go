@@ -39,9 +39,11 @@ type Harness interface {
 	Name() string
 	// Program is the command the agent image must have.
 	Program() string
-	// Credential is the environment variable holding its credential, and CredentialSource
-	// says how to get one.
+	// Credential is the environment variable holding its credential in the agent
+	// container, CredentialName is what the credential is, and CredentialSource says how
+	// to get one.
 	Credential() string
+	CredentialName() string
 	CredentialSource() string
 	// Efforts are the values `--effort` takes.
 	Efforts() []string
@@ -59,15 +61,16 @@ type Harness interface {
 
 // info implements the parts of Harness that are plain data.
 type info struct {
-	name, program, credential, credentialSource string
-	efforts                                     []string
-	configDir                                   string
-	stateDirs                                   []string
+	name, program, credential, credentialName, credentialSource string
+	efforts                                                     []string
+	configDir                                                   string
+	stateDirs                                                   []string
 }
 
 func (i info) Name() string             { return i.name }
 func (i info) Program() string          { return i.program }
 func (i info) Credential() string       { return i.credential }
+func (i info) CredentialName() string   { return i.credentialName }
 func (i info) CredentialSource() string { return i.credentialSource }
 func (i info) Efforts() []string        { return i.efforts }
 func (i info) ConfigDir() string        { return i.configDir }

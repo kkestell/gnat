@@ -12,7 +12,7 @@ gnat is in active development, and every run is also a test of it. When you fini
 ## Before anything
 
 - Docker must be running. Check `docker info` and tell the user if it isn't; don't try to start it.
-- `GH_TOKEN`, plus the credential of each harness the agents use, must be in the environment or in gnat's own `~/.config/gnat/.env` (read whatever directory you run `gnat` from): `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) for Claude agents, `OPENROUTER_API_KEY` for Ox agents. `GH_TOKEN` falls back to the active `gh` account. Check that they are set without printing them (`grep -c '^GH_TOKEN=' ~/.config/gnat/.env`, `test -n "$GH_TOKEN"`); never echo, print, or commit tokens or `.env` files.
+- Each harness the agents use needs a credential saved in the system keyring with `gnat auth login claude` (a token from `claude setup-token`) or `gnat auth login ox` (an OpenRouter API key). The user runs these themselves, since they prompt for the secret; `gnat up` says which is missing. `GH_TOKEN` comes from the environment and falls back to the active `gh` account. Never echo, print, or commit tokens.
 - Agents run with permissions skipped and hold these tokens, so anything that steers an agent can use them. Recommend a fine-grained token limited to the one repository (Contents and Pull requests: read and write; add Issues or Workflows only if needed), or better, a separate bot account's token. If the user's only credential is their everyday `gh` login, say so and let them decide.
 
 ## Set up

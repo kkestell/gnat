@@ -32,6 +32,7 @@ func newClaude() *claude {
 		name:             "claude",
 		program:          "claude",
 		credential:       "CLAUDE_CODE_OAUTH_TOKEN",
+		credentialName:   "Claude Code OAuth token",
 		credentialSource: "run `claude setup-token`",
 		efforts:          []string{"low", "medium", "high", "xhigh", "max"},
 		configDir:        home,

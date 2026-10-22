@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-gnat is a Go port of `swarm` (Python): run a swarm of coding agents, each in its own Docker container, on separate clones of one GitHub repository. Behavior, commands, flags, wire formats, and on-disk formats match the Python version except that everything named `swarm` that identifies the tool is `gnat` (binary, images, labels, `$XDG_CONFIG_HOME/gnat/.env`, `$XDG_STATE_HOME/gnat`, `GNAT_AGENT`, `/opt/gnat`). "Swarm" stays as the noun for a set of agents.
+gnat is a Go port of `swarm` (Python): run a swarm of coding agents, each in its own Docker container, on separate clones of one GitHub repository. Behavior, commands, flags, wire formats, and on-disk formats match the Python version except that everything named `swarm` that identifies the tool is `gnat` (binary, images, labels, `$XDG_STATE_HOME/gnat`, `GNAT_AGENT`, `/opt/gnat`), and harness credentials live in the system keyring (`gnat auth login`), not the environment or a `.env`. "Swarm" stays as the noun for a set of agents.
 
 ## Commands
 
@@ -37,6 +37,7 @@ One binary, `cmd/gnat`; everything else is under `internal/`.
 - `agent`: the agent daemon, the container's main process.
 - `hook`: the PostToolUse hook that delivers `--now` messages.
 - `workspace`: cloning, files, instructions, and archives for containers.
+- `keyring`: harness credentials in the system keyring (macOS `security`, `secret-tool` elsewhere).
 - `cli`: the command line, host commands and hidden subcommands (`cli.Run`).
 
 The web UI is `ui/`, a Bun + React + Tailwind app: `swarm.ts` turns events into each agent's transcript, usage, and latest entries; `markdown.js` is a hand-written, DOM-building Markdown renderer (no HTML parsing, http(s)/mailto links only). `bun dev` in `ui/` runs it with hot reloading on http://localhost:5180 against a pretend swarm (`ui/mock/swarm.ts`); with `GNAT_URL=$(gnat web SWARM --no-open)`, against a running one.

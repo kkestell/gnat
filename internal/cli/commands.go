@@ -55,7 +55,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(
 		createCommand(), deleteCommand(), listCommand(), upCommand(), downCommand(),
 		sendCommand(), stopCommand(), waitCommand(), statusCommand(), copyCommand(),
-		logsCommand(), webCommand(), agentCommands(), fileCommands(), profileCommands(), internalCommand(),
+		logsCommand(), webCommand(), agentCommands(), fileCommands(), profileCommands(), authCommands(), internalCommand(),
 	)
 	return root
 }

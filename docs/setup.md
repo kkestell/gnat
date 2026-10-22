@@ -11,11 +11,18 @@ profiles.
 
 ## Credentials
 
-gnat reads credentials from the environment, then from `~/.config/gnat/.env` (`$XDG_CONFIG_HOME/gnat/.env`).
+`gnat auth login HARNESS` saves a harness's credential in the system keyring (the macOS keychain, or the Secret Service through `secret-tool` elsewhere). It reads the credential from the terminal without echoing it, or as one line of standard input. `gnat auth logout HARNESS` removes it.
 
-- `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code agents, from `claude setup-token`.
-- `OPENROUTER_API_KEY` for Ox agents.
-- `GH_TOKEN` for cloning, pushing, and opening pull requests. Without it, gnat uses `gh auth token`; for another logged-in account, `export GH_TOKEN=$(gh auth token --user NAME)`.
+For Claude Code agents, `claude setup-token` signs you in through the browser and prints a long-lived OAuth token (`sk-ant-oat…`). Copy it, then paste it at the prompt:
+
+```sh
+claude setup-token
+gnat auth login claude
+```
+
+For Ox agents, create an OpenRouter API key and paste it at the prompt of `gnat auth login ox`. Agents hold the key, so give them one of their own rather than the one you use yourself.
+
+`GH_TOKEN` is for cloning, pushing, and opening pull requests. Without it, gnat uses `gh auth token`; for another logged-in account, `export GH_TOKEN=$(gh auth token --user NAME)`.
 
 `gnat up` needs only the credentials of the harnesses its agents use, and each agent gets only its own harness's.
 

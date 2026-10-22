@@ -22,6 +22,8 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
 | `gnat agent list SWARM` | List agents. |
 | `gnat profiles list` | List available profile names, alphabetically. |
+| `gnat auth login claude\|ox` | Save a harness's credential in the system keyring. See [setup](setup.md#credentials). |
+| `gnat auth logout claude\|ox` | Remove a harness's saved credential. |
 | `gnat file add SWARM HOST_PATH[:WORKSPACE_PATH]` | Add a file for every clone (swarm down). See [setup](setup.md#files-outside-source-control). |
 | `gnat file delete SWARM WORKSPACE_PATH` | Remove a file (swarm down). |
 | `gnat file list SWARM` | List files. |
@@ -95,10 +97,10 @@ The web UI lists the repository's pull requests, which the control plane fetches
 
 ## Examples
 
-These use [kkestell/swarm-test](https://github.com/kkestell/swarm-test). Run `gnat logs demo -f` or `gnat web demo` alongside to watch.
+These use `OWNER/NAME`, a throwaway repository the agents can push to and open pull requests on. Run `gnat logs demo -f` or `gnat web demo` alongside to watch.
 
 ```sh
-gnat create demo --repo kkestell/swarm-test
+gnat create demo --repo OWNER/NAME
 gnat agent create demo alpha --instructions "Be brief." --model haiku --effort low
 gnat agent create demo beta --instructions "Be brief." --model haiku --effort low
 gnat up demo
@@ -107,14 +109,14 @@ gnat up demo
 One session across queued messages:
 
 ```sh
-gnat send demo alpha -m "What is the workspace codeword?"
+gnat send demo alpha -m "What files are in the repository root?"
 gnat send demo alpha -m "What did I just ask you?"
 ```
 
 Every agent, waiting for replies:
 
 ```sh
-gnat send demo --wait -m "What is the workspace codeword?"
+gnat send demo --wait -m "What files are in the repository root?"
 ```
 
 Separate clones:
@@ -128,7 +130,7 @@ gnat send demo alpha -m "Print notes.txt."
 Mid-turn delivery (send the second while the first's sleep is running):
 
 ```sh
-gnat send demo alpha -m "Use Bash to run: python3 -c 'import time; time.sleep(20)'. Then run 'ls src'. Then report what you did and any messages you received."
+gnat send demo alpha -m "Use Bash to run: python3 -c 'import time; time.sleep(20)'. Then run 'ls'. Then report what you did and any messages you received."
 gnat send demo alpha --now -m "Also say PINEAPPLE in your report."
 ```
 
@@ -158,16 +160,16 @@ gnat send demo alpha --new -m "What did I just ask you?"
 Pull request:
 
 ```sh
-gnat send demo beta -m "Add a goodbye() function to src/hello.py on a new branch, commit it, push it, and open a pull request."
+gnat send demo beta -m "Add a line to README.md on a new branch, commit it, push it, and open a pull request."
 ```
 
-Ox agent (needs `OPENROUTER_API_KEY`):
+An Ox agent alongside the Claude Code ones (after `gnat auth login ox`):
 
 ```sh
 gnat down demo
 gnat agent create demo gamma --instructions "Be brief." --harness ox --model openrouter:deepseek/deepseek-v4.1-flash
 gnat up demo
-gnat send demo --wait -m "What is the workspace codeword?"
+gnat send demo --wait -m "What files are in the repository root?"
 ```
 
 Copying out and cleaning up:
