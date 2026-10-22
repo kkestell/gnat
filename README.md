@@ -25,6 +25,13 @@ gnat down demo
 
 `gnat COMMAND -h` lists each command's flags.
 
+For reusable agent settings, save `instructions`, `harness`, `model`, and
+`effort` in `~/.config/gnat/profiles/coder.yaml`, then run
+`gnat agent create demo alpha --profile coder`. Explicit flags override profile
+settings, for example `--profile coder --effort max`. `gnat profiles list`
+lists available names; see [agent profiles](docs/usage.md#agent-profiles) for
+the format.
+
 ## Docs
 
 - [docs/setup.md](docs/setup.md): credentials, images and Dockerfiles, files outside source control, Ox agents, and the Claude Code skill.

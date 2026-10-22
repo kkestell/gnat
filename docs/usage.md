@@ -1,6 +1,6 @@
 # Usage
 
-Every command takes the swarm first. Commands that address agents take their names next, and address every agent when none are given. `gnat COMMAND -h` lists flags.
+Commands for a swarm take its name first. Commands that address agents take their names next, and address every agent when none are given. `gnat COMMAND -h` lists flags.
 
 ## Commands
 
@@ -18,12 +18,56 @@ Every command takes the swarm first. Commands that address agents take their nam
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
-| `gnat agent create SWARM AGENT --instructions TEXT [--harness claude\|ox] [--model MODEL] [--effort LEVEL]` | Add an agent (swarm down). |
+| `gnat agent create SWARM AGENT [--profile NAME] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. |
 | `gnat agent delete SWARM AGENT` | Remove an agent with its clone and sessions (swarm down). |
 | `gnat agent list SWARM` | List agents. |
+| `gnat profiles list` | List available profile names, alphabetically. |
 | `gnat file add SWARM HOST_PATH[:WORKSPACE_PATH]` | Add a file for every clone (swarm down). See [setup](setup.md#files-outside-source-control). |
 | `gnat file delete SWARM WORKSPACE_PATH` | Remove a file (swarm down). |
 | `gnat file list SWARM` | List files. |
+
+## Agent profiles
+
+`make install` includes three profiles from the repository's `profiles/`
+directory: `coder` implements changes, `reviewer` reports code review findings,
+and `researcher` investigates questions and compares options. They provide role
+instructions and use the default harness, model, and effort. Existing profile
+files are preserved during installation, so you can customize them.
+
+Save reusable agent settings in `~/.config/gnat/profiles/NAME.yaml`
+(`$XDG_CONFIG_HOME/gnat/profiles/NAME.yaml` when set). For example,
+`coder.yaml`:
+
+```yaml
+instructions: |
+  Implement the requested change.
+  Add useful tests and explain what you changed.
+harness: claude
+model: sonnet
+effort: high
+```
+
+```sh
+gnat profiles list
+gnat agent create demo alpha --profile coder
+gnat agent create demo beta --profile coder --effort max
+```
+
+All four settings are optional. gnat always supplies basic instructions about
+the swarm, available tools, and credentials. Use the profile's `instructions` or
+`--instructions` for optional additional instructions. An omitted harness defaults
+to `claude`; omitted model and effort use the harness's defaults. Explicit flags replace individual
+profile settings regardless of flag order. Use `--model=""` or `--effort=""` to
+restore the harness's default for that setting. Use `--instructions=""` to clear
+the profile's additional instructions.
+
+Profile names use the same characters as agent names: a letter or digit followed
+by letters, digits, underscores, dots, or hyphens. Each file contains one YAML
+document; unknown settings are rejected. `gnat profiles list` lists names
+without parsing the files and prints nothing if the directory does not exist.
+
+Settings are copied into the swarm definition when an agent is created. Editing
+or removing a profile later does not change existing agents.
 
 ## Messages
 

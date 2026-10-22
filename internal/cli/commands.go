@@ -55,7 +55,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(
 		createCommand(), deleteCommand(), listCommand(), upCommand(), downCommand(),
 		sendCommand(), stopCommand(), waitCommand(), statusCommand(), copyCommand(),
-		logsCommand(), webCommand(), agentCommands(), fileCommands(), internalCommand(),
+		logsCommand(), webCommand(), agentCommands(), fileCommands(), profileCommands(), internalCommand(),
 	)
 	return root
 }
@@ -221,25 +221,48 @@ func webCommand() *cobra.Command {
 }
 
 func agentCommands() *cobra.Command {
-	var instructions, harnessName, model, effort string
+	var profileName string
+	var options agentOptions
 	create := &cobra.Command{Use: "create SWARM AGENT", Short: "add an agent to a swarm", Args: cobra.ExactArgs(2)}
-	create.RunE = action(func(_ *cobra.Command, args []string) error {
-		if !slices.Contains(harness.Names(), harnessName) {
-			return usagef("invalid --harness %q (choose from %s)", harnessName, strings.Join(harness.Names(), ", "))
+	create.RunE = action(func(cmd *cobra.Command, args []string) error {
+		resolved := agentOptions{Harness: state.DefaultHarness}
+		if cmd.Flags().Changed("profile") {
+			var err error
+			resolved, err = loadProfile(profileName)
+			if err != nil {
+				return err
+			}
 		}
-		return createAgent(args[0], args[1], instructions, harnessName, model, effort)
+		for _, setting := range []struct {
+			flag   string
+			value  string
+			target *string
+		}{
+			{"instructions", options.Instructions, &resolved.Instructions},
+			{"harness", options.Harness, &resolved.Harness},
+			{"model", options.Model, &resolved.Model},
+			{"effort", options.Effort, &resolved.Effort},
+		} {
+			if cmd.Flags().Changed(setting.flag) {
+				*setting.target = setting.value
+			}
+		}
+		if !slices.Contains(harness.Names(), resolved.Harness) {
+			return usagef("invalid --harness %q (choose from %s)", resolved.Harness, strings.Join(harness.Names(), ", "))
+		}
+		return createAgent(args[0], args[1], resolved.Instructions, resolved.Harness, resolved.Model, resolved.Effort)
 	}).run
-	create.Flags().StringVar(&instructions, "instructions", "", "the agent's instructions")
-	_ = create.MarkFlagRequired("instructions")
-	create.Flags().StringVar(&harnessName, "harness", state.DefaultHarness,
+	create.Flags().StringVar(&profileName, "profile", "", "load agent settings from the named YAML `PROFILE` in gnat's config profiles directory")
+	create.Flags().StringVar(&options.Instructions, "instructions", "", "additional instructions for the agent")
+	create.Flags().StringVar(&options.Harness, "harness", state.DefaultHarness,
 		"the program the agent runs its turns with ("+strings.Join(harness.Names(), ", ")+")")
-	create.Flags().StringVar(&model, "model", "",
+	create.Flags().StringVar(&options.Model, "model", "",
 		"model (default: the harness's default); for ox, a qualified ID such as openrouter:deepseek/deepseek-v4.1-flash")
 	var efforts []string
 	for _, h := range harness.All() {
 		efforts = append(efforts, fmt.Sprintf("for %s, %s", h.Name(), strings.Join(h.Efforts(), ", ")))
 	}
-	create.Flags().StringVar(&effort, "effort", "",
+	create.Flags().StringVar(&options.Effort, "effort", "",
 		"effort level (default: the harness's default): "+strings.Join(efforts, "; "))
 
 	del := &cobra.Command{
@@ -401,9 +424,6 @@ func createAgent(swarmName, agentName, instructions, harnessName, model, effort 
 		if a.Name == agentName {
 			return fmt.Errorf("swarm '%s' already has an agent '%s'", swarm.Name, agentName)
 		}
-	}
-	if strings.TrimSpace(instructions) == "" {
-		return fmt.Errorf("--instructions must be non-empty")
 	}
 	h, err := harness.Get(harnessName)
 	if err != nil {

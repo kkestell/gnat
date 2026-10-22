@@ -330,14 +330,13 @@ func TestAnEffortMustBeOneTheHarnessTakes(t *testing.T) {
 	}
 }
 
-func TestCreateAgentRefusesReservedDuplicateAndEmpty(t *testing.T) {
+func TestCreateAgentRefusesReservedDuplicateAndInvalidNames(t *testing.T) {
 	useSwarm(t, agent("alpha", "claude"))
 	useExec(t, nil)
 	useOutput(t)
 	for _, c := range []struct{ name, instructions, want string }{
 		{"control", "x", "reserved for the control plane"},
 		{"alpha", "x", "already has an agent 'alpha'"},
-		{"beta", "  ", "--instructions must be non-empty"},
 		{"-bad", "x", "agent name"},
 	} {
 		if err := createAgent("demo", c.name, c.instructions, "claude", "", ""); err == nil || !strings.Contains(err.Error(), c.want) {

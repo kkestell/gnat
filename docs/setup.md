@@ -4,6 +4,11 @@
 
 `make install` cross-builds the static linux `gnat` binaries containers run (amd64 and arm64), embeds them in the host binary, and installs it with `go install`. Rerun it after pulling.
 
+It also installs the bundled `coder`, `reviewer`, and `researcher` profiles
+into `~/.config/gnat/profiles` (`$XDG_CONFIG_HOME/gnat/profiles` when set),
+keeping any existing files. Run `make install-profiles` to install just the
+profiles.
+
 ## Credentials
 
 gnat reads credentials from the environment, then from `~/.config/gnat/.env` (`$XDG_CONFIG_HOME/gnat/.env`).

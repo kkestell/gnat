@@ -1,4 +1,4 @@
-.PHONY: build install linux ui test lint clean
+.PHONY: build install install-profiles linux ui test lint clean
 
 # The linux binaries containers run, embedded in the gnat binary and copied to
 # /opt/gnat/gnat by `gnat up`: static, for each architecture Docker may run on. The
@@ -22,8 +22,19 @@ build: linux
 	go build -o gnat ./cmd/gnat
 
 # Install gnat from this checkout; rerun after a pull to pick up changes.
-install: linux
+install: linux install-profiles
 	go install ./cmd/gnat
+
+# Seed the config directory without replacing profiles the user has customized.
+install-profiles:
+	@profile_dir="$${XDG_CONFIG_HOME:-$$HOME/.config}/gnat/profiles"; \
+		mkdir -p "$$profile_dir" || exit 1; \
+		for profile in profiles/*.yaml; do \
+			target="$$profile_dir/$${profile##*/}"; \
+			if [ ! -e "$$target" ] && [ ! -L "$$target" ]; then \
+				cp "$$profile" "$$target" || exit 1; \
+			fi; \
+		done
 
 test:
 	go test ./...

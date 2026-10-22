@@ -172,7 +172,7 @@ func TestAgentInstructionsNameTeammatesAndForbidLeakingCredentials(t *testing.T)
 			t.Errorf("missing %q", want)
 		}
 	}
-	alone := AgentInstructions("You review.", nil, "CLAUDE_CODE_OAUTH_TOKEN")
+	alone := AgentInstructions("", nil, "CLAUDE_CODE_OAUTH_TOKEN")
 	if strings.Contains(alone, "internal send") || !strings.Contains(alone, "Never print") ||
 		!strings.Contains(alone, "You are the only agent in this swarm.") {
 		t.Errorf("alone: %s", alone)

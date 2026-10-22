@@ -26,11 +26,10 @@ func TestUsageErrorsExit2(t *testing.T) {
 		{"bogus"},
 		{"agent"},
 		{"file", "nope"},
-		{"create", "demo"},               // --repo is required
-		{"create", "demo", "--repo"},     // a flag without its value
-		{"send"},                         // a swarm is required
-		{"up", "a", "b"},                 // too many
-		{"agent", "create", "demo", "a"}, // --instructions is required
+		{"create", "demo"},           // --repo is required
+		{"create", "demo", "--repo"}, // a flag without its value
+		{"send"},                     // a swarm is required
+		{"up", "a", "b"},             // too many
 		{"agent", "create", "demo", "a", "--instructions", "x", "--harness", "nope"},
 		{"send", "demo", "--unknown"},
 	} {

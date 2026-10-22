@@ -8,15 +8,17 @@ import (
 	"strings"
 )
 
-// envPath is gnat's own .env, which holds the credentials `gnat up` gives agents.
-func envPath() string {
+func configDirectory() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "gnat", ".env")
+	return filepath.Join(base, "gnat")
 }
+
+// envPath is gnat's own .env, which holds the credentials `gnat up` gives agents.
+func envPath() string { return filepath.Join(configDirectory(), ".env") }
 
 // setting is a variable from the environment or gnat's .env.
 func setting(name string) (string, error) {
