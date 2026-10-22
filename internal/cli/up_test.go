@@ -42,7 +42,7 @@ func useUp(t *testing.T, respond func(c command) (result, error)) *fakeExec {
 }
 
 func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
-	useSwarm(t, agent("alpha", "claude"), state.Agent{Name: "beta", Instructions: "x", Harness: "ox", Model: "m", Effort: "high", Merge: true})
+	useSwarm(t, agent("alpha", "claude"), state.Agent{Name: "beta", ID: "b1", Instructions: "x", Harness: "ox", Model: "m", Effort: "high", Merge: true})
 	host := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(host, []byte("K=1"), 0o600); err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"create --name gnat-demo-control --label gnat.name=demo --user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) +
 			" -v " + logs + ":/var/log/gnat --network gnat-demo --network-alias control -p 127.0.0.1::8080 -e GH_TOKEN -e GNAT_SECRETS gnat-control:latest" +
 			` /opt/gnat/gnat-container control serve alpha beta --setups {"alpha":{"harness":"claude","model":null,"effort":null,"merge":false},` +
-			`"beta":{"harness":"ox","model":"m","effort":"high","merge":true}} --swarm demo --repo o/r`,
+			`"beta":{"harness":"ox","model":"m","effort":"high","merge":true}} --ids {"beta":"b1"} --swarm demo --repo o/r`,
 		"cp -a - gnat-demo-control:/",
 		"start gnat-demo-control",
 		"exec gnat-demo-control /opt/gnat/gnat-container control status alpha",

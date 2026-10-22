@@ -46,7 +46,11 @@ func errorf(format string, args ...any) error { return &Error{fmt.Sprintf(format
 // An Agent is one member of a swarm. Empty Model and Effort mean the harness's default;
 // they are null on disk.
 type Agent struct {
-	Name         string
+	Name string
+	// ID tells the agent from an earlier one of the same name, so that one deleted and
+	// created again starts without its predecessor's history. It is given once, when the
+	// agent is created, and isn't a setting. Agents saved before IDs have none.
+	ID           string
 	Instructions string
 	Model        string
 	Effort       string
@@ -59,6 +63,7 @@ type Agent struct {
 
 type agentJSON struct {
 	Name         string  `json:"name"`
+	ID           string  `json:"id,omitempty"`
 	Instructions string  `json:"instructions"`
 	Model        *string `json:"model"`
 	Effort       *string `json:"effort"`
@@ -67,7 +72,7 @@ type agentJSON struct {
 }
 
 func (a Agent) MarshalJSON() ([]byte, error) {
-	return json.Marshal(agentJSON{a.Name, a.Instructions, optional(a.Model), optional(a.Effort), a.Harness, a.Merge})
+	return json.Marshal(agentJSON{a.Name, a.ID, a.Instructions, optional(a.Model), optional(a.Effort), a.Harness, a.Merge})
 }
 
 func (a *Agent) UnmarshalJSON(data []byte) error {
@@ -75,7 +80,7 @@ func (a *Agent) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
-	*a = Agent{Name: j.Name, Instructions: j.Instructions, Harness: j.Harness, Merge: j.Merge}
+	*a = Agent{Name: j.Name, ID: j.ID, Instructions: j.Instructions, Harness: j.Harness, Merge: j.Merge}
 	if j.Model != nil {
 		a.Model = *j.Model
 	}

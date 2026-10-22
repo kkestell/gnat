@@ -63,6 +63,22 @@ func agent(name, harness string) state.Agent {
 	return state.Agent{Name: name, Instructions: "x", Harness: harness}
 }
 
+// withoutIDs are the agents with their IDs cleared, after checking each has one of its own.
+func withoutIDs(t *testing.T, agents []state.Agent) []state.Agent {
+	t.Helper()
+	seen := map[string]bool{}
+	out := make([]state.Agent, len(agents))
+	for i, a := range agents {
+		if a.ID == "" || seen[a.ID] {
+			t.Errorf("agent %s has ID %q", a.Name, a.ID)
+		}
+		seen[a.ID] = true
+		a.ID = ""
+		out[i] = a
+	}
+	return out
+}
+
 func writeFile(path, content string) error { return os.WriteFile(path, []byte(content), 0o644) }
 
 // useSecrets replaces the system keyring with a map, which it returns, starting with

@@ -45,6 +45,12 @@ type plane struct {
 // and database in dir.
 func startPlane(t *testing.T, dir string, agents ...string) *plane {
 	t.Helper()
+	return startPlaneWithIDs(t, dir, nil, agents...)
+}
+
+// startPlaneWithIDs is startPlane for agents with the IDs in ids.
+func startPlaneWithIDs(t *testing.T, dir string, ids map[string]string, agents ...string) *plane {
+	t.Helper()
 	if len(agents) == 0 {
 		agents = []string{"alpha"}
 	}
@@ -52,7 +58,7 @@ func startPlane(t *testing.T, dir string, agents ...string) *plane {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(agents, db, nil, dir)
+	c, err := New(agents, ids, db, nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +425,7 @@ func TestWatchReplaysOnlyCurrentAgentsEarlierEvents(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, EventsFile),
 		[]byte(`{"agent": "gone", "event": "old"}`+"\n"+`{"agent": "alpha", "event": "kept"}`+"\n"), 0o644)
 	db, _ := Connect(":memory:")
-	c, err := New([]string{"alpha"}, db, nil, dir)
+	c, err := New([]string{"alpha"}, nil, db, nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +729,7 @@ func TestRecordedWriteReadsTheStatusOfADownSwarm(t *testing.T) {
 	p.close()
 
 	var out strings.Builder
-	if err := recorded.Write(dir, []string{"alpha", "beta", "gamma"}, &out); err != nil {
+	if err := recorded.Write(dir, []string{"alpha", "beta", "gamma"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	var got []map[string]any
@@ -751,7 +757,7 @@ func TestRecordedWriteReadsTheStatusOfADownSwarm(t *testing.T) {
 func TestRecordedWriteWithoutADatabase(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "never-up")
 	var out strings.Builder
-	if err := recorded.Write(dir, []string{"alpha"}, &out); err != nil {
+	if err := recorded.Write(dir, []string{"alpha"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"turns":0`) {
@@ -759,6 +765,129 @@ func TestRecordedWriteWithoutADatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("created %s: %v", dir, err)
+	}
+}
+
+// recordsOf is how many records events.jsonl in dir has for the agent.
+func recordsOf(t *testing.T, dir, agent string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, EventsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var head struct{ Agent string }
+		if json.Unmarshal([]byte(line), &head) == nil && head.Agent == agent {
+			n++
+		}
+	}
+	return n
+}
+
+// recordedStatus is the agent's status as `gnat status` reads it while the swarm is down.
+func recordedStatus(t *testing.T, dir, agent string, ids map[string]string) map[string]any {
+	t.Helper()
+	var out strings.Builder
+	if err := recorded.Write(dir, []string{agent}, ids, &out); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestAnAgentCreatedAgainByTheSameNameStartsFresh(t *testing.T) {
+	dir := t.TempDir()
+	first := startPlaneWithIDs(t, dir, map[string]string{"alpha": "one", "beta": "b"}, "alpha", "beta")
+	alpha, beta := first.attach("alpha"), first.attach("beta")
+	for _, p := range []struct {
+		agent  string
+		daemon *fakeDaemon
+	}{{"alpha", alpha}, {"beta", beta}} {
+		first.send(p.agent, "work")
+		p.daemon.receive()
+		p.daemon.event(events.NewUsage(events.UsageTotals{InputTokens: i64(10), Cost: f64(0.25)}))
+		p.daemon.turnEnd("done", "")
+		p.daemon.done(0, false)
+		first.wait(p.agent)
+	}
+	first.send("alpha", "next")
+	first.send("alpha", "mid-turn")
+	alpha.receive()
+	first.close()
+
+	// alpha is deleted and created again while the swarm is down: the new one has another ID.
+	ids := map[string]string{"alpha": "two", "beta": "b"}
+	fresh := map[string]any{"ok": true, "agent": "alpha", "state": "down", "since_active": nil, "queued": 0.0, "turns": 0.0, "exit": nil,
+		"stopped": false, "reply": nil, "error": nil,
+		"usage": map[string]any{"input_tokens": nil, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": nil, "cost": nil}}
+	if got := recordedStatus(t, dir, "alpha", ids); !reflect.DeepEqual(got, fresh) {
+		t.Fatalf("got %v, want %v", got, fresh)
+	}
+	if got := recordedStatus(t, dir, "beta", ids); got["turns"] != 1.0 {
+		t.Fatalf("beta lost its history: %v", got)
+	}
+
+	second := startPlaneWithIDs(t, dir, ids, "alpha", "beta")
+	s := second.status("alpha")
+	if s.Queued != 0 || s.Turns != 0 || s.Exit != nil || s.Reply != nil || s.Usage.InputTokens != nil {
+		t.Fatalf("got %+v", s)
+	}
+	if log := second.log("alpha"); log != "" {
+		t.Fatalf("alpha's log has its predecessor's: %q", log)
+	}
+	if n := recordsOf(t, dir, "alpha"); n != 0 {
+		t.Fatalf("events.jsonl has %d of its predecessor's records", n)
+	}
+	if s := second.status("beta"); s.Turns != 1 || *s.Usage.InputTokens != 10 || recordsOf(t, dir, "beta") == 0 {
+		t.Fatalf("beta lost its history: %+v", s)
+	}
+	// The interrupted turn was the old alpha's, so it isn't reported to the new one.
+	alpha = second.attach("alpha")
+	second.send("alpha", "hello")
+	if got := alpha.receive(); got.Text != "hello" {
+		t.Fatalf("got %+v", got)
+	}
+	alpha.done(0, false)
+	second.wait("alpha")
+	second.close()
+
+	// Its own history it keeps.
+	if got := startPlaneWithIDs(t, dir, ids, "alpha", "beta").status("alpha"); got.Turns != 1 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAnAgentWithoutAnIDKeepsItsHistoryUntilReplacedByOneWithAnID(t *testing.T) {
+	dir := t.TempDir()
+	first := startPlane(t, dir)
+	daemon := first.attach("alpha")
+	first.send("alpha", "work")
+	daemon.receive()
+	daemon.done(0, false)
+	first.wait("alpha")
+	first.close()
+	// Saved before agents had IDs, it keeps its history every time it comes back up.
+	for range 2 {
+		p := startPlane(t, dir)
+		if got := p.status("alpha").Turns; got != 1 {
+			t.Fatalf("got %d turns", got)
+		}
+		p.close()
+	}
+	if got := recordedStatus(t, dir, "alpha", nil); got["turns"] != 1.0 {
+		t.Fatalf("got %v", got)
+	}
+	// Deleted and created again, it has an ID the database never recorded.
+	ids := map[string]string{"alpha": "new"}
+	if got := recordedStatus(t, dir, "alpha", ids); got["turns"] != 0.0 {
+		t.Fatalf("got %v", got)
+	}
+	if got := startPlaneWithIDs(t, dir, ids).status("alpha").Turns; got != 0 {
+		t.Fatalf("got %d turns", got)
 	}
 }
 

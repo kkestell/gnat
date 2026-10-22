@@ -109,8 +109,9 @@ type Control struct {
 }
 
 // New is the control plane for the agents, keeping its state in db and its logs in
-// logDir, which it must find in place (see Prepare).
-func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir string) (*Control, error) {
+// logDir, which it must find in place (see Prepare). ids are the agents' IDs, by name; an
+// agent without one has none.
+func New(agents []string, ids map[string]string, db *sql.DB, setups map[string]state.Agent, logDir string) (*Control, error) {
 	if setups == nil {
 		setups = map[string]state.Agent{}
 	}
@@ -126,10 +127,31 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 	for i, agent := range agents {
 		args[i], marks[i] = agent, "?"
 	}
-	for _, table := range []string{"messages", "statuses", "usage"} {
+	for _, table := range []string{"messages", "statuses", "usage", "agent_ids"} {
 		query := fmt.Sprintf("DELETE FROM %s WHERE agent NOT IN (%s)", table, strings.Join(marks, ", "))
 		if _, err := db.Exec(query, args...); err != nil {
 			return nil, err
+		}
+	}
+	// And forget everything about an agent that was deleted and created again while the
+	// swarm was down: the new one has another ID (see recorded.Current).
+	forgotten := map[string]bool{}
+	for _, agent := range agents {
+		current, err := recorded.Current(db, agent, ids[agent])
+		if err != nil {
+			return nil, err
+		}
+		forgotten[agent] = !current
+	}
+	// Records first: the ID, recorded last, marks the forgetting done.
+	if err := c.dropRecords(forgotten); err != nil {
+		return nil, err
+	}
+	for agent, forget := range forgotten {
+		if forget {
+			if err := c.forget(db, agent, ids[agent]); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, agent := range agents {
@@ -143,6 +165,63 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 		}
 	}
 	return c, nil
+}
+
+// forget clears the agent's log, queue, status, and usage, which were another agent's by
+// the same name, and records its ID as the one they now belong to.
+func (c *Control) forget(db *sql.DB, agent, id string) error {
+	if err := os.Truncate(c.logPath(agent), 0); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"messages", "statuses", "usage"} {
+		if _, err := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE agent = ?", table), agent); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec("INSERT OR REPLACE INTO agent_ids (agent, id) VALUES (?, ?)", agent, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// dropRecords rewrites events.jsonl without the records of the agents marked true, if it
+// has any.
+func (c *Control) dropRecords(agents map[string]bool) error {
+	if len(agents) == 0 {
+		return nil
+	}
+	path := filepath.Join(c.logDir, EventsFile)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	var kept bytes.Buffer
+	dropped := false
+	for _, line := range bytes.SplitAfter(data, []byte("\n")) {
+		var head struct {
+			Agent string `json:"agent"`
+		}
+		if json.Unmarshal(line, &head) == nil && agents[head.Agent] {
+			dropped = true
+			continue
+		}
+		kept.Write(line)
+	}
+	if !dropped {
+		return nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, kept.Bytes(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Prepare creates the log directory, each agent's log, and events.jsonl if they aren't

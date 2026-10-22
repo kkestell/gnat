@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -477,6 +479,68 @@ func TestStatusOfADownSwarmReadsWhatTheControlPlaneRecorded(t *testing.T) {
 		if strings.HasPrefix(line, "docker exec") {
 			t.Errorf("ran %s", line)
 		}
+	}
+}
+
+func TestAnAgentDeletedAndCreatedAgainWhileDownStartsFresh(t *testing.T) {
+	useSwarm(t, agent("beta", "claude"))
+	exec := useExec(t, nil) // down, with no volumes
+	out, _ := useOutput(t)
+	if err := createAgent("demo", "alpha", "x", "claude", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	swarm, _ := state.Load("demo")
+	old, _ := swarm.Agent("alpha")
+	// The swarm was up, and alpha worked and wrote to its log.
+	dir, _ := state.LogsDirectory("demo")
+	db, err := control.Prepare(dir, []string{"alpha", "beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.New([]string{"alpha", "beta"}, agentIDs(swarm.Agents), db, nil, dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		"UPDATE statuses SET turns = 3, exit = 1 WHERE agent = 'alpha'",
+		"UPDATE statuses SET turns = 2, exit = 0 WHERE agent = 'beta'",
+		"INSERT INTO messages (agent, urgent, text, new) VALUES ('alpha', 0, 'next', 0)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	log := filepath.Join(dir, "alpha.log")
+	if err := writeFile(log, "the old alpha's work\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deleteAgent("demo", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := createAgent("demo", "alpha", "x", "claude", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	swarm, _ = state.Load("demo")
+	if a, _ := swarm.Agent("alpha"); a.ID == "" || a.ID == old.ID {
+		t.Fatalf("the new alpha's ID is %q, the old one's %q", a.ID, old.ID)
+	}
+	out.Reset()
+	if err := status("demo", nil); err != nil {
+		t.Fatal(err)
+	}
+	if want := "beta\tdown\t0 queued\t2 turns\nalpha\tdown\t0 queued\t0 turns\n"; out.String() != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	exec.calls = nil
+	if err := logs("demo", []string{"alpha"}, "+1", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := exec.calls[0].args; got[len(got)-1] != log {
+		t.Fatalf("tailed %v", got)
+	}
+	if data, err := os.ReadFile(log); err != nil || len(data) != 0 {
+		t.Errorf("alpha's log is %q, %v", data, err)
 	}
 }
 

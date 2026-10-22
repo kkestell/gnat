@@ -339,6 +339,27 @@ var newSecret = func() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// newAgentID is an ID for a new agent (see state.Agent), random enough never to repeat.
+func newAgentID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// agentIDs are the IDs of the agents that have one, by name, for the control plane to
+// tell each from an earlier agent by its name.
+func agentIDs(agents []state.Agent) map[string]string {
+	ids := map[string]string{}
+	for _, a := range agents {
+		if a.ID != "" {
+			ids[a.Name] = a.ID
+		}
+	}
+	return ids
+}
+
 func optional(s string) *string {
 	if s == "" {
 		return nil
@@ -491,12 +512,16 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	if err != nil {
 		return err
 	}
+	idsJSON, err := json.Marshal(agentIDs(swarm.Agents))
+	if err != nil {
+		return err
+	}
 	secretsJSON, err := json.Marshal(secrets)
 	if err != nil {
 		return err
 	}
 	serve := controlCommand(append(append([]string{"serve"}, names...),
-		"--setups", string(setupsJSON), "--swarm", swarm.Name, "--repo", swarm.Repo)...)
+		"--setups", string(setupsJSON), "--ids", string(idsJSON), "--swarm", swarm.Name, "--repo", swarm.Repo)...)
 	// Publish the web UI on a free host port, reachable only from this machine. The
 	// control plane holds the GitHub token, and the agents' secrets, passed by name so
 	// their values stay out of the docker argv.

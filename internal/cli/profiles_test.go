@@ -87,7 +87,7 @@ func TestAgentProfileAndExplicitOverrides(t *testing.T) {
 				t.Fatal(err)
 			}
 			tc.want.Name = "alpha"
-			if len(swarm.Agents) != 1 || swarm.Agents[0] != tc.want {
+			if agents := withoutIDs(t, swarm.Agents); len(agents) != 1 || agents[0] != tc.want {
 				t.Errorf("agents = %+v, want %+v", swarm.Agents, tc.want)
 			}
 		})
@@ -153,7 +153,7 @@ func TestCreateAgentWithoutProfileKeepsDefaults(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := state.Agent{Name: "alpha", Instructions: tc.instructions, Harness: state.DefaultHarness}
-			if len(swarm.Agents) != 1 || swarm.Agents[0] != want {
+			if agents := withoutIDs(t, swarm.Agents); len(agents) != 1 || agents[0] != want {
 				t.Errorf("agents = %+v, want %+v", swarm.Agents, want)
 			}
 		})
@@ -291,7 +291,7 @@ func TestCreateSwarmFromProfile(t *testing.T) {
 		{Name: "flash-1", Instructions: "Write code.", Harness: "ox", Model: "openrouter:deepseek/deepseek-v4.1-flash", Effort: "high"},
 		{Name: "plain", Harness: state.DefaultHarness},
 	}
-	if swarm.Repo != "o/r" || !slices.Equal(swarm.Agents, want) {
+	if swarm.Repo != "o/r" || !slices.Equal(withoutIDs(t, swarm.Agents), want) {
 		t.Errorf("swarm = %+v, want agents %+v", swarm, want)
 	}
 }
