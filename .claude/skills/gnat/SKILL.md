@@ -28,9 +28,10 @@ gnat up NAME
 - `make install` provides four agent profiles: `coder` implements changes, `reviewer` reports code review findings, `researcher` investigates questions and compares options, and `orchestrator` hands out work to its teammates, has their pull requests reviewed, and merges them.
 - **You are the orchestrator.** When you drive gnat, you divide the work, send it, and decide what gets reviewed and merged, so don't create an `orchestrator` agent. Build the swarm from `coder`, `reviewer`, and `researcher` agents. Of the bundled swarm profiles, use `small` (two coders, two reviewers) or `large` (four of each), not `small-orchestrated` or `large-orchestrated`, which add an orchestrator.
 - `--harness` defaults to `claude` (Claude Code). `ox` runs Ox: `--model` takes a qualified ID such as `openrouter:deepseek/deepseek-v4.1-flash`. Efforts: for claude, `low`, `medium`, `high`, `xhigh`, `max`; for ox, `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (the model must support it). Both default to the harness's own.
+- A profile can set the harness, model, and effort too, and its settings win over these defaults: the bundled `reviewer` runs Ox on DeepSeek. If the user named a harness or model, pass it as a flag, and check `gnat agent list NAME` after creating agents.
 - `--dockerfile` is optional, and must start `FROM gnat-agent`. Use it only for packages the repo's build or tests need that the base image lacks. The base image has build-essential, python3, uv, git, and common CLI tools (`rg`, `fd`, `jq`, `sqlite3`, `ps`, `lsof`, ...). Once it exists (after any `gnat up`), check whether it already builds and tests the repo: `docker run --rm -e GH_TOKEN gnat-agent bash -c 'git clone -q https://x-access-token:$GH_TOKEN@github.com/OWNER/NAME r && cd r && TEST_COMMAND'` with `GH_TOKEN` exported. If that passes, leave `--dockerfile` out; if not, install only what failed. The build context is the Dockerfile's directory.
-- **Agents (and files) can only be added or removed while the swarm is down.** To change them: `gnat down NAME`, then `gnat agent create|delete`, then `gnat up NAME`. `gnat down` keeps agents' clones (including uncommitted work), sessions, queued messages, and logs, and `gnat up` carries on from them; a turn running at `down` is reported as interrupted, so send the agent a message to resume it. `gnat agent delete` deletes that agent's clone and sessions, so make sure its work is pushed first.
-- `gnat up` needs at least one agent, builds images, and returns once the control plane answers, so chaining `gnat up NAME && gnat send ...` is safe. It prints the web UI's URL when it finishes. Agents may still be cloning (`gnat status` shows `starting`); messages queue until they're ready.
+- **Agents (and files) can only be added, changed, or removed while the swarm is down.** To change them: `gnat down NAME`, then `gnat agent create|set|delete`, then `gnat up NAME`. `gnat agent set NAME AGENT [--profile] [--instructions] [--harness] [--model] [--effort] [--merge]` changes only the settings given and keeps the agent's clone, sessions, queue, and history; changing its harness starts it in a fresh session. `gnat down` keeps agents' clones (including uncommitted work), sessions, queued messages, and logs, and `gnat up` carries on from them; a turn running at `down` is reported as interrupted, so send the agent a message to resume it. `gnat agent delete` deletes that agent's clone, sessions, and history, so make sure its work is pushed first; an agent created again by the same name starts fresh.
+- `gnat up` needs at least one agent, builds images, and returns once the control plane answers, so chaining `gnat up NAME && gnat send ...` is safe. It prints the web UI's URL when it finishes; the user doesn't see your tool output, so give them the URL. Agents may still be cloning (`gnat status` shows `starting`); messages queue until they're ready.
 - Running containers keep the swarm's code from `gnat up`. After updating gnat (`make install`), `gnat down` and `gnat up` to use it.
 
 ### Agent instructions
@@ -51,6 +52,7 @@ Each agent has its own clone, so collisions show up as merge conflicts in PRs, n
 
 - Give each agent a distinct task, and distinct files or directories where possible. Name the files each owns in the message.
 - Don't give two agents work that touches the same files, a shared lockfile, or the same generated output without telling them to coordinate (they can message each other, but two agents can reply to each other forever).
+- Separate files don't prevent conflicts in files every change registers itself in (a module list, a registry, a spec's index). Before sending, list those insertion points, and either give each agent a distinct place in them or plan to resolve them yourself and test the combined result in a scratch clone, even when each PR passes on its own.
 - Sequence dependent work: wait for the first PR to merge, then tell the next agent to pull `main` and start.
 - Prefer one task per message with an explicit goal and a "done" condition. Agents can't see your conversation; include the issue text, file paths, and constraints.
 
@@ -63,7 +65,7 @@ echo "long task" | gnat send NAME AGENT    # message from stdin when -m is omitt
 
 - Messages queue per agent and run one at a time in the same session, so an agent remembers earlier messages.
 - `--new`: start in a fresh session (use between unrelated tasks so old context doesn't bleed in; later messages continue the new session). Can't be combined with `--now`.
-- `--now`: deliver into the agent's running turn at its next tool call, for either harness (to redirect or add a constraint). If the turn ends first, it starts the next turn ahead of the queue. Don't use it for ordinary tasks.
+- `--now`: deliver into the agent's running turn at its next tool call, for either harness (to redirect or add a constraint). If the turn ends first, it starts the next turn ahead of the queue. `gnat status` counts it as `(1 now)` until it's delivered. Don't use it for ordinary tasks.
 - `--wait [--timeout SECONDS]`: send, then block until the agents finish and print their final replies. Use it for short tasks; for long ones, send without it and poll.
 - Different tasks per agent need separate `send` commands, one per agent.
 
@@ -71,13 +73,15 @@ echo "long task" | gnat send NAME AGENT    # message from stdin when -m is omitt
 
 ```sh
 gnat status NAME [AGENT...]   # state, queued, turns, time since last event, usage, how the last turn ended
-gnat wait NAME [AGENT...] [--timeout SECONDS]   # block until idle, print final replies
+gnat wait NAME [AGENT...] [--any] [--timeout SECONDS]   # block until idle (--any: until one is), print final replies
 gnat logs NAME [AGENT...] [-n LINES] [-f]       # messages and agents' output; works while down
 gnat web NAME [--no-open]     # print the web UI URL (a card per agent: setup, cost, latest output; maximize for the full transcript)
 ```
 
+- `gnat status` breaks each agent's queue down by sender, such as `3 queued: 1 from you (1 now), 2 from coder2`: messages from teammates, and `--now` messages not yet delivered, are shown apart from yours.
 - `gnat status` shows, for a busy agent, how long since its last event (`last event 3m12s ago`). Agents think for minutes at high effort, but a long silence is worth a look with `gnat logs NAME AGENT -n 20`; `gnat stop` it if it's stuck.
 - `gnat status` and the web UI also show each agent's usage so far: tokens and cost in US dollars (Claude's at API list prices). Use them to answer questions about cost or to compare models. They're still there after `gnat down`.
+- `gnat wait --any` returns as soon as one of the agents is idle, printing the replies of those that are, each under its name, and on stderr `still waiting on: ...` for the rest. An agent already idle counts at once, so run it again naming only the agents still waiting. Use it to collect replies as agents finish at different times.
 - `gnat wait` exits 1 if an agent's last turn failed or was stopped, and 124 on timeout. A timeout isn't a failure: the agents keep working; check `gnat status` and wait again.
 - `gnat logs -f` never exits; don't run it in the foreground. Use `-n 50` for a snapshot, or run it in the background.
 - Foreground commands time out in your shell: for turns that take many minutes, run `gnat wait` with `--timeout` in a loop or in the background.
@@ -87,6 +91,7 @@ gnat web NAME [--no-open]     # print the web UI URL (a card per agent: setup, c
 
 - `gnat stop NAME [AGENT...]` ends an agent's running turn (for Claude, killing the processes its tools started; for Ox, cancelling the prompt). Its queue, clone, and session survive and it moves to its next message. Use it for runaway or wrong-direction work; then send a corrected message (add `--new` if the session is polluted).
 - If two agents are bouncing messages at each other, `gnat stop` both, then `gnat down` if needed.
+- When the user asks to stop and the agents' work so far is worth keeping, first `gnat send --now` them to stop, save what they have (commit it, or write the report or patch the task asked for), and reply with it, and wait for that reply. `gnat stop` and `gnat down` end the turn without a reply.
 
 ## Files outside source control
 
@@ -105,9 +110,11 @@ gnat file list NAME
 
 ## Reviewing the result
 
-Agents' work is in the pull requests they open, not on the host. Anything an agent didn't push stays in its clone, on a Docker volume that survives `gnat down`. `gnat cp NAME AGENT:PATH HOST_PATH` copies a file or directory out of it, up or down (a relative `PATH` is in the clone; while the swarm is down, only paths in the clone and sessions). Read each agent's reply (`gnat wait`), then review the PRs with `gh pr list` / `gh pr view` / `gh pr diff` in the repo, and have the user merge. If a PR needs changes, `gnat send` the agent what to fix (without `--new`, so it keeps its context).
+Agents' work is in the pull requests they open, not on the host. Anything an agent didn't push stays in its clone, on a Docker volume that survives `gnat down`. `gnat cp NAME AGENT:PATH HOST_PATH` copies a file or directory out of it, up or down (a relative `PATH` is in the clone; while the swarm is down, only paths in the clone and sessions). The destination works as in `docker cp`: a directory copied to an existing directory lands inside it, so `AGENT:.` or `AGENT:dir/.` copies the contents instead; to a path that doesn't exist, that path is created with the directory's contents. Read each agent's reply (`gnat wait`), then review the PRs with `gh pr list` / `gh pr view` / `gh pr diff` in the repo, and have the user merge. If a PR needs changes, `gnat send` the agent what to fix (without `--new`, so it keeps its context).
 
 A strong agent can review a cheaper agent's PR: send it the PR number and ask it to check out the branch, test what the PR claims, and post its findings as a review comment.
+
+Passing tests show a change does what its own tests check, not that it keeps the contracts the rest of the code relies on. Have reviewers exercise those too: for a new type, that existing type checks and dispatch accept it; for a new command, that it behaves like its siblings.
 
 ### When the user has you merge
 
@@ -122,8 +129,12 @@ If the user delegates merging, or the work is a chain of dependent PRs where mer
 When the agents' job is to review, investigate, or measure rather than change the repo, the deliverable is each agent's final reply, not a PR:
 
 - Tell agents not to commit, push, or open PRs, and to end with their report in the final reply (give a length limit).
+- Tell them to end with an explicit outcome: confirmed findings, nothing found, or blocked (and on what). A reply that only acknowledges a `--now` message isn't a result; tell agents to keep working after acknowledging one.
+- Tell them to build and test with the repo's documented commands, and if those fail, to report the exact failure rather than substitute their own setup.
 - Tell them to keep scratch files, prototypes, and measurement scripts in their clone (untracked), not `/tmp`, so they survive `gnat down` and you can copy them out with `gnat cp`.
-- Run `gnat wait NAME AGENT` once per agent, so one slow or stuck agent doesn't keep you from collecting the others, and save each reply to a file as it arrives.
+- When a deliverable is a patch or diff and an agent gets a second task, say what to base it on (`origin/main` or the previous task's branch) and what to diff against, or the second patch will contain the first.
+- For benchmarks, tell agents they share the machine with their teammates, so timings are noisy: interleave before and after runs and repeat them, and confirm small effects on the host.
+- Collect replies with `gnat wait NAME AGENT... --any`, so one slow or stuck agent doesn't keep you from the others, and save each reply to a file as it arrives.
 
 ## Tear down
 
