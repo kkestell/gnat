@@ -36,10 +36,11 @@ func configDirectory() string {
 
 func profilesDirectory() string { return filepath.Join(configDirectory(), "profiles", "agents") }
 
-// loadProfile loads the agent profile named, or at the path, profile; a relative path is
-// relative to base.
-func loadProfile(profile, base string) (agentOptions, error) {
-	options := agentOptions{Harness: state.DefaultHarness}
+// loadProfile loads the agent profile named, or at the path, profile, over defaults: the
+// settings it names replace theirs, and the rest keep them. A relative path is relative to
+// base.
+func loadProfile(profile, base string, defaults agentOptions) (agentOptions, error) {
+	options := defaults
 	path, err := profilePath(profile, base, profilesDirectory(), "profile name")
 	if err != nil {
 		return options, err
@@ -106,7 +107,7 @@ func loadSwarmProfile(name string) ([]state.Agent, error) {
 		options := agentOptions{Harness: state.DefaultHarness}
 		if entry.Profile != "" {
 			var err error
-			if options, err = loadProfile(entry.Profile, filepath.Dir(path)); err != nil {
+			if options, err = loadProfile(entry.Profile, filepath.Dir(path), options); err != nil {
 				return nil, err
 			}
 		}

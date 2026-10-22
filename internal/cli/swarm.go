@@ -123,7 +123,7 @@ func agentVolumes(swarm string, agent state.Agent) ([]mount, error) {
 		return nil, err
 	}
 	prefix := containerName(swarm, agent.Name)
-	mounts := []mount{{layout.ContainerWorkspace, prefix + "-workspace"}}
+	mounts := []mount{{layout.ContainerWorkspace, cloneVolume(swarm, agent.Name)}}
 	for _, dir := range h.StateDirs() {
 		relative := strings.TrimPrefix(dir, layout.AgentHome+"/")
 		name := strings.Trim(nonAlnum.ReplaceAllString(relative, "-"), "-")
@@ -131,6 +131,9 @@ func agentVolumes(swarm string, agent state.Agent) ([]mount, error) {
 	}
 	return mounts, nil
 }
+
+// cloneVolume is the name of the volume with the agent's clone, whatever its harness.
+func cloneVolume(swarm, agent string) string { return containerName(swarm, agent) + "-workspace" }
 
 // dockerList is the names docker lists for a filter, one per line.
 func dockerList(args ...string) ([]string, error) {

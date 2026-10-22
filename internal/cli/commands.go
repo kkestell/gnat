@@ -239,49 +239,48 @@ func agentCommands() *cobra.Command {
 	var options agentOptions
 	create := &cobra.Command{Use: "create SWARM AGENT", Short: "add an agent to a swarm", Args: cobra.ExactArgs(2)}
 	create.RunE = action(func(cmd *cobra.Command, args []string) error {
-		resolved := agentOptions{Harness: state.DefaultHarness}
-		if cmd.Flags().Changed("profile") {
-			var err error
-			resolved, err = loadProfile(profileName, "")
-			if err != nil {
-				return err
-			}
-		}
-		for _, setting := range []struct {
-			flag   string
-			value  string
-			target *string
-		}{
-			{"instructions", options.Instructions, &resolved.Instructions},
-			{"harness", options.Harness, &resolved.Harness},
-			{"model", options.Model, &resolved.Model},
-			{"effort", options.Effort, &resolved.Effort},
-		} {
-			if cmd.Flags().Changed(setting.flag) {
-				*setting.target = setting.value
-			}
-		}
-		if !slices.Contains(harness.Names(), resolved.Harness) {
-			return usagef("invalid --harness %q (choose from %s)", resolved.Harness, strings.Join(harness.Names(), ", "))
-		}
-		if cmd.Flags().Changed("merge") {
-			resolved.Merge = options.Merge
+		resolved, err := resolveAgentOptions(cmd, profileName, options, agentOptions{Harness: state.DefaultHarness})
+		if err != nil {
+			return err
 		}
 		return createAgent(args[0], args[1], resolved.Instructions, resolved.Harness, resolved.Model, resolved.Effort, resolved.Merge)
 	}).run
-	create.Flags().StringVar(&profileName, "profile", "", "load agent settings from `PROFILE`: a name in gnat's config profiles/agents directory, or a YAML file's path")
-	create.Flags().StringVar(&options.Instructions, "instructions", "", "additional instructions for the agent")
-	create.Flags().StringVar(&options.Harness, "harness", state.DefaultHarness,
-		"the program the agent runs its turns with ("+strings.Join(harness.Names(), ", ")+")")
-	create.Flags().StringVar(&options.Model, "model", "",
-		"model (default: the harness's default); for ox, a qualified ID such as openrouter:deepseek/deepseek-v4.1-flash")
-	create.Flags().BoolVar(&options.Merge, "merge", false, "let the agent merge pull requests")
-	var efforts []string
-	for _, h := range harness.All() {
-		efforts = append(efforts, fmt.Sprintf("for %s, %s", h.Name(), strings.Join(h.Efforts(), ", ")))
+	agentFlags(create, &profileName, &options, state.DefaultHarness)
+
+	var setProfileName string
+	var setOptions agentOptions
+	var noMerge bool
+	set := &cobra.Command{
+		Use: "set SWARM AGENT", Args: cobra.ExactArgs(2),
+		Short: "change an agent's settings, keeping its clone and sessions",
+		Long: "Change an agent's settings, keeping its clone, sessions, queue, and history.\n\n" +
+			"Settings no flag gives keep their current values, or with --profile, the profile's if it names them. " +
+			"Changing the harness deletes the agent's sessions, so its next turn starts a fresh one.",
 	}
-	create.Flags().StringVar(&options.Effort, "effort", "",
-		"effort level (default: the harness's default): "+strings.Join(efforts, "; "))
+	set.RunE = action(func(cmd *cobra.Command, args []string) error {
+		swarm, err := state.Load(args[0])
+		if err != nil {
+			return err
+		}
+		current, err := swarm.Agent(args[1])
+		if err != nil {
+			return err
+		}
+		resolved, err := resolveAgentOptions(cmd, setProfileName, setOptions, agentOptions{
+			Instructions: current.Instructions, Harness: current.Harness, Model: current.Model,
+			Effort: current.Effort, Merge: current.Merge,
+		})
+		if err != nil {
+			return err
+		}
+		if noMerge {
+			resolved.Merge = false
+		}
+		return setAgent(swarm, current, resolved)
+	}).run
+	agentFlags(set, &setProfileName, &setOptions, "")
+	set.Flags().BoolVar(&noMerge, "no-merge", false, "don't let the agent merge pull requests")
+	set.MarkFlagsMutuallyExclusive("merge", "no-merge")
 
 	del := &cobra.Command{
 		Use: "delete SWARM AGENT", Args: cobra.ExactArgs(2),
@@ -292,7 +291,59 @@ func agentCommands() *cobra.Command {
 		Use: "list SWARM", Short: "list a swarm's agents", Args: cobra.ExactArgs(1),
 		RunE: action(func(_ *cobra.Command, args []string) error { return listAgents(args[0]) }).run,
 	}
-	return group("agent", "manage a swarm's agents", create, del, list)
+	return group("agent", "manage a swarm's agents", create, set, del, list)
+}
+
+// agentFlags adds the flags that give an agent's settings, as `agent create` and `agent
+// set` take them, showing defaultHarness as --harness's default.
+func agentFlags(c *cobra.Command, profileName *string, options *agentOptions, defaultHarness string) {
+	c.Flags().StringVar(profileName, "profile", "", "load agent settings from `PROFILE`: a name in gnat's config profiles/agents directory, or a YAML file's path")
+	c.Flags().StringVar(&options.Instructions, "instructions", "", "additional instructions for the agent")
+	c.Flags().StringVar(&options.Harness, "harness", defaultHarness,
+		"the program the agent runs its turns with ("+strings.Join(harness.Names(), ", ")+")")
+	c.Flags().StringVar(&options.Model, "model", "",
+		"model (default: the harness's default); for ox, a qualified ID such as openrouter:deepseek/deepseek-v4.1-flash")
+	c.Flags().BoolVar(&options.Merge, "merge", false, "let the agent merge pull requests")
+	var efforts []string
+	for _, h := range harness.All() {
+		efforts = append(efforts, fmt.Sprintf("for %s, %s", h.Name(), strings.Join(h.Efforts(), ", ")))
+	}
+	c.Flags().StringVar(&options.Effort, "effort", "",
+		"effort level (default: the harness's default): "+strings.Join(efforts, "; "))
+}
+
+// resolveAgentOptions are an agent's settings: base, with those --profile's profile names
+// replacing base's, and then each flag given replacing its setting.
+func resolveAgentOptions(cmd *cobra.Command, profileName string, options, base agentOptions) (agentOptions, error) {
+	resolved := base
+	if cmd.Flags().Changed("profile") {
+		var err error
+		resolved, err = loadProfile(profileName, "", base)
+		if err != nil {
+			return resolved, err
+		}
+	}
+	for _, setting := range []struct {
+		flag   string
+		value  string
+		target *string
+	}{
+		{"instructions", options.Instructions, &resolved.Instructions},
+		{"harness", options.Harness, &resolved.Harness},
+		{"model", options.Model, &resolved.Model},
+		{"effort", options.Effort, &resolved.Effort},
+	} {
+		if cmd.Flags().Changed(setting.flag) {
+			*setting.target = setting.value
+		}
+	}
+	if !slices.Contains(harness.Names(), resolved.Harness) {
+		return resolved, usagef("invalid --harness %q (choose from %s)", resolved.Harness, strings.Join(harness.Names(), ", "))
+	}
+	if cmd.Flags().Changed("merge") {
+		resolved.Merge = options.Merge
+	}
+	return resolved, nil
 }
 
 func fileCommands() *cobra.Command {
@@ -517,6 +568,81 @@ func checkAgent(swarm *state.Swarm, a state.Agent) (state.Agent, error) {
 	}
 	a.Harness = h.Name()
 	return a, nil
+}
+
+// setAgent changes current's settings in swarm to options, keeping the rest of it (its
+// clone, queue, and history are under its name), and prints what changed. A new harness
+// can't continue the old one's sessions, so it deletes them.
+func setAgent(swarm *state.Swarm, current state.Agent, options agentOptions) error {
+	updated := current
+	updated.Instructions, updated.Harness, updated.Model = options.Instructions, options.Harness, options.Model
+	updated.Effort, updated.Merge = options.Effort, options.Merge
+	// Checked as if joining the swarm without its current self.
+	others := *swarm
+	others.Agents = slices.DeleteFunc(slices.Clone(swarm.Agents), func(a state.Agent) bool { return a.Name == current.Name })
+	updated, err := checkAgent(&others, updated)
+	if err != nil {
+		return err
+	}
+	if err := requireDown(swarm.Name); err != nil {
+		return err
+	}
+	var changes []string
+	if updated.Instructions != current.Instructions {
+		changes = append(changes, "instructions changed")
+	}
+	for _, setting := range []struct{ name, from, to string }{
+		{"harness", current.Harness, updated.Harness},
+		{"model", current.Model, updated.Model},
+		{"effort", current.Effort, updated.Effort},
+		{"merge", mergeWord(current.Merge), mergeWord(updated.Merge)},
+	} {
+		if setting.from != setting.to {
+			changes = append(changes, fmt.Sprintf("%s %s -> %s", setting.name, orDash(setting.from), orDash(setting.to)))
+		}
+	}
+	if len(changes) == 0 {
+		fmt.Fprintf(stdout, "agent %s in swarm %s is unchanged\n", current.Name, swarm.Name)
+		return nil
+	}
+	if updated.Harness != current.Harness {
+		// Delete the sessions first: if saving then fails, the agent keeps its harness
+		// and starts a fresh session, rather than a new harness finding stale ones.
+		if err := deleteSessions(swarm.Name, current); err != nil {
+			return err
+		}
+		changes = append(changes, "sessions deleted; its next turn starts a fresh one")
+	}
+	i := slices.IndexFunc(swarm.Agents, func(a state.Agent) bool { return a.Name == current.Name })
+	swarm.Agents[i] = updated
+	if err := state.Save(swarm); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "changed agent %s in swarm %s: %s\n", current.Name, swarm.Name, strings.Join(changes, ", "))
+	return nil
+}
+
+func mergeWord(merge bool) string {
+	if merge {
+		return "merge"
+	}
+	return ""
+}
+
+// deleteSessions removes every volume of the agent's but its clone: its harness's
+// sessions, and any a harness it had before left. It doesn't need the agent's harness,
+// which may be one gnat no longer has.
+func deleteSessions(swarmName string, agent state.Agent) error {
+	names, err := volumes(swarmName, agent.Name)
+	if err != nil {
+		return err
+	}
+	clone := cloneVolume(swarmName, agent.Name)
+	names = slices.DeleteFunc(names, func(name string) bool { return name == clone })
+	if len(names) == 0 {
+		return nil
+	}
+	return dockerQuiet(append([]string{"volume", "rm"}, names...)...)
 }
 
 func deleteAgent(swarmName, agentName string) error {
@@ -1001,7 +1127,12 @@ func copyOut(swarmName, source, destination string) error {
 	var options []string
 	for _, m := range mounts {
 		if !slices.Contains(existing, m.volume) {
-			return fmt.Errorf("agent '%s' has no clone yet; it gets one at `gnat up`", agent.Name)
+			if m.path == layout.ContainerWorkspace {
+				return fmt.Errorf("agent '%s' has no clone yet; it gets one at `gnat up`", agent.Name)
+			}
+			// Sessions a harness change deleted; `gnat up` makes new ones. Mounting a
+			// volume that isn't there would make one without the agent's labels.
+			continue
 		}
 		options = append(options, "-v", m.volume+":"+m.path)
 	}
