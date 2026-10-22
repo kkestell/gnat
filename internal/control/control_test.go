@@ -18,6 +18,7 @@ import (
 	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/recorded"
+	"github.com/kkestell/gnat/internal/state"
 	"github.com/kkestell/gnat/internal/web"
 )
 
@@ -58,7 +59,11 @@ func startPlaneWithIDs(t *testing.T, dir string, ids map[string]string, agents .
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(agents, ids, db, nil, dir)
+	setups := map[string]state.Agent{}
+	for agent, id := range ids {
+		setups[agent] = state.Agent{Name: agent, ID: id}
+	}
+	c, err := New(agents, db, setups, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +430,7 @@ func TestWatchReplaysOnlyCurrentAgentsEarlierEvents(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, EventsFile),
 		[]byte(`{"agent": "gone", "event": "old"}`+"\n"+`{"agent": "alpha", "event": "kept"}`+"\n"), 0o644)
 	db, _ := Connect(":memory:")
-	c, err := New([]string{"alpha"}, nil, db, nil, dir)
+	c, err := New([]string{"alpha"}, db, nil, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -855,9 +860,16 @@ func TestAnAgentCreatedAgainByTheSameNameStartsFresh(t *testing.T) {
 	second.wait("alpha")
 	second.close()
 
-	// Its own history it keeps.
+	// Its own history it keeps, and coming up again forgets no one, so leaves events.jsonl be.
+	before, err := os.Stat(filepath.Join(dir, EventsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got := startPlaneWithIDs(t, dir, ids, "alpha", "beta").status("alpha"); got.Turns != 1 {
 		t.Fatalf("got %+v", got)
+	}
+	if after, err := os.Stat(filepath.Join(dir, EventsFile)); err != nil || !os.SameFile(before, after) {
+		t.Fatalf("events.jsonl was rewritten: %v", err)
 	}
 }
 

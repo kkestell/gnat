@@ -81,7 +81,7 @@ func TestUpBuildsImagesAndStartsTheControlPlaneThenEachAgent(t *testing.T) {
 		"create --name gnat-demo-control --label gnat.name=demo --user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) +
 			" -v " + logs + ":/var/log/gnat --network gnat-demo --network-alias control -p 127.0.0.1::8080 -e GH_TOKEN -e GNAT_SECRETS gnat-control:latest" +
 			` /opt/gnat/gnat-container control serve alpha beta --setups {"alpha":{"harness":"claude","model":null,"effort":null,"merge":false},` +
-			`"beta":{"harness":"ox","model":"m","effort":"high","merge":true}} --ids {"beta":"b1"} --swarm demo --repo o/r`,
+			`"beta":{"id":"b1","harness":"ox","model":"m","effort":"high","merge":true}} --swarm demo --repo o/r`,
 		"cp -a - gnat-demo-control:/",
 		"start gnat-demo-control",
 		"exec gnat-demo-control /opt/gnat/gnat-container control status alpha",

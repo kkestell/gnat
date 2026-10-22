@@ -497,7 +497,7 @@ func TestAnAgentDeletedAndCreatedAgainWhileDownStartsFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := control.New([]string{"alpha", "beta"}, agentIDs(swarm.Agents), db, nil, dir); err != nil {
+	if _, err := control.New([]string{"alpha", "beta"}, db, map[string]state.Agent{"alpha": old}, dir); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{
@@ -541,6 +541,18 @@ func TestAnAgentDeletedAndCreatedAgainWhileDownStartsFresh(t *testing.T) {
 	}
 	if data, err := os.ReadFile(log); err != nil || len(data) != 0 {
 		t.Errorf("alpha's log is %q, %v", data, err)
+	}
+
+	// A gnat from before IDs left the log of an agent it deleted.
+	gamma := filepath.Join(dir, "gamma.log")
+	if err := writeFile(gamma, "the old gamma's work\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := createAgent("demo", "gamma", "x", "claude", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(gamma); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("gamma's old log is still there: %v", err)
 	}
 }
 

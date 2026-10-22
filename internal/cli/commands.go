@@ -470,6 +470,10 @@ func createAgent(swarmName, agentName, instructions, harnessName, model, effort 
 	if a.ID, err = newAgentID(); err != nil {
 		return err
 	}
+	// A log an earlier agent by its name left (deleted by a gnat before IDs) isn't its own.
+	if err := removeLog(swarm.Name, a.Name); err != nil {
+		return err
+	}
 	swarm.Agents = append(swarm.Agents, a)
 	if err := state.Save(swarm); err != nil {
 		return err
@@ -532,14 +536,22 @@ func deleteAgent(swarmName, agentName string) error {
 		}
 	}
 	// The control plane forgets the rest of its history at the next `up`, by its ID.
-	logs, err := state.LogsDirectory(swarm.Name)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(filepath.Join(logs, agent.Name+".log")); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeLog(swarm.Name, agent.Name); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "deleted agent %s in swarm %s\n", agent.Name, swarm.Name)
+	return nil
+}
+
+// removeLog removes the agent's log from the swarm's logs on the host, if it's there.
+func removeLog(swarm, agent string) error {
+	logs, err := state.LogsDirectory(swarm)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(logs, agent+".log")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return nil
 }
 

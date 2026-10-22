@@ -109,9 +109,9 @@ type Control struct {
 }
 
 // New is the control plane for the agents, keeping its state in db and its logs in
-// logDir, which it must find in place (see Prepare). ids are the agents' IDs, by name; an
-// agent without one has none.
-func New(agents []string, ids map[string]string, db *sql.DB, setups map[string]state.Agent, logDir string) (*Control, error) {
+// logDir, which it must find in place (see Prepare). setups have the agents' IDs; an agent
+// without one has none.
+func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir string) (*Control, error) {
 	if setups == nil {
 		setups = map[string]state.Agent{}
 	}
@@ -137,21 +137,21 @@ func New(agents []string, ids map[string]string, db *sql.DB, setups map[string]s
 	// swarm was down: the new one has another ID (see recorded.Current).
 	forgotten := map[string]bool{}
 	for _, agent := range agents {
-		current, err := recorded.Current(db, agent, ids[agent])
+		current, err := recorded.Current(db, agent, setups[agent].ID)
 		if err != nil {
 			return nil, err
 		}
-		forgotten[agent] = !current
+		if !current {
+			forgotten[agent] = true
+		}
 	}
 	// Records first: the ID, recorded last, marks the forgetting done.
 	if err := c.dropRecords(forgotten); err != nil {
 		return nil, err
 	}
-	for agent, forget := range forgotten {
-		if forget {
-			if err := c.forget(db, agent, ids[agent]); err != nil {
-				return nil, err
-			}
+	for agent := range forgotten {
+		if err := c.forget(db, agent, setups[agent].ID); err != nil {
+			return nil, err
 		}
 	}
 	for _, agent := range agents {
@@ -189,8 +189,7 @@ func (c *Control) forget(db *sql.DB, agent, id string) error {
 	return tx.Commit()
 }
 
-// dropRecords rewrites events.jsonl without the records of the agents marked true, if it
-// has any.
+// dropRecords rewrites events.jsonl without the agents' records, if it has any.
 func (c *Control) dropRecords(agents map[string]bool) error {
 	if len(agents) == 0 {
 		return nil

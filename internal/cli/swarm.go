@@ -319,10 +319,11 @@ func teardown(swarm string) ([]string, error) {
 	return names, nil
 }
 
-// setup is what the control container is told about each agent: its harness, model, and
-// effort for its web UI, and whether it may merge pull requests, which the control plane
-// enforces.
+// setup is what the control container is told about each agent: its ID, which tells it
+// from an earlier agent by its name, its harness, model, and effort for its web UI, and
+// whether it may merge pull requests, which the control plane enforces.
 type setup struct {
+	ID      string  `json:"id,omitempty"`
 	Harness string  `json:"harness"`
 	Model   *string `json:"model"`
 	Effort  *string `json:"effort"`
@@ -348,8 +349,8 @@ func newAgentID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// agentIDs are the IDs of the agents that have one, by name, for the control plane to
-// tell each from an earlier agent by its name.
+// agentIDs are the IDs of the agents that have one, by name, to tell each from an earlier
+// agent by its name.
 func agentIDs(agents []state.Agent) map[string]string {
 	ids := map[string]string{}
 	for _, a := range agents {
@@ -505,14 +506,10 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 	setups := map[string]setup{}
 	var names []string
 	for _, a := range swarm.Agents {
-		setups[a.Name] = setup{a.Harness, optional(a.Model), optional(a.Effort), a.Merge}
+		setups[a.Name] = setup{a.ID, a.Harness, optional(a.Model), optional(a.Effort), a.Merge}
 		names = append(names, a.Name)
 	}
 	setupsJSON, err := json.Marshal(setups)
-	if err != nil {
-		return err
-	}
-	idsJSON, err := json.Marshal(agentIDs(swarm.Agents))
 	if err != nil {
 		return err
 	}
@@ -521,7 +518,7 @@ func start(swarm *state.Swarm, credentials map[string]string, githubToken string
 		return err
 	}
 	serve := controlCommand(append(append([]string{"serve"}, names...),
-		"--setups", string(setupsJSON), "--ids", string(idsJSON), "--swarm", swarm.Name, "--repo", swarm.Repo)...)
+		"--setups", string(setupsJSON), "--swarm", swarm.Name, "--repo", swarm.Repo)...)
 	// Publish the web UI on a free host port, reachable only from this machine. The
 	// control plane holds the GitHub token, and the agents' secrets, passed by name so
 	// their values stay out of the docker argv.

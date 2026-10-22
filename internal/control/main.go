@@ -215,7 +215,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 	command, args := args[0], args[1:]
 	switch command {
 	case "serve":
-		p, err := parseArgs(args, nil, []string{"setups", "ids", "repo", "swarm"})
+		p, err := parseArgs(args, nil, []string{"setups", "repo", "swarm"})
 		if err != nil {
 			return err
 		}
@@ -228,13 +228,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 				return usageError(fmt.Sprintf("argument --setups: invalid JSON value: %v", err))
 			}
 		}
-		ids := map[string]string{}
-		if v, ok := p.values["ids"]; ok {
-			if err := json.Unmarshal([]byte(v), &ids); err != nil {
-				return usageError(fmt.Sprintf("argument --ids: invalid JSON value: %v", err))
-			}
-		}
-		return serve(p.positional, ids, setups, p.values["swarm"], p.values["repo"])
+		return serve(p.positional, setups, p.values["swarm"], p.values["repo"])
 	case "send":
 		p, err := parseArgs(args, []string{"now", "new", "wait"}, []string{"timeout"})
 		if err != nil {
@@ -356,11 +350,11 @@ func listenOperator(path string) (net.Listener, error) {
 	return ln, nil
 }
 
-// serve runs the control plane, the web UI, and git for the agents, whose IDs are ids,
-// until the container is stopped. With GH_TOKEN, the UI shows the repository's pull requests, and the agents
+// serve runs the control plane, the web UI, and git for the agents until the container
+// is stopped. With GH_TOKEN, the UI shows the repository's pull requests, and the agents
 // whose secrets are in GNAT_SECRETS can act on GitHub, and clone, fetch, and push, through
 // the control plane.
-func serve(agents []string, ids map[string]string, setups map[string]state.Agent, swarmName, repo string) error {
+func serve(agents []string, setups map[string]state.Agent, swarmName, repo string) error {
 	token := os.Getenv("GH_TOKEN")
 	swarm := web.Swarm{Name: swarmName, Repo: repo, Started: time.Now(), Token: token}
 	secrets := map[string]string{}
@@ -373,7 +367,7 @@ func serve(agents []string, ids map[string]string, setups map[string]state.Agent
 	if err != nil {
 		return err
 	}
-	c, err := New(agents, ids, db, setups, layout.LogDir)
+	c, err := New(agents, db, setups, layout.LogDir)
 	if err != nil {
 		return err
 	}
