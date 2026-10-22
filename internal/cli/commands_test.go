@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -539,5 +542,157 @@ func TestCreateDefinesASwarm(t *testing.T) {
 	}
 	if err := create("other", dir+"/nope", "o/r", nil); err == nil || !strings.Contains(err.Error(), "dockerfile not found") {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestSetAgentChangesModelAndEffortKeepingItsCloneAndHistory(t *testing.T) {
+	alpha := state.Agent{Name: "alpha", Instructions: "x", Harness: "claude", Effort: "high", Merge: true}
+	useSwarm(t, alpha, agent("beta", "ox"))
+	logs, err := state.LogsDirectory("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(logs, "alpha.log"), "history\n"); err != nil {
+		t.Fatal(err)
+	}
+	f := useExec(t, listing(nil, []string{"gnat-demo-alpha-workspace", "gnat-demo-alpha-claude"}, nil))
+	status, out, errs := runGnat(t, "agent", "set", "demo", "alpha", "--model", "opus", "--effort", "max")
+	if status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	if want := "changed agent alpha in swarm demo: model - -> opus, effort high -> max\n"; out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	swarm, err := state.Load("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alpha.Model, alpha.Effort = "opus", "max"
+	if want := []state.Agent{alpha, agent("beta", "ox")}; !reflect.DeepEqual(swarm.Agents, want) {
+		t.Errorf("got %+v, want %+v", swarm.Agents, want)
+	}
+	for _, l := range f.lines() {
+		if strings.HasPrefix(l, "docker volume rm") {
+			t.Errorf("removed volumes: %s", l)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(logs, "alpha.log")); err != nil || string(b) != "history\n" {
+		t.Errorf("log: %q, %v", b, err)
+	}
+
+	// Settings no flag gives keep their values; flags given that change nothing say so.
+	if status, out, _ := runGnat(t, "agent", "set", "demo", "alpha", "--model", "opus"); status != 0 ||
+		out != "agent alpha in swarm demo is unchanged\n" {
+		t.Errorf("status %d: %q", status, out)
+	}
+	if status, out, _ := runGnat(t, "agent", "set", "demo", "alpha", "--no-merge", "--instructions", "y"); status != 0 ||
+		out != "changed agent alpha in swarm demo: instructions changed, merge merge -> -\n" {
+		t.Errorf("status %d: %q", status, out)
+	}
+}
+
+func TestSetAgentTakesSettingsFromAProfile(t *testing.T) {
+	useSwarm(t, state.Agent{Name: "alpha", Instructions: "x", Harness: "claude", Model: "sonnet", Effort: "high"})
+	useExec(t, nil)
+	useProfiles(t, map[string]string{"p.yaml": "instructions: from the profile\nmodel: opus\nmerge: true\n"})
+	if status, _, errs := runGnat(t, "agent", "set", "demo", "alpha", "--profile", "p", "--effort", "low"); status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	swarm, _ := state.Load("demo")
+	want := state.Agent{Name: "alpha", Instructions: "from the profile", Harness: "claude", Model: "opus", Effort: "low", Merge: true}
+	if swarm.Agents[0] != want {
+		t.Errorf("got %+v, want %+v", swarm.Agents[0], want)
+	}
+}
+
+func TestSetAgentIsRefusedWhileTheSwarmIsUp(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"))
+	useExec(t, listing([]string{"gnat-demo-control"}, nil, nil))
+	status, _, errs := runGnat(t, "agent", "set", "demo", "alpha", "--model", "opus")
+	if status != 1 || !strings.Contains(errs, "is up; run `gnat down demo`") {
+		t.Errorf("status %d: %q", status, errs)
+	}
+	if swarm, _ := state.Load("demo"); swarm.Agents[0] != agent("alpha", "claude") {
+		t.Errorf("changed to %+v", swarm.Agents[0])
+	}
+}
+
+func TestSetAgentsHarnessDeletesItsSessionsSoItStartsAFreshOne(t *testing.T) {
+	useSwarm(t, state.Agent{Name: "alpha", Instructions: "x", Harness: "claude", Effort: "high"})
+	// The ox sessions are left from when it was on ox before; they're as stale.
+	f := useExec(t, listing(nil, []string{"gnat-demo-alpha-workspace", "gnat-demo-alpha-claude",
+		"gnat-demo-alpha-local-share-ox"}, nil))
+	status, out, errs := runGnat(t, "agent", "set", "demo", "alpha", "--harness", "ox")
+	if status != 0 {
+		t.Fatalf("status %d: %s", status, errs)
+	}
+	if want := "changed agent alpha in swarm demo: harness claude -> ox, sessions deleted; its next turn starts a fresh one\n"; out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	var removed []string
+	for _, l := range f.lines() {
+		if strings.HasPrefix(l, "docker volume rm") {
+			removed = append(removed, l)
+		}
+	}
+	if want := []string{"docker volume rm gnat-demo-alpha-claude gnat-demo-alpha-local-share-ox"}; !reflect.DeepEqual(removed, want) {
+		t.Errorf("got %v, want %v", removed, want)
+	}
+	if swarm, _ := state.Load("demo"); swarm.Agents[0].Harness != "ox" || swarm.Agents[0].Effort != "high" {
+		t.Errorf("got %+v", swarm.Agents[0])
+	}
+
+	// Until `gnat up` makes the new harness's, cp mounts the clone alone.
+	f = useExec(t, listing(nil, []string{"gnat-demo-alpha-workspace"}, func(c command) (result, error) {
+		if c.args[0] == "create" {
+			return result{stdout: "tmp1\n"}, nil
+		}
+		return result{}, nil
+	}))
+	if err := copyOut("demo", "alpha:notes.txt", "here"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.lines(), "docker create -v gnat-demo-alpha-workspace:/workspace "+agentImage) {
+		t.Errorf("got %v", f.lines())
+	}
+}
+
+func TestSetAgentRefusesInvalidSettings(t *testing.T) {
+	ox := state.Agent{Name: "alpha", Instructions: "x", Harness: "ox", Effort: "minimal"}
+	for _, tc := range []struct {
+		args   []string
+		status int
+		want   string
+	}{
+		{[]string{"--merge", "--no-merge"}, 2, "none of the others can be"},
+		{[]string{"--harness", "nope"}, 2, `invalid --harness "nope"`},
+		{[]string{"--effort", "extreme"}, 1, "ox effort must be one of"},
+		// Its effort stays, and claude doesn't take it.
+		{[]string{"--harness", "claude"}, 1, "claude effort must be one of"},
+		{[]string{"--profile", "missing"}, 1, "missing"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			useSwarm(t, ox)
+			f := useExec(t, nil)
+			useProfiles(t, nil)
+			status, _, errs := runGnat(t, append([]string{"agent", "set", "demo", "alpha"}, tc.args...)...)
+			if status != tc.status || !strings.Contains(errs, tc.want) {
+				t.Errorf("status %d: %q, want %d and %q", status, errs, tc.status, tc.want)
+			}
+			if swarm, _ := state.Load("demo"); swarm.Agents[0] != ox {
+				t.Errorf("changed to %+v", swarm.Agents[0])
+			}
+			if len(f.calls) > 0 {
+				t.Errorf("ran %v", f.lines())
+			}
+		})
+	}
+	useSwarm(t, ox)
+	useExec(t, nil)
+	if status, _, errs := runGnat(t, "agent", "set", "demo", "beta", "--model", "m"); status != 1 || !strings.Contains(errs, "beta") {
+		t.Errorf("status %d: %q", status, errs)
 	}
 }
