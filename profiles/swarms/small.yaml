@@ -1,0 +1,13 @@
+agents:
+  - name: coder
+    count: 2
+    profile: coder
+    harness: claude
+    model: claude-opus-5-5
+    effort: high
+  - name: reviewer
+    count: 2
+    profile: reviewer
+    harness: claude
+    model: claude-opus-5-5
+    effort: high

@@ -2,6 +2,8 @@
 
 gnat is a Go port of `swarm` (Python): run a swarm of coding agents, each in its own Docker container, on separate clones of one GitHub repository. Behavior, commands, flags, wire formats, and on-disk formats match the Python version except that everything named `swarm` that identifies the tool is `gnat` (binary, images, labels, `$XDG_STATE_HOME/gnat`, `GNAT_AGENT`, `/opt/gnat`), and harness credentials live in the system keyring (`gnat auth login`), not the environment or a `.env`. "Swarm" stays as the noun for a set of agents.
 
+`agents/architecture.md` is the shape of the system, the lines drawn between its parts, and why: where state lives, how agents are identified, and how GitHub is reached. Read it before a change that moves one of those lines, and update it when you do.
+
 ## Commands
 
 ```sh

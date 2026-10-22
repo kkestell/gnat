@@ -88,7 +88,11 @@ or removing a profile later does not change existing agents.
 A swarm profile lists the agents to create with a swarm. Save it in
 `~/.config/gnat/profiles/swarms/NAME.yaml`
 (`$XDG_CONFIG_HOME/gnat/profiles/swarms/NAME.yaml` when set). `make install`
-includes `team`, from the repository's `profiles/swarms` directory:
+includes four from the repository's `profiles/swarms` directory: `small` (two
+coders and two reviewers), `large` (four of each), and `small-orchestrated` and
+`large-orchestrated`, which add an orchestrator. Use the ones without an
+orchestrator when you, or an agent you're working with, hand out the work. This
+is `small-orchestrated`:
 
 ```yaml
 agents:
@@ -113,7 +117,7 @@ agents:
 
 ```sh
 gnat profiles list --swarm
-gnat create demo --repo OWNER/NAME --profile team
+gnat create demo --repo OWNER/NAME --profile small-orchestrated
 ```
 
 That creates `orchestrator`, `coder-1`, `coder-2`, `reviewer-1`, and `reviewer-2`,
