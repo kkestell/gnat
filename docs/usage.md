@@ -13,7 +13,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat down SWARM` | Stop the containers. Clones, sessions, queued messages, and logs are kept. |
 | `gnat send SWARM [AGENT...] [-m TEXT] [--now \| --new] [--wait [--timeout SECONDS]]` | Queue a message. Reads stdin without `-m`. |
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
-| `gnat wait SWARM [AGENT...] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. |
+| `gnat wait SWARM [AGENT...] [--any] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. With `--any`, return as soon as at least one of them has (one already finished counts at once), printing the replies of those that have, each under its name; the exit status is for those. |
 | `gnat status SWARM [AGENT...]` | Show each agent's state, queue, time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
@@ -202,6 +202,14 @@ Every agent, waiting for replies:
 
 ```sh
 gnat send demo --wait -m "What files are in the repository root?"
+```
+
+Collecting replies as they come (run the last line again, without the agents it reported, until none are left):
+
+```sh
+gnat send demo alpha -m "Count to 3, then say ALPHA."
+gnat send demo beta -m "Use Bash to run: python3 -c 'import time; time.sleep(30)'. Then say BETA."
+gnat wait demo alpha beta --any
 ```
 
 Separate clones:

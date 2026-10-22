@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -351,15 +352,12 @@ func TestWaitForPassesAgainWhenAnAgentWasWokenAfterItWasChecked(t *testing.T) {
 		{Idle: &idle, Turns: 2}, {Idle: &idle, Turns: 1},
 	}
 	var requests []string
-	t.Cleanup(func(old func(protocol.Request) (*protocol.Response, error)) func() {
-		return func() { call = old }
-	}(call))
-	call = func(req protocol.Request) (*protocol.Response, error) {
+	useCall(t, func(_ context.Context, req protocol.Request) (*protocol.Response, error) {
 		requests = append(requests, req.Agent)
 		next := statuses[0]
 		statuses = statuses[1:]
 		return next, nil
-	}
+	})
 	results, err := WaitFor([]string{"alpha", "beta"}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -372,6 +370,20 @@ func TestWaitForPassesAgainWhenAnAgentWasWokenAfterItWasChecked(t *testing.T) {
 	}
 }
 
+// useCall has the commands' requests go to f for the rest of the test.
+func useCall(t *testing.T, f func(context.Context, protocol.Request) (*protocol.Response, error)) {
+	old := call
+	t.Cleanup(func() { call = old })
+	call = f
+}
+
+// useCall has the commands' requests go to the control plane p.
+func (p *plane) useCall() {
+	useCall(p.t, func(ctx context.Context, req protocol.Request) (*protocol.Response, error) {
+		return protocol.CallContext(ctx, p.addr, req, 5*time.Second)
+	})
+}
+
 func result(reply *string, exit *int, turns int) AgentResult {
 	return AgentResult{Response: &protocol.Response{Reply: reply, Exit: exit, Turns: turns}}
 }
@@ -381,7 +393,7 @@ func TestReportHeadsRepliesByAgentAndListsFailures(t *testing.T) {
 	_ = one
 	a := result(str("hi\n"), zero, 1)
 	a.Agent = "alpha"
-	out, failures := Report([]AgentResult{a})
+	out, failures := Report([]AgentResult{a}, false)
 	if out != "hi\n" || len(failures) != 0 {
 		t.Fatalf("got %q, %v", out, failures)
 	}
@@ -392,7 +404,7 @@ func TestReportHeadsRepliesByAgentAndListsFailures(t *testing.T) {
 	out, failures = Report([]AgentResult{
 		named("alpha", result(str("hi"), zero, 1)), named("beta", result(nil, &two, 1)),
 		named("gamma", result(nil, nil, 1)), named("delta", result(nil, nil, 0)), named("epsilon", epsilon),
-	})
+	}, true)
 	if want := "==> alpha <==\nhi\n==> beta <==\n==> gamma <==\n==> delta <==\n==> epsilon <==\n"; out != want {
 		t.Fatalf("got %q", out)
 	}
@@ -408,7 +420,7 @@ func TestReportGivesTheHarnessReasonForAFailure(t *testing.T) {
 	exit := 1
 	r := result(nil, &exit, 1)
 	r.Agent, r.Error = "alpha", str("rate limited")
-	_, failures := Report([]AgentResult{r})
+	_, failures := Report([]AgentResult{r}, false)
 	if want := []string{"alpha: its last turn failed with status 1: rate limited"}; !reflect.DeepEqual(failures, want) {
 		t.Fatalf("got %q", failures)
 	}
@@ -889,12 +901,7 @@ func TestALineOverTheLimitIsAnsweredWithAnError(t *testing.T) {
 
 func TestMainStatusAndStopPrintLikePythons(t *testing.T) {
 	p := startPlane(t, t.TempDir())
-	t.Cleanup(func(old func(protocol.Request) (*protocol.Response, error)) func() {
-		return func() { call = old }
-	}(call))
-	call = func(req protocol.Request) (*protocol.Response, error) {
-		return protocol.CallAddr(p.addr, req, 5*time.Second)
-	}
+	p.useCall()
 
 	var out, errOut strings.Builder
 	if code := run([]string{"status", "alpha"}, &out, &errOut); code != 0 {
@@ -929,6 +936,90 @@ func TestMainStatusAndStopPrintLikePythons(t *testing.T) {
 	}
 	if q := p.status("alpha").Queued; q != 1 {
 		t.Fatalf("queued %d", q)
+	}
+}
+
+func TestMainWaitAnyReturnsOnTheFirstAgentToFinish(t *testing.T) {
+	p := startPlane(t, t.TempDir(), "alpha", "beta", "gamma")
+	p.useCall()
+	daemons := map[string]*fakeDaemon{}
+	for _, agent := range []string{"alpha", "beta", "gamma"} {
+		daemons[agent] = p.attach(agent)
+		p.send(agent, "work")
+		daemons[agent].receive()
+	}
+
+	type ran struct {
+		code        int
+		out, errOut string
+	}
+	waitAny := func(args ...string) <-chan ran {
+		finished := make(chan ran, 1)
+		go func() {
+			var out, errOut strings.Builder
+			code := run(append([]string{"wait", "--any"}, args...), &out, &errOut)
+			finished <- ran{code, out.String(), errOut.String()}
+		}()
+		return finished
+	}
+	finished := waitAny("alpha", "beta", "gamma")
+	select {
+	case r := <-finished:
+		t.Fatalf("returned with every agent busy: %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+	daemons["beta"].turnEnd("from beta", "")
+	daemons["beta"].done(0, false)
+	r := <-finished
+	if r.code != 0 || r.out != "==> beta <==\nfrom beta\n" || r.errOut != "" {
+		t.Fatalf("got %+v", r)
+	}
+	for _, agent := range []string{"alpha", "gamma"} {
+		if s := p.status(agent).State; s != "busy" {
+			t.Fatalf("%s: %s", agent, s)
+		}
+	}
+
+	// Agents already finished count at once, and a failed last turn exits 1.
+	daemons["alpha"].turnEnd("", "rate limited")
+	daemons["alpha"].done(1, false)
+	r = <-waitAny("alpha", "beta", "gamma")
+	if r.code != 1 || r.out != "==> alpha <==\n==> beta <==\nfrom beta\n" ||
+		r.errOut != "alpha: its last turn failed with status 1: rate limited\n" {
+		t.Fatalf("got %+v", r)
+	}
+
+	r = <-waitAny("gamma", "--timeout", "0.1")
+	if r.code != layout.TimeoutStatus || r.out != "" || r.errOut != "error: timed out waiting for any of gamma\n" {
+		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestWaitForAnyHangsUpOnTheOthersWhenOneFinishes(t *testing.T) {
+	idle, busy := true, false
+	hungUp := make(chan string, 2)
+	useCall(t, func(ctx context.Context, req protocol.Request) (*protocol.Response, error) {
+		if *req.Timeout == 0 {
+			return &protocol.Response{Idle: &busy}, nil
+		}
+		if req.Agent == "beta" {
+			return &protocol.Response{Idle: &idle, Turns: 1}, nil
+		}
+		<-ctx.Done()
+		hungUp <- req.Agent
+		return nil, ctx.Err()
+	})
+	results, err := WaitForAny([]string{"alpha", "beta", "gamma"}, f64(60))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Agent != "beta" || results[0].Turns != 1 {
+		t.Fatalf("got %+v", results)
+	}
+	got := []string{<-hungUp, <-hungUp}
+	slices.Sort(got)
+	if !reflect.DeepEqual(got, []string{"alpha", "gamma"}) {
+		t.Fatalf("got %v", got)
 	}
 }
 
