@@ -1,0 +1,9 @@
+{
+  "name": "gnat",
+  "description": "Install gnat, and operate swarms of Claude Code and Ox agents with it",
+  "author": {
+    "name": "Kyle Kestell"
+  },
+  "homepage": "https://github.com/kkestell/gnat",
+  "repository": "https://github.com/kkestell/gnat"
+}

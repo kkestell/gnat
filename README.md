@@ -4,7 +4,18 @@ Run a swarm of coding agents, each in its own Docker container on its own clone 
 
 ## Install
 
-Requires Go 1.26, Docker, and the [GitHub CLI](https://cli.github.com/).
+Requires Docker and the [GitHub CLI](https://cli.github.com/), logged in.
+
+On a Mac with Apple silicon, install the Claude Code plugin and let Claude install gnat and save your credentials:
+
+```
+/plugin install gnat --marketplace kkestell/gnat
+/gnat:install
+```
+
+The plugin also teaches Claude to operate gnat (`/gnat:gnat`). `/gnat:install` downloads the latest [release](https://github.com/kkestell/gnat/releases) into `~/.local/bin` and installs the bundled profiles; rerun it to update.
+
+To build from source instead, with Go 1.26:
 
 ```sh
 make install
@@ -37,9 +48,9 @@ agent profile with its own settings, so
 
 ## Docs
 
-- [docs/setup.md](docs/setup.md): credentials, images and Dockerfiles, files outside source control, Ox agents, and the Claude Code skill.
+- [docs/setup.md](docs/setup.md): installing, credentials, images and Dockerfiles, files outside source control, Ox agents, and the Claude Code plugin.
 - [docs/usage.md](docs/usage.md): commands, how messages are delivered, state and logs, and worked examples.
 
 ## Development
 
-`make build` writes `./gnat`, `make test` runs the tests, and `make lint` runs `go vet`, `staticcheck`, and a `gofmt` check.
+`make build` writes `./gnat`, `make test` runs the tests, and `make lint` runs `go vet`, `staticcheck`, and a `gofmt` check. Pushing a `v*` tag builds the macOS arm64 release (`make release`) and publishes it.

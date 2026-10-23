@@ -11,6 +11,7 @@ make linux     # cross-build the static linux gnat-container binaries into inter
 make build     # make linux, then go build -o gnat ./cmd/gnat
 make install   # make linux, then go install ./cmd/gnat (embeds the gnat-container binaries)
 make ui        # build the web UI (ui/) into internal/web/dist; commit the result
+make release   # make linux, then the macOS arm64 release archive and checksum in dist/
 make test      # go test ./..., bun test
 make lint      # go vet, staticcheck, gofmt check, tsc
 ```
@@ -55,5 +56,7 @@ Two binaries, `cmd/gnat` (the host's commands) and `cmd/gnat-container` (what ru
 - `cli`: the host's command line (`cli.Run`).
 
 The web UI is `ui/`, a Bun + React + Tailwind app: `swarm.ts` turns events into each agent's transcript, usage, and latest entries; `markdown.js` is a hand-written, DOM-building Markdown renderer (no HTML parsing, http(s)/mailto links only). `bun dev` in `ui/` runs it with hot reloading on http://localhost:5180 against a pretend swarm (`ui/mock/swarm.ts`); with `GNAT_URL=$(gnat web SWARM --no-open)`, against a running one.
+
+The Claude Code plugin is `plugin/` (skills `install` and `gnat`), listed by the marketplace in `.claude-plugin/marketplace.json`; `.claude/skills/gnat` links to `plugin/skills/gnat`. Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes `make release`'s archive, the one `/gnat:install` downloads. Check the plugin with `claude plugin validate .`.
 
 Go that writes JSON Python wrote with `json.dumps` uses an `Encoder` with `SetEscapeHTML(false)` (`protocol.Encode`).

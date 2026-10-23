@@ -1,4 +1,4 @@
-.PHONY: build install install-profiles linux ui test lint clean
+.PHONY: build install install-profiles linux ui release test lint clean
 
 # The linux binaries containers run, embedded in the gnat binary and copied to
 # /opt/gnat/gnat-container by `gnat up`: static, for each architecture Docker may run on.
@@ -37,6 +37,18 @@ install-profiles:
 			done; \
 		done
 
+# Build the macOS arm64 release archive, the gnat binary and the bundled profiles, and its
+# checksum into dist/. The release workflow publishes them for each v* tag.
+RELEASE := gnat-darwin-arm64
+
+release: linux
+	rm -rf dist/$(RELEASE) dist/$(RELEASE).tar.gz dist/$(RELEASE).tar.gz.sha256
+	mkdir -p dist/$(RELEASE)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/$(RELEASE)/gnat ./cmd/gnat
+	cp -R profiles dist/$(RELEASE)/profiles
+	tar -C dist -czf dist/$(RELEASE).tar.gz $(RELEASE)
+	cd dist && shasum -a 256 $(RELEASE).tar.gz > $(RELEASE).tar.gz.sha256
+
 test:
 	go test ./...
 	cd ui && bun test
@@ -48,4 +60,4 @@ lint:
 	cd ui && bun run typecheck
 
 clean:
-	rm -f gnat $(BIN_DIR)/gnat-container-linux-*
+	rm -rf gnat dist $(BIN_DIR)/gnat-container-linux-*

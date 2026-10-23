@@ -1,0 +1,14 @@
+{
+  "name": "gnat",
+  "description": "Run a swarm of coding agents, each in its own Docker container on its own clone of a GitHub repository",
+  "owner": {
+    "name": "Kyle Kestell"
+  },
+  "plugins": [
+    {
+      "name": "gnat",
+      "source": "./plugin",
+      "description": "Install gnat, and operate swarms of Claude Code and Ox agents with it"
+    }
+  ]
+}

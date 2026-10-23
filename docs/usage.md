@@ -33,7 +33,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 
 ## Agent profiles
 
-`make install` includes six agent profiles from the repository's
+`/gnat:install` and `make install` include six agent profiles from the repository's
 `profiles/agents` directory: `coder` implements changes (`ox-deepseek-coder`
 too, more cheaply), `planner` plans them
 without making them, `reviewer` reports code review findings, `researcher`
@@ -95,8 +95,8 @@ SWARM AGENT --profile NAME` applies the settings it names again.
 
 A swarm profile lists the agents to create with a swarm. Save it in
 `~/.config/gnat/profiles/swarms/NAME.yaml`
-(`$XDG_CONFIG_HOME/gnat/profiles/swarms/NAME.yaml` when set). `make install`
-includes four from the repository's `profiles/swarms` directory: `small` (two
+(`$XDG_CONFIG_HOME/gnat/profiles/swarms/NAME.yaml` when set). `/gnat:install` and `make install`
+include four from the repository's `profiles/swarms` directory: `small` (two
 coders and two reviewers), `large` (four of each), and `small-orchestrated` and
 `large-orchestrated`, which add an orchestrator. Use the ones without an
 orchestrator when you, or an agent you're working with, hand out the work. This

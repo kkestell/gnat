@@ -1,8 +1,10 @@
 # Setup
 
-## Building
+## Installing
 
-`make install` cross-builds the static linux `gnat-container` binaries containers run (amd64 and arm64), embeds them in the `gnat` binary, and installs it with `go install`. Rerun it after pulling.
+On a Mac with Apple silicon, the Claude Code plugin installs gnat from the latest [release](https://github.com/kkestell/gnat/releases): `/plugin install gnat --marketplace kkestell/gnat`, then `/gnat:install`. It puts `gnat` in `~/.local/bin`, installs the bundled profiles (keeping any you have), checks Docker and `gh`, and saves the credentials below from your clipboard. Rerun it to update. The release archive, `gnat-darwin-arm64.tar.gz`, holds the `gnat` binary and the `profiles` directory, with a SHA-256 checksum beside it; pushing a `v*` tag builds it (`make release`) and publishes it.
+
+Elsewhere, or to build from source, `make install` cross-builds the static linux `gnat-container` binaries containers run (amd64 and arm64), embeds them in the `gnat` binary, and installs it with `go install`. Rerun it after pulling.
 
 It also installs the bundled profiles, from the repository's `profiles/agents`
 and `profiles/swarms`, into `~/.config/gnat/profiles/agents` and
@@ -55,6 +57,6 @@ gnat agent create demo gamma --instructions "Be brief." --harness ox --model ope
 
 `--model` takes an Ox qualified model ID. `--effort` takes `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`, if the model supports it. gnat drives `ox-server acp` over the Agent Client Protocol, and Ox agents show up in logs, the web UI, and `gnat wait` the same as Claude Code agents.
 
-## Claude Code skill
+## Claude Code plugin
 
-`.claude/skills/gnat` is a [Claude Code skill](https://code.claude.com/docs/en/skills) that teaches Claude to operate gnat. It loads as `/gnat` in this checkout; to use it elsewhere, copy or symlink it into another project's `.claude/skills/` or `~/.claude/skills/`. It assumes `gnat` is on PATH.
+This repository is a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) with one plugin, `gnat`, in `plugin/`. It has two skills: `/gnat:install`, which installs gnat and its credentials, and `/gnat:gnat`, which teaches Claude to operate gnat and assumes `gnat` is on PATH. `.claude/skills/gnat` links to the second, so it loads as `/gnat` in this checkout.
