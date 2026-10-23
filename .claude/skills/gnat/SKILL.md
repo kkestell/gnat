@@ -29,7 +29,7 @@ gnat up NAME
 - **You are the orchestrator.** When you drive gnat, you divide the work, send it, and decide what gets reviewed and merged, so don't create an `orchestrator` agent. Build the swarm from `coder`, `reviewer`, and `researcher` agents. Of the bundled swarm profiles, use `small` (two coders, two reviewers) or `large` (four of each), not `small-orchestrated` or `large-orchestrated`, which add an orchestrator.
 - `--harness` defaults to `claude` (Claude Code). `ox` runs Ox: `--model` takes a qualified ID such as `openrouter:deepseek/deepseek-v4.1-flash`. Efforts: for claude, `low`, `medium`, `high`, `xhigh`, `max`; for ox, `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (the model must support it). Both default to the harness's own.
 - A profile can set the harness, model, and effort too, and its settings win over these defaults: the bundled `reviewer` runs Ox on DeepSeek. If the user named a harness or model, pass it as a flag, and check `gnat agent list NAME` after creating agents.
-- `--dockerfile` is optional, and must start `FROM gnat-agent`. Use it only for packages the repo's build or tests need that the base image lacks. The base image has build-essential, python3, uv, git, and common CLI tools (`rg`, `fd`, `jq`, `sqlite3`, `ps`, `lsof`, ...). Once it exists (after any `gnat up`), check whether it already builds and tests the repo: `docker run --rm -e GH_TOKEN gnat-agent bash -c 'git clone -q https://x-access-token:$GH_TOKEN@github.com/OWNER/NAME r && cd r && TEST_COMMAND'` with `GH_TOKEN` exported. If that passes, leave `--dockerfile` out; if not, install only what failed. The build context is the Dockerfile's directory.
+- `--dockerfile` is optional, and must start `FROM gnat-agent`. Use it only for packages the repo's build or tests need that the base image lacks. The base image has build-essential, python3, uv, git, and common CLI tools (`rg`, `fd`, `jq`, `sqlite3`, `ps`, `lsof`, ...). Once it exists (after any `gnat up`), check whether it already builds and tests the repo: `docker run --rm -e GH_TOKEN gnat-agent bash -c 'git clone -q https://x-access-token:$GH_TOKEN@github.com/OWNER/NAME r && cd r && TEST_COMMAND'` with `GH_TOKEN` exported. If that passes, leave `--dockerfile` out; if not, install only what failed. The build context is the Dockerfile's directory. If a test fails or flakes on `main` in the container, tell agents which one and why when you send work; otherwise each agent diagnoses it separately.
 - **Agents (and files) can only be added, changed, or removed while the swarm is down.** To change them: `gnat down NAME`, then `gnat agent create|set|delete`, then `gnat up NAME`. `gnat agent set NAME AGENT [--profile] [--instructions] [--harness] [--model] [--effort] [--merge]` changes only the settings given and keeps the agent's clone, sessions, queue, and history; changing its harness starts it in a fresh session. `gnat down` keeps agents' clones (including uncommitted work), sessions, queued messages, and logs, and `gnat up` carries on from them; a turn running at `down` is reported as interrupted, so send the agent a message to resume it. `gnat agent delete` deletes that agent's clone, sessions, and history, so make sure its work is pushed first; an agent created again by the same name starts fresh.
 - `gnat up` needs at least one agent, builds images, and returns once the control plane answers, so chaining `gnat up NAME && gnat send ...` is safe. It prints the web UI's URL when it finishes; the user doesn't see your tool output, so give them the URL. Agents may still be cloning (`gnat status` shows `starting`); messages queue until they're ready.
 - Running containers keep the swarm's code from `gnat up`. After updating gnat (`make install`), `gnat down` and `gnat up` to use it.
@@ -40,7 +40,9 @@ gnat already tells each agent its teammates, how to message them, that messages 
 
 - For each task, create a new branch off the latest `origin/main` (gnat already tells them their branches must be named `SWARM/AGENT/NAME`).
 - Commit in the repo's style, push the branch, and open a pull request.
+- Force-pushing is refused, so to bring a branch up to date with `main`, merge `origin/main` into it; don't rebase.
 - Run the project's tests and linter before pushing (give the commands).
+- Work only on what they were given. Suggestions for a teammate's work go in their final reply, not to the teammate, so you decide who does them; otherwise teammates start the same follow-up at once and spend turns acknowledging each other.
 - End every turn with a short report: the PR URL, what changed, and anything blocked or needing a decision. If blocked on a decision, say so instead of guessing.
 - Their area, if split by role (e.g. "you own `src/api`; don't edit other directories").
 
@@ -112,7 +114,7 @@ gnat file list NAME
 
 Agents' work is in the pull requests they open, not on the host. Anything an agent didn't push stays in its clone, on a Docker volume that survives `gnat down`. `gnat cp NAME AGENT:PATH HOST_PATH` copies a file or directory out of it, up or down (a relative `PATH` is in the clone; while the swarm is down, only paths in the clone and sessions). The destination works as in `docker cp`: a directory copied to an existing directory lands inside it, so `AGENT:.` or `AGENT:dir/.` copies the contents instead; to a path that doesn't exist, that path is created with the directory's contents. Read each agent's reply (`gnat wait`), then review the PRs with `gh pr list` / `gh pr view` / `gh pr diff` in the repo, and have the user merge. If a PR needs changes, `gnat send` the agent what to fix (without `--new`, so it keeps its context).
 
-A strong agent can review a cheaper agent's PR: send it the PR number and ask it to check out the branch, test what the PR claims, and post its findings as a review comment.
+A strong agent can review a cheaper agent's PR: send it the PR number and ask it to check out the branch, test what the PR claims, and post its findings as a review comment. When several PRs arrive at once, don't queue them all on one reviewer: have idle coders review each other's PRs, telling them they're reviewing and not to change files.
 
 Passing tests show a change does what its own tests check, not that it keeps the contracts the rest of the code relies on. Have reviewers exercise those too: for a new type, that existing type checks and dispatch accept it; for a new command, that it behaves like its siblings.
 
@@ -120,16 +122,16 @@ Passing tests show a change does what its own tests check, not that it keeps the
 
 If the user delegates merging, or the work is a chain of dependent PRs where merging is part of the loop:
 
-- Before merging, test the combined result in a scratch clone on the host: fetch the PR branches, merge them locally in the order you'll merge them, and build and test from scratch on the host (anything built inside an agent's container is a Linux build).
+- Before merging, test the combined result in a scratch clone on the host: start from a freshly fetched `origin/main` (not the user's checkout, which may have diverged), fetch the PR branches, merge them locally in the order you'll merge them, and build and test from scratch on the host (anything built inside an agent's container is a Linux build).
 - Stacked PRs (B based on A's branch): retarget the top one at `main` (`gh pr edit B --base main`), merge it with `gh pr merge B --rebase`, which brings A's commits along, then close A (`gh pr close A`) with a comment naming B.
-- After each merge, tell agents whose work depends on it to pull `main` (or rebase) before continuing.
+- After each merge, tell agents whose work depends on it to merge `origin/main` into their branch before continuing.
 
 ## Review-only swarms
 
 When the agents' job is to review, investigate, or measure rather than change the repo, the deliverable is each agent's final reply, not a PR:
 
 - Tell agents not to commit, push, or open PRs, and to end with their report in the final reply (give a length limit).
-- Tell them to end with an explicit outcome: confirmed findings, nothing found, or blocked (and on what). A reply that only acknowledges a `--now` message isn't a result; tell agents to keep working after acknowledging one.
+- Tell them to end with an explicit outcome: confirmed findings, nothing found, or blocked (and on what). A reply that only acknowledges a `--now` message isn't a result; tell agents to keep working after acknowledging one. Have them cite file and line from the source as it is, not from memory.
 - Tell them to build and test with the repo's documented commands, and if those fail, to report the exact failure rather than substitute their own setup.
 - Tell them to keep scratch files, prototypes, and measurement scripts in their clone (untracked), not `/tmp`, so they survive `gnat down` and you can copy them out with `gnat cp`.
 - When a deliverable is a patch or diff and an agent gets a second task, say what to base it on (`origin/main` or the previous task's branch) and what to diff against, or the second patch will contain the first.
@@ -144,12 +146,17 @@ When the agents' job is to review, investigate, or measure rather than change th
 
 ## Feedback
 
-After the run, whether the task succeeded, failed, or was abandoned, evaluate how well the swarm solved the problem and file the report as a new issue on the gnat repository: `gh issue create --repo kkestell/gnat --title "Feedback: NAME, YYYY-MM-DD HH:MM" --body-file REPORT.md` (swarm name, local time). The issue is public: leave out secrets, tokens, and anything from the target repo that isn't already public. Write it before `gnat delete`, which removes the logs. Base it on evidence: the agents' final replies, `gnat logs`, `gnat status`, the PRs, and what you had to do as the operator. Cover:
+After the run, whether the task succeeded, failed, or was abandoned, evaluate how well the swarm solved the problem and file the report as a new issue on the gnat repository: `gh issue create --repo kkestell/gnat --title "Feedback: NAME, YYYY-MM-DD HH:MM" --body-file REPORT.md` (swarm name, local time). The issue is public: leave out secrets, tokens, and anything from the target repo that isn't already public. Write it before `gnat delete`, which removes the logs. Base it on evidence: the agents' final replies, `gnat logs`, `gnat status`, the PRs, and what you had to do as the operator.
 
-- The task, the swarm's setup (agents, harnesses, models, effort, Dockerfile, files), and the outcome: what was delivered, what wasn't, and whether the PRs were correct and mergeable.
-- How the work was divided and whether that worked: merge conflicts, duplicated or idle agents, dependency waits, agent-to-agent messaging.
-- Where time and turns went, and anything that stalled, failed, crashed, restarted, or needed `gnat stop`.
-- Every point where you had to intervene, guess, retry, or work around gnat, including confusing CLI output, missing commands or flags, and gaps or errors in this skill or the docs.
-- Whether a single agent, or no swarm at all, would have done the job as well.
+The report is only as useful as what's new in it. Before writing, read the open feedback issues (`gh issue list --repo kkestell/gnat --search "Feedback in:title"`). A problem already reported gets one line naming that issue, and only if this run adds evidence. Before recommending a change, check `gnat COMMAND -h` and this skill to see whether it already exists.
 
-End with concrete recommendations, each naming the change (a command, flag, control-plane or agent behavior, default instructions, or a section of this skill), the problem from this run it addresses, and the expected effect. Rank them by impact. Leave out generic advice that this run's evidence doesn't support.
+Use these headings:
+
+- **Task and setup**: the task, agents (harness, model, effort), Dockerfile, files.
+- **Outcome**: what was delivered and what wasn't, whether the PRs were correct and mergeable, and cost per `gnat status`.
+- **Division of work**: whether it worked: merge conflicts, duplicated or idle agents, dependency waits, agent-to-agent messaging.
+- **Interventions and friction**: every point where you had to intervene, guess, retry, or work around gnat, including confusing CLI output, missing commands or flags, and gaps or errors in this skill or the docs. Label each as gnat, this skill, agent behavior, or your own mistake; include the last two only if gnat or the skill could have prevented them.
+- **Would one agent have done as well?**: or no swarm at all.
+- **Recommendations**: ranked by impact, each naming the change (a command, flag, control-plane or agent behavior, default instructions, or a section of this skill), the problem from this run it addresses, and the expected effect.
+
+Leave out what worked without incident, and generic advice that this run's evidence doesn't support.
