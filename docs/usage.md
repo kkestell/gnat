@@ -31,8 +31,8 @@ Commands for a swarm take its name first. Commands that address agents take thei
 
 ## Agent profiles
 
-`make install` includes four agent profiles from the repository's
-`profiles/agents` directory: `coder` implements changes, `reviewer` reports
+`make install` includes seven agent profiles from the repository's
+`profiles/agents` directory. Four are general: `coder` implements changes, `reviewer` reports
 code review findings, `researcher` investigates questions and compares options,
 and `orchestrator` hands out work to its teammates, has their pull requests
 reviewed, and merges them. They provide role instructions. `orchestrator` runs
@@ -40,6 +40,17 @@ reviewed, and merges them. They provide role instructions. `orchestrator` runs
 `openrouter:deepseek/deepseek-v4.1-flash` on Ox, each at `high` effort;
 `researcher` uses the default harness, model, and effort. Existing profile files
 are preserved during installation, so you can customize them.
+
+Three more carry a plan, work, and review cycle that leaves its record in the
+repository's `agents/` directory, each on `claude-opus-5-5` at `high` effort.
+`kplanner` writes a plan in `agents/plans/` and pushes it on a branch.
+`kworker` implements a plan from its branch, writes a work log in
+`agents/work/`, and opens a pull request; given a review, it merges the
+review's branch and fixes its findings. `kreviewer` reviews a change, writes a
+review in `agents/reviews/` on a branch started from the change, and reports
+its findings without fixing them. Each asks whoever gave it the task when a
+decision is needed, and uses the repository's `_template.md` in each `agents/`
+directory if it has one.
 
 Save reusable agent settings in `~/.config/gnat/profiles/agents/NAME.yaml`
 (`$XDG_CONFIG_HOME/gnat/profiles/agents/NAME.yaml` when set). For example,
