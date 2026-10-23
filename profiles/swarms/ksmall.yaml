@@ -1,0 +1,18 @@
+agents:
+  - name: planner
+    profile: kplanner
+    harness: claude
+    model: claude-opus-5-5
+    effort: high
+  - name: worker
+    count: 2
+    profile: kworker
+    harness: claude
+    model: claude-opus-5-5
+    effort: high
+  - name: reviewer
+    count: 2
+    profile: kreviewer
+    harness: claude
+    model: claude-opus-5-5
+    effort: high

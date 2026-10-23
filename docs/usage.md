@@ -101,10 +101,13 @@ SWARM AGENT --profile NAME` applies the settings it names again.
 A swarm profile lists the agents to create with a swarm. Save it in
 `~/.config/gnat/profiles/swarms/NAME.yaml`
 (`$XDG_CONFIG_HOME/gnat/profiles/swarms/NAME.yaml` when set). `make install`
-includes four from the repository's `profiles/swarms` directory: `small` (two
+includes six from the repository's `profiles/swarms` directory: `small` (two
 coders and two reviewers), `large` (four of each), and `small-orchestrated` and
 `large-orchestrated`, which add an orchestrator. Use the ones without an
-orchestrator when you, or an agent you're working with, hand out the work. This
+orchestrator when you, or an agent you're working with, hand out the work.
+`ksmall` (a `kplanner`, two `kworker`s, and two `kreviewer`s) and `klarge` (two
+planners, four workers, and four reviewers) are for the plan, work, and review
+cycle, with no orchestrator. This
 is `small-orchestrated`:
 
 ```yaml
