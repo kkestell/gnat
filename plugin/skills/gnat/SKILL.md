@@ -143,8 +143,9 @@ Passing tests show a change does what its own tests check, not that it keeps the
 If the user delegates merging, or the work is a chain of dependent PRs where merging is part of the loop:
 
 - Merge each PR as soon as it's approved and passes on the host, before sending more work. Approved PRs left open grow stacks and merge conflicts.
+- Delete each PR's branch when you merge it: `gh pr merge N --merge --delete-branch` (or `--squash`/`--rebase`, as the repository allows). Agents can't delete branches, so nobody else will. If another open PR targets that branch, retarget it at `main` first. A PR you close instead of merging loses its branch too, unless its work is still wanted.
 - Before merging, test the combined result in a scratch clone on the host: start from a freshly fetched `origin/main` (not the user's checkout, which may have diverged), fetch the PR branches, merge them locally in the order you'll merge them, and build and test from scratch on the host (anything built inside an agent's container is a Linux build).
-- Stacked PRs (B contains A's commits): check which merge methods the repository allows (`gh repo view --json mergeCommitAllowed,rebaseMergeAllowed,squashMergeAllowed`). With merge commits, merge A, then B, each with `gh pr merge --merge`; if B targets A's branch rather than `main`, retarget it first (`gh pr edit B --base main`). With rebase merging only, retarget B at `main`, merge it with `gh pr merge B --rebase`, which brings A's commits along, then close A (`gh pr close A`) with a comment naming B.
+- Stacked PRs (B contains A's commits): check which merge methods the repository allows (`gh repo view --json mergeCommitAllowed,rebaseMergeAllowed,squashMergeAllowed`). With merge commits, merge A, then B, each with `gh pr merge --merge --delete-branch`; if B targets A's branch rather than `main`, retarget it first (`gh pr edit B --base main`). With rebase merging only, retarget B at `main`, merge it with `gh pr merge B --rebase --delete-branch`, which brings A's commits along, then close A (`gh pr close A --delete-branch`) with a comment naming B.
 - After a merge, tell agents whose work depends on it to merge `origin/main` into their branch, in their next task rather than in a message of its own.
 
 ## Review-only swarms
@@ -164,6 +165,7 @@ When the agents' job is to review, investigate, or measure rather than change th
 - `gnat down NAME` stops the containers and keeps everything else: clones, sessions, queued messages, logs, agents, and files.
 - `gnat delete NAME` also deletes the swarm's definition, image, logs, and agents' clones and sessions. Confirm with the user before deleting, and check first that nothing worth keeping is unpushed: logs are the only record of the run, and anything not pushed is gone.
 - Check `gnat list` afterwards for swarms left up.
+- Check for the swarm's branches left on GitHub (`git ls-remote --heads origin 'SWARM/*'`). Delete each one whose work is merged into `main` (`git merge-base --is-ancestor origin/BRANCH origin/main`), and ask the user about the rest.
 
 ## Feedback
 
