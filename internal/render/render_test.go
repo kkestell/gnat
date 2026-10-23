@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kkestell/gnat/internal/events"
@@ -92,6 +93,27 @@ func TestUsageSummaryShowsWhatTheHarnessReported(t *testing.T) {
 func TestUsageSummaryOfAnEvent(t *testing.T) {
 	e := events.Event{"type": "usage", "input_tokens": float64(5), "output_tokens": nil, "cost": 2.0}
 	eq(t, UsageSummary(events.ParseUsage(e)), "5 in, $2.00")
+}
+
+func TestContextSummary(t *testing.T) {
+	size := int64(1_000_000)
+	eq(t, ContextSummary(events.ContextWindow{Used: 230_000, Size: &size}), "context 23% of 1M")
+	eq(t, ContextSummary(events.ContextWindow{Used: 2_000, Size: &size}), "context <1% of 1M")
+	eq(t, ContextSummary(events.ContextWindow{Used: 230_000}), "context 230k")
+}
+
+func TestLimitsSummary(t *testing.T) {
+	zone := time.FixedZone("CDT", -5*3600)
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, zone)
+	at := func(day, hour, minute int) int64 { return time.Date(2026, 10, day, hour, minute, 0, 0, zone).Unix() }
+	windows := map[string]events.LimitWindow{
+		"seven_day":      {Used: 0.49, ResetsAt: at(25, 22, 0)},
+		"five_hour":      {Used: 0.07, ResetsAt: at(23, 13, 20)},
+		"seven_day_opus": {Used: 0.1, ResetsAt: at(31, 8, 0)},
+		"old":            {Used: 0.9, ResetsAt: at(23, 8, 0)},
+	}
+	eq(t, LimitsSummary(windows, now), "5h 7% (resets 13:20), 7d 49% (resets Sun 22:00), seven day opus 10% (resets Oct 31 08:00)")
+	eq(t, LimitsSummary(map[string]events.LimitWindow{"five_hour": {Used: 1, ResetsAt: at(23, 8, 0)}}, now), "")
 }
 
 func TestTokens(t *testing.T) {

@@ -14,7 +14,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat send SWARM [AGENT...] [-m TEXT] [--now \| --new] [--wait [--timeout SECONDS]]` | Queue a message. Reads stdin without `-m`. |
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
 | `gnat wait SWARM [AGENT...] [--any] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. With `--any`, return as soon as at least one of them has (one already finished counts at once), printing the replies of those that have, each under its name, and on stderr the ones still busy (`still waiting on: alpha, gamma`); the exit status is for those that have. |
-| `gnat status SWARM [AGENT...]` | Show each agent's state, queue (see [messages](#messages)), time since its last event, usage, and how its last turn ended. Works while the swarm is down. |
+| `gnat status SWARM [AGENT...]` | Show each agent's state, queue (see [messages](#messages)), time since its last event, usage, how full its context window is, and how its last turn ended, then the Claude account's usage limits. Works while the swarm is down. |
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. `HOST_PATH` is treated as `docker cp` treats it: a directory copied to an existing directory goes inside it, and to a path that doesn't exist creates that path with the directory's contents; a `PATH` ending in `/.` copies the directory's contents, so `AGENT:.` copies the clone's contents. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
@@ -185,6 +185,8 @@ saved without it gives no permission.
 Each agent gets an ID when it's created, saved in the definition, which tells it apart from an earlier agent with the same name. If you delete an agent and create another by that name, the new one starts fresh: `gnat status`, `gnat logs`, and the web UI show none of the old one's turns, usage, queued messages, or output. Agents created before gnat gave IDs keep their history.
 
 Usage totals in `gnat status` and the web UI come from what each harness reports. Claude Code's cost is at API list prices and isn't reported for stopped or crashed turns.
+
+Each agent's context shows how full its context window was at its latest model call, as a percentage of the window (`context 23% of 1M`), or in tokens until the harness has said how big the window is; Claude Code says so at the end of its first turn. Claude Code also reports the usage limits of the account its token belongs to, which every Claude agent shares: `gnat status` ends with the latest any agent reported (`usage limits: 5h 7% (resets 13:20), 7d 49% (resets Sun 22:00)`), leaving out windows that have reset since and saying how long ago they were reported if it's been more than ten minutes. The web UI shows them in its header when the swarm has Claude agents.
 
 The web UI lists the repository's pull requests, which the control plane fetches from GitHub with `GH_TOKEN`.
 

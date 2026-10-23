@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { renderMarkdown } from "./markdown.js";
 import { PullRequests } from "./PullRequests";
-import { AgentState, columns, dollars, setupLine, uptime, usageSummary, type Agent, type Item, type Recent, type Swarm, type Tool } from "./swarm";
+import { AgentState, columns, contextSummary, dollars, limitWindows, parseLimits, percent, resetTime, setupLine, uptime, usageSummary, type Agent, type ContextWindow, type Item, type Limits, type Recent, type Swarm, type Tool } from "./swarm";
 import "./index.css";
 
 // The swarm's agents, a card each, kept up to date from the control plane's event stream.
@@ -9,6 +9,8 @@ export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const states = useRef(new Map<string, AgentState>());
+  // The account's usage limits, as any agent last reported them.
+  const limits = useRef<Limits | null>(null);
   const [, redraw] = useReducer((n: number) => n + 1, 0);
   const [shown, setShown] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState(() => localStorage.getItem("sidebar") !== "hidden");
@@ -38,11 +40,13 @@ export function App() {
     // Each connection replays every event from the start, so drop what an earlier one showed.
     source.onopen = () => {
       states.current = new Map(agents.map(agent => [agent.name, new AgentState()]));
+      limits.current = null;
       schedule();
     };
     source.onmessage = message => {
       const { agent, event } = JSON.parse(message.data);
       states.current.get(agent)?.apply(event);
+      if (event?.type === "limits") limits.current = parseLimits(event) ?? limits.current;
       schedule();
     };
     return () => {
@@ -68,11 +72,13 @@ export function App() {
           <SidebarIcon />
         </button>
         <SwarmInfo />
-        {costs.length > 0 && (
-          <span className="ml-auto tabular-nums text-zinc-400">
-            {dollars(costs.reduce((sum, cost) => sum + cost, 0))} total
-          </span>
-        )}
+        <div className="ml-auto flex items-baseline gap-6">
+          {/* Only Claude reports the limits, so a swarm without Claude agents has none to show. */}
+          {limits.current && agents.some(agent => agent.harness === "claude") && <LimitsView limits={limits.current} />}
+          {costs.length > 0 && (
+            <span className="tabular-nums text-zinc-400">{dollars(costs.reduce((sum, cost) => sum + cost, 0))} total</span>
+          )}
+        </div>
       </header>
       <div className="flex min-h-0 flex-1 gap-4 p-4">
         {sidebar && <PullRequests />}
@@ -140,6 +146,60 @@ function SwarmInfo() {
   );
 }
 
+// The account's Claude usage limits: how much of each window is used, and when it resets.
+function LimitsView({ limits }: { limits: Limits }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  const windows = limitWindows(limits, now);
+  if (windows.length === 0) return null;
+  return (
+    <div className="flex items-baseline gap-4 text-zinc-400">
+      <span className="text-zinc-500">Claude usage</span>
+      {windows.map(window => (
+        <span key={window.name} className="flex items-baseline gap-1.5 tabular-nums" title={`${window.name} limit resets ${window.resets.toLocaleString()}`}>
+          <span className="text-zinc-300">{window.name}</span>
+          <Meter fraction={window.used} className="w-16" />
+          <span>{percent(window.used)}</span>
+          <span className="text-xs text-zinc-500">resets {resetTime(window.resets, new Date(now))}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// How full something is, as a bar that turns amber, then red, as it fills.
+function Meter({ fraction, className }: { fraction: number; className: string }) {
+  const color = fraction >= 0.9 ? "bg-red-400" : fraction >= 0.75 ? "bg-amber-400" : "bg-zinc-400";
+  return (
+    <span className={`inline-block h-1.5 self-center overflow-hidden rounded-full bg-white/10 ${className}`}>
+      <span className={`block h-full rounded-full ${color}`} style={{ width: `${Math.min(100, fraction * 100)}%` }} />
+    </span>
+  );
+}
+
+// How full an agent's context window is: a bar and a percentage, or the tokens in it if
+// its size isn't known.
+function ContextView({ context }: { context: ContextWindow }) {
+  const title = context.size
+    ? `context: ${contextSummary(context)} tokens`
+    : `context: ${contextSummary(context)} tokens (window size not reported yet)`;
+  return (
+    <span className="flex shrink-0 items-baseline gap-1.5 text-xs tabular-nums text-zinc-400" title={title}>
+      {context.size ? (
+        <>
+          <Meter fraction={context.used / context.size} className="w-10" />
+          {percent(context.used / context.size)}
+        </>
+      ) : (
+        contextSummary(context)
+      )}
+    </span>
+  );
+}
+
 const BUTTON = "rounded px-1.5 text-zinc-500 hover:bg-white/10 hover:text-zinc-100";
 
 function Card({ agent, state, onMaximize }: { agent: Agent; state: AgentState; onMaximize: () => void }) {
@@ -149,7 +209,9 @@ function Card({ agent, state, onMaximize }: { agent: Agent; state: AgentState; o
       <div className="flex items-baseline gap-3 bg-zinc-800/70 px-4 py-2">
         <h2 className="shrink-0 font-semibold text-zinc-100">{agent.name}</h2>
         <span className="min-w-0 truncate text-xs text-zinc-400">{setupLine(agent)}</span>
-        <span className="ml-auto shrink-0 text-xs tabular-nums text-zinc-400" title={usageSummary(state.usage)}>
+        <span className="ml-auto" />
+        {state.context && <ContextView context={state.context} />}
+        <span className="shrink-0 text-xs tabular-nums text-zinc-400" title={usageSummary(state.usage)}>
           {typeof cost === "number" ? dollars(cost) : ""}
         </span>
         <button className={`shrink-0 ${BUTTON}`} title="Maximize" onClick={onMaximize}>
@@ -228,7 +290,9 @@ function TranscriptDialog({ agent, state, onClose }: { agent: Agent; state: Agen
       <div className="flex items-center gap-3 bg-zinc-800/70 px-5 py-3">
         <h2 className="font-semibold text-zinc-100">{agent.name}</h2>
         <span className="truncate text-xs text-zinc-500">{setupLine(agent)}</span>
-        <span className="ml-auto whitespace-nowrap text-xs tabular-nums text-zinc-400">{usageSummary(state.usage)}</span>
+        <span className="ml-auto whitespace-nowrap text-xs tabular-nums text-zinc-400">
+          {[state.context && `context ${contextSummary(state.context)}`, usageSummary(state.usage)].filter(Boolean).join(", ")}
+        </span>
         <button className={BUTTON} title="Close" onClick={() => dialog.current?.close()}>
           ✕
         </button>

@@ -3,6 +3,7 @@ package control
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net"
@@ -759,6 +760,55 @@ func TestUsageIsTotalledPerAgent(t *testing.T) {
 	}
 }
 
+func TestStatusHasTheLatestContextAndLimits(t *testing.T) {
+	dir := t.TempDir()
+	first := startPlane(t, dir)
+	daemon := first.attach("alpha")
+	if s := first.status("alpha"); s.Context != nil || s.Limits != nil {
+		t.Fatalf("got %+v, %+v before any were reported", s.Context, s.Limits)
+	}
+	first.send("alpha", "one")
+	daemon.receive()
+	daemon.event(events.NewContext(10, nil))
+	daemon.event(events.NewContext(20, i64(1000)))
+	// A later report without the size keeps the one reported before.
+	daemon.event(events.NewContext(30, nil))
+	windows := map[string]events.LimitWindow{"five_hour": {Used: 0.07, ResetsAt: 1792779600}}
+	daemon.event(events.NewLimits(windows))
+	daemon.done(0, false)
+	first.wait("alpha")
+	want := events.ContextWindow{Used: 30, Size: i64(1000)}
+	s := first.status("alpha")
+	if !reflect.DeepEqual(*s.Context, want) || !reflect.DeepEqual(s.Limits.Windows, windows) || s.Limits.Reported == 0 {
+		t.Fatalf("got %+v, %+v", s.Context, s.Limits)
+	}
+	first.close()
+	// They outlive the control plane, and are there while the swarm is down.
+	if s := startPlane(t, dir).status("alpha"); !reflect.DeepEqual(*s.Context, want) || !reflect.DeepEqual(s.Limits.Windows, windows) {
+		t.Fatalf("got %+v, %+v", s.Context, s.Limits)
+	}
+	got := recordedStatus(t, dir, "alpha", nil)
+	if c, _ := got["context"].(map[string]any); c["used"] != 30.0 || c["size"] != 1000.0 || got["limits"] == nil {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestRecordedWriteReadsADatabaseWithoutTheAddedTables(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, recorded.DBFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The Python version's tables only.
+	if _, err := db.Exec(strings.Split(schema, "CREATE TABLE IF NOT EXISTS agent_ids")[0]); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if got := recordedStatus(t, dir, "alpha", nil); got["context"] != nil || got["limits"] != nil || got["turns"] != 0.0 {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestRecordedWriteReadsTheStatusOfADownSwarm(t *testing.T) {
 	dir := t.TempDir()
 	p := startPlane(t, dir, "alpha", "beta")
@@ -859,6 +909,8 @@ func TestAnAgentCreatedAgainByTheSameNameStartsFresh(t *testing.T) {
 		first.send(p.agent, "work")
 		p.daemon.receive()
 		p.daemon.event(events.NewUsage(events.UsageTotals{InputTokens: i64(10), Cost: f64(0.25)}))
+		p.daemon.event(events.NewContext(10, i64(100)))
+		p.daemon.event(events.NewLimits(map[string]events.LimitWindow{"five_hour": {Used: 0.5, ResetsAt: 1}}))
 		p.daemon.turnEnd("done", "")
 		p.daemon.done(0, false)
 		first.wait(p.agent)
@@ -871,18 +923,19 @@ func TestAnAgentCreatedAgainByTheSameNameStartsFresh(t *testing.T) {
 	// alpha is deleted and created again while the swarm is down: the new one has another ID.
 	ids := map[string]string{"alpha": "two", "beta": "b"}
 	fresh := map[string]any{"ok": true, "agent": "alpha", "state": "down", "since_active": nil, "queued": 0.0, "queued_by": []any{}, "turns": 0.0, "exit": nil,
-		"stopped": false, "reply": nil, "error": nil,
+		"stopped": false, "reply": nil, "error": nil, "context": nil, "limits": nil,
 		"usage": map[string]any{"input_tokens": nil, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": nil, "cost": nil}}
 	if got := recordedStatus(t, dir, "alpha", ids); !reflect.DeepEqual(got, fresh) {
 		t.Fatalf("got %v, want %v", got, fresh)
 	}
-	if got := recordedStatus(t, dir, "beta", ids); got["turns"] != 1.0 {
+	if got := recordedStatus(t, dir, "beta", ids); got["turns"] != 1.0 || got["context"] == nil || got["limits"] == nil {
 		t.Fatalf("beta lost its history: %v", got)
 	}
 
 	second := startPlaneWithIDs(t, dir, ids, "alpha", "beta")
 	s := second.status("alpha")
-	if s.Queued != 0 || s.QueuedBy != nil || s.Turns != 0 || s.Exit != nil || s.Reply != nil || s.Usage.InputTokens != nil {
+	if s.Queued != 0 || s.QueuedBy != nil || s.Turns != 0 || s.Exit != nil || s.Reply != nil || s.Usage.InputTokens != nil ||
+		s.Context != nil || s.Limits != nil {
 		t.Fatalf("got %+v", s)
 	}
 	if log := second.log("alpha"); log != "" {

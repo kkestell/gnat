@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kkestell/gnat/internal/events"
@@ -130,6 +131,72 @@ func UsageSummary(u events.UsageTotals) string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+// ContextSummary is how full a context window is, such as "context 23% of 1M", or
+// "context 230k" if its size isn't known.
+func ContextSummary(c events.ContextWindow) string {
+	if c.Size == nil || *c.Size <= 0 {
+		return "context " + Tokens(c.Used)
+	}
+	return fmt.Sprintf("context %s of %s", Percent(float64(c.Used)/float64(*c.Size)), Tokens(*c.Size))
+}
+
+// Percent is a fraction as a whole percentage, such as 23%, or <1% for a little.
+func Percent(fraction float64) string {
+	if fraction > 0 && fraction < 0.005 {
+		return "<1%"
+	}
+	return fmt.Sprintf("%.0f%%", fraction*100)
+}
+
+// limitNames are the short names of usage limit windows, in the order they're shown;
+// others follow by name.
+var limitNames = map[string]string{"five_hour": "5h", "seven_day": "7d"}
+
+// LimitsSummary is usage limits at now, in now's time zone, such as "5h 7% (resets
+// 13:20), 7d 49% (resets Sun 22:00)"; a window that has reset since is left out, and
+// with it, empty if every one has.
+func LimitsSummary(windows map[string]events.LimitWindow, now time.Time) string {
+	names := make([]string, 0, len(windows))
+	for name := range windows {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		a, b := limitNames[names[i]], limitNames[names[j]]
+		if (a == "") != (b == "") {
+			return a != ""
+		}
+		return names[i] < names[j]
+	})
+	var parts []string
+	for _, name := range names {
+		w := windows[name]
+		resets := time.Unix(w.ResetsAt, 0).In(now.Location())
+		if !resets.After(now) {
+			continue
+		}
+		label := limitNames[name]
+		if label == "" {
+			label = strings.ReplaceAll(name, "_", " ")
+		}
+		parts = append(parts, fmt.Sprintf("%s %s (resets %s)", label, Percent(w.Used), when(resets, now)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// when is a time to come, as briefly as now allows: 13:20 today, Sun 22:00 within the
+// week, and Nov 2 22:00 past that.
+func when(t, now time.Time) string {
+	y, m, d := now.Date()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	switch {
+	case t.Before(midnight.AddDate(0, 0, 1)):
+		return t.Format("15:04")
+	case t.Before(midnight.AddDate(0, 0, 7)):
+		return t.Format("Mon 15:04")
+	}
+	return t.Format("Jan 2 15:04")
 }
 
 // Tokens is a token count, such as 950, 12.3k, or 1.2M.

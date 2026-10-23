@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { AgentState, RECENT_ITEMS, columns, dollars, setupLine, uptime, usageSummary, type Tool } from "../src/swarm";
+import { AgentState, RECENT_ITEMS, columns, contextSummary, dollars, limitWindows, parseLimits, percent, resetTime, setupLine, uptime, usageSummary, type Tool } from "../src/swarm";
 
 function state(events: unknown[]): AgentState {
   const agent = new AgentState();
@@ -138,4 +138,41 @@ test("costs are to the cent", () => {
   expect(dollars(0.0022)).toBe("$0.00");
   expect(dollars(0.0421)).toBe("$0.04");
   expect(dollars(1.2345)).toBe("$1.23");
+});
+
+test("the context is the latest reported, keeping the size when a report has none", () => {
+  const agent = state([
+    { type: "context", used: 1000, size: null },
+    { type: "context", used: 230000, size: 1000000 },
+    { type: "context", used: 250000, size: null },
+  ]);
+  expect(agent.context).toEqual({ used: 250000, size: 1000000 });
+  expect(contextSummary(agent.context!)).toBe("25% of 1M");
+  expect(contextSummary({ used: 230000 })).toBe("230k");
+  expect(percent(0.001)).toBe("<1%");
+  expect(percent(0)).toBe("0%");
+});
+
+test("limits list the windows that haven't reset, the short-named first", () => {
+  const limits = parseLimits({
+    type: "limits",
+    windows: {
+      seven_day_opus: { used: 0.1, resets_at: 3000 },
+      seven_day: { used: 0.49, resets_at: 2000 },
+      five_hour: { used: 0.07, resets_at: 1000 },
+      old: { used: 0.9, resets_at: 10 },
+      bogus: { used: 0.5 },
+    },
+  })!;
+  expect(limitWindows(limits, 100_000).map(w => [w.name, w.used])).toEqual([["5h", 0.07], ["7d", 0.49], ["seven day opus", 0.1]]);
+  expect(parseLimits({ type: "limits", windows: {} })).toBeNull();
+  expect(parseLimits({ type: "limits" })).toBeNull();
+});
+
+test("reset times are as brief as now allows", () => {
+  const now = new Date(2026, 9, 23, 9, 0);
+  const today = new Date(2026, 9, 23, 13, 20);
+  expect(resetTime(today, now)).toBe(today.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+  expect(resetTime(new Date(2026, 9, 25, 22, 0), now).startsWith("Sun ")).toBe(true);
+  expect(resetTime(new Date(2026, 9, 31, 8, 0), now)).toBe("Oct 31");
 });

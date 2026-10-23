@@ -2,16 +2,20 @@ package control
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sync"
 
 	"github.com/kkestell/gnat/internal/events"
+	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/recorded"
 	_ "modernc.org/sqlite" // The database driver.
 )
 
 // schema is control.db's, the same as the Python version's so either can read the file,
-// with agent_ids added: the ID each agent's history belongs to (see recorded.Current).
+// with tables added: agent_ids, the ID each agent's history belongs to (see
+// recorded.Current), and each agent's context window and the usage limits its harness
+// last reported (windows as JSON, reported in Unix seconds).
 const schema = `
 CREATE TABLE IF NOT EXISTS messages (
     position INTEGER PRIMARY KEY, agent TEXT NOT NULL, urgent INTEGER NOT NULL,
@@ -23,6 +27,8 @@ CREATE TABLE IF NOT EXISTS usage (
     agent TEXT PRIMARY KEY, input_tokens INTEGER, cache_read_tokens INTEGER,
     cache_write_tokens INTEGER, output_tokens INTEGER, cost REAL);
 CREATE TABLE IF NOT EXISTS agent_ids (agent TEXT PRIMARY KEY, id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS context (agent TEXT PRIMARY KEY, used INTEGER NOT NULL, size INTEGER);
+CREATE TABLE IF NOT EXISTS limits (agent TEXT PRIMARY KEY, windows TEXT NOT NULL, reported REAL NOT NULL);
 `
 
 // Connect opens the database at path (":memory:" for a throwaway one) and creates its
@@ -358,4 +364,20 @@ func b2i(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// saveContext records how full the agent's context window is.
+func saveContext(db *sql.DB, agent string, c events.ContextWindow) error {
+	_, err := db.Exec("INSERT OR REPLACE INTO context (agent, used, size) VALUES (?, ?, ?)", agent, c.Used, c.Size)
+	return err
+}
+
+// saveLimits records the usage limits the agent's harness reported.
+func saveLimits(db *sql.DB, agent string, l protocol.Limits) error {
+	windows, err := json.Marshal(l.Windows)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("INSERT OR REPLACE INTO limits (agent, windows, reported) VALUES (?, ?, ?)", agent, string(windows), l.Reported)
+	return err
 }

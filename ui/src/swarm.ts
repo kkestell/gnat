@@ -38,6 +38,14 @@ export type Recent = { item: Item; nested: boolean } | { tools: Tool[] };
 export const USAGE_FIELDS = ["input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "cost"] as const;
 export type Usage = Partial<Record<(typeof USAGE_FIELDS)[number], number>>;
 
+// How full an agent's context window is: the tokens in it, and its size, if the harness
+// has said.
+export type ContextWindow = { used: number; size?: number };
+
+// The usage limits of the account a harness runs on, by window (such as five_hour and
+// seven_day): the fraction of each used, and when it resets, in Unix seconds.
+export type Limits = Record<string, { used: number; resets_at: number }>;
+
 // How many lines of the transcript's latest entries a card keeps, enough to fill the
 // tallest card; it shows as much of their end as fits.
 export const RECENT_ITEMS = 40;
@@ -49,6 +57,7 @@ const MAX_WIDTH = 200;
 export class AgentState {
   items: Item[] = [];
   usage: Usage = {};
+  context?: ContextWindow;
   recent: Recent[] = [];
   // Each tool call, by id, so its result and any subagent's events can go in it.
   private tools = new Map<string, Tool>();
@@ -64,6 +73,13 @@ export class AgentState {
       case "usage":
         for (const field of USAGE_FIELDS) {
           if (typeof e[field] === "number") this.usage[field] = (this.usage[field] ?? 0) + e[field];
+        }
+        break;
+      case "context":
+        // A report without the size, as from a harness that has restarted, keeps the last one.
+        if (typeof e.used === "number") {
+          const size = typeof e.size === "number" ? e.size : this.context?.size;
+          this.context = size === undefined ? { used: e.used } : { used: e.used, size };
         }
         break;
       case "swarm_message": {
@@ -160,6 +176,52 @@ export function usageSummary(usage: Usage): string {
   if (typeof usage.output_tokens === "number") parts.push(`${tokens(usage.output_tokens)} out`);
   if (typeof usage.cost === "number") parts.push(dollars(usage.cost));
   return parts.join(", ");
+}
+
+// The windows of a limits event, or null if it has none.
+export function parseLimits(event: unknown): Limits | null {
+  const windows = (event as Record<string, any> | null)?.windows;
+  if (typeof windows !== "object" || windows === null) return null;
+  const limits: Limits = {};
+  for (const [name, window] of Object.entries(windows as Record<string, any>)) {
+    if (typeof window?.used === "number" && typeof window?.resets_at === "number") {
+      limits[name] = { used: window.used, resets_at: window.resets_at };
+    }
+  }
+  return Object.keys(limits).length > 0 ? limits : null;
+}
+
+const LIMIT_NAMES: Record<string, string> = { five_hour: "5h", seven_day: "7d" };
+
+// The limits' windows that haven't reset by now (in milliseconds), the ones with short
+// names first: each with its short name, the fraction used, and when it resets.
+export function limitWindows(limits: Limits, now: number): { name: string; used: number; resets: Date }[] {
+  const order = (name: string) => (name in LIMIT_NAMES ? Object.keys(LIMIT_NAMES).indexOf(name) : Infinity);
+  return Object.entries(limits)
+    .filter(([, window]) => window.resets_at * 1000 > now)
+    .sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b))
+    .map(([name, window]) => ({ name: LIMIT_NAMES[name] ?? name.replaceAll("_", " "), used: window.used, resets: new Date(window.resets_at * 1000) }));
+}
+
+// A fraction as a whole percentage, such as 23%, or <1% for a little.
+export function percent(fraction: number): string {
+  return fraction > 0 && fraction < 0.005 ? "<1%" : `${Math.round(fraction * 100)}%`;
+}
+
+// How full a context window is, such as "23% of 1M", or "230k" if its size isn't known.
+export function contextSummary(context: ContextWindow): string {
+  return context.size ? `${percent(context.used / context.size)} of ${tokens(context.size)}` : tokens(context.used);
+}
+
+// When a limit resets, as briefly as now allows: 1:20 PM today, Sun 10:00 PM within the
+// week, and Oct 31 past that.
+export function resetTime(resets: Date, now: Date): string {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = (resets.getTime() - midnight.getTime()) / 86_400_000;
+  const time = resets.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (days < 1) return time;
+  if (days < 7) return `${resets.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  return resets.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 // The agent's setup in one line, such as "claude haiku (low)"; what's left out is the

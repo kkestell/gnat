@@ -320,6 +320,12 @@ func TestACPUsageIsWhatTheSessionsCostGrewBy(t *testing.T) {
 		usageEvent(nil, nil, nil, nil, ptr(0.25)), usageEvent(nil, nil, nil, nil, ptr(0.5))})
 }
 
+func TestACPReportsTheContextWindow(t *testing.T) {
+	f := newACPFixture(t, m{"session/prompt:updates": []any{text("Hi."), cost(0.25)}})
+	f.run("one", false)
+	assertEvents(t, f.events.ofType("context"), []events.Event{events.NewContext(1000, ptr(int64(200000)))})
+}
+
 func TestACPAPromptsResponseReportsItsTokens(t *testing.T) {
 	f := newACPFixture(t, m{"session/prompt": m{"stopReason": "end_turn", "usage": m{
 		"inputTokens": 40, "cachedReadTokens": 60, "outputTokens": 20, "thoughtTokens": 5,

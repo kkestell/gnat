@@ -53,6 +53,8 @@ type claudeRunner struct {
 	// command is claude and its options; the turn's message is its last argument.
 	command []string
 	emit    Emit
+	// translate reads Claude's output, and remembers its context window across turns.
+	translate translator
 	// mu guards proc, which Stop kills from another goroutine.
 	mu   sync.Mutex
 	proc *os.Process
@@ -117,7 +119,7 @@ func (r *claudeRunner) Run(text string, new bool, stop <-chan struct{}) (int, er
 	for {
 		line, readErr := reader.ReadString('\n')
 		if line != "" {
-			for _, event := range Translate(line) {
+			for _, event := range r.translate.line(line) {
 				r.emit(event)
 			}
 		}
@@ -163,9 +165,21 @@ func exitStatus(cmd *exec.Cmd, err error) int {
 	return 0
 }
 
-// Translate returns gnat's events for one line of `claude -p --output-format stream-json`
-// output.
-func Translate(line string) []events.Event {
+// A translator turns `claude -p --output-format stream-json` output into gnat's events.
+// It remembers what later lines need: the session's model, whose context window only the
+// result reports, and the context it last reported.
+type translator struct {
+	model string
+	// size is the model's context window, nil until a result has reported it.
+	size *int64
+	// used is the context the last model call had, and message that call's message,
+	// which Claude may report in more than one line.
+	used    *int64
+	message string
+}
+
+// line returns gnat's events for one line of output.
+func (t *translator) line(line string) []events.Event {
 	if strings.TrimSpace(line) == "" {
 		return nil
 	}
@@ -179,6 +193,10 @@ func Translate(line string) []events.Event {
 	message, _ := event["message"].(map[string]any)
 	content, isList := message["content"].([]any)
 	switch event["type"] {
+	case "system":
+		if model := str(event["model"]); event["subtype"] == "init" && model != "" {
+			t.model = model
+		}
 	case "assistant":
 		if !isList {
 			return nil
@@ -191,7 +209,14 @@ func Translate(line string) []events.Event {
 				}
 			}
 		}
+		if e := t.context(message, parent); e != nil {
+			out = append(out, e)
+		}
 		return out
+	case "rate_limit_event":
+		if e := limitsEvent(event); e != nil {
+			return []events.Event{e}
+		}
 	case "user":
 		if !isList {
 			return nil
@@ -213,11 +238,64 @@ func Translate(line string) []events.Event {
 			if reason == "" {
 				reason = "error"
 			}
-			return append(usageEvents(event), events.NewTurnEnd("", reason))
+			return append(t.result(event), events.NewTurnEnd("", reason))
 		}
-		return append(usageEvents(event), events.NewTurnEnd(str(event["result"]), ""))
+		return append(t.result(event), events.NewTurnEnd(str(event["result"]), ""))
 	}
 	return nil
+}
+
+// context is the context an assistant message's model call had, once per message, or
+// nil for a subagent's or one already reported.
+func (t *translator) context(message map[string]any, parent string) events.Event {
+	usage, ok := message["usage"].(map[string]any)
+	id := str(message["id"])
+	if !ok || parent != "" || (id != "" && id == t.message) {
+		return nil
+	}
+	t.message = id
+	used := int64(orZero(usage["input_tokens"]) + orZero(usage["cache_read_input_tokens"]) +
+		orZero(usage["cache_creation_input_tokens"]))
+	t.used = &used
+	return events.NewContext(used, t.size)
+}
+
+// result is the usage a result reports for its turn, and the context again with the
+// window's size, which only a result reports.
+func (t *translator) result(result map[string]any) []events.Event {
+	out := usageEvents(result)
+	models, _ := result["modelUsage"].(map[string]any)
+	m, ok := models[t.model].(map[string]any)
+	if !ok && len(models) == 1 {
+		for _, only := range models {
+			m, _ = only.(map[string]any)
+		}
+	}
+	if size := count(m["contextWindow"]); size != nil {
+		t.size = size
+	}
+	if t.used != nil && t.size != nil {
+		out = append(out, events.NewContext(*t.used, t.size))
+	}
+	return out
+}
+
+// limitsEvent is the account's usage limits from a rate_limit_event, or nil if it has none.
+func limitsEvent(event map[string]any) events.Event {
+	info, _ := event["rate_limit_info"].(map[string]any)
+	unified, _ := info["unifiedWindows"].(map[string]any)
+	windows := map[string]events.LimitWindow{}
+	for name, w := range unified {
+		w, _ := w.(map[string]any)
+		used, resets := number(w["utilization"]), count(w["resetsAt"])
+		if used != nil && resets != nil {
+			windows[name] = events.LimitWindow{Used: *used, ResetsAt: *resets}
+		}
+	}
+	if len(windows) == 0 {
+		return nil
+	}
+	return events.NewLimits(windows)
 }
 
 // usageEvents is the usage a result reports for its turn: every model's, subagents' included.

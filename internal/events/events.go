@@ -17,6 +17,12 @@
 //     what the harness used since its last usage event: input tokens neither read from
 //     nor written to the prompt cache, those that were, output tokens, and the cost in
 //     US dollars. A field the harness doesn't report is null.
+//   - context {used, size}: how many tokens the agent's context window held at its
+//     latest model call, and the window's size, null if the harness hasn't said yet.
+//     Not reported for subagents, which have their own.
+//   - limits {windows}: the usage limits of the account the harness runs on, by window
+//     (such as five_hour and seven_day), each {used, resets_at}: the fraction of it
+//     used, and when it resets, in Unix seconds.
 //   - error {text}: something the harness printed that isn't an event, such as its
 //     errors.
 //
@@ -37,6 +43,8 @@ const (
 	ToolResult = "tool_result"
 	TurnEnd    = "turn_end"
 	Usage      = "usage"
+	Context    = "context"
+	Limits     = "limits"
 	Error      = "error"
 )
 
@@ -88,6 +96,61 @@ func NewUsage(u UsageTotals) Event {
 		e["cost"] = *u.Cost
 	}
 	return e
+}
+
+// NewContext is how full the agent's context window is; size is nil if not known.
+func NewContext(used int64, size *int64) Event {
+	e := Event{"type": Context, "used": used, "size": nil}
+	if size != nil {
+		e["size"] = *size
+	}
+	return e
+}
+
+// A ContextWindow is how full an agent's context window is: the tokens in it, and its
+// size, nil if not known.
+type ContextWindow struct {
+	Used int64  `json:"used"`
+	Size *int64 `json:"size"`
+}
+
+// ParseContext reads a context event, returning false if it has no count of tokens used.
+func ParseContext(e Event) (ContextWindow, bool) {
+	used := count(e["used"])
+	if used == nil {
+		return ContextWindow{}, false
+	}
+	return ContextWindow{Used: *used, Size: count(e["size"])}, true
+}
+
+// A LimitWindow is one of an account's usage limits: the fraction of it used, and when
+// it resets, in Unix seconds.
+type LimitWindow struct {
+	Used     float64 `json:"used"`
+	ResetsAt int64   `json:"resets_at"`
+}
+
+// NewLimits is the account's usage limits, by window.
+func NewLimits(windows map[string]LimitWindow) Event {
+	m := map[string]any{}
+	for name, w := range windows {
+		m[name] = map[string]any{"used": w.Used, "resets_at": w.ResetsAt}
+	}
+	return Event{"type": Limits, "windows": m}
+}
+
+// ParseLimits reads a limits event's windows, skipping any without both fields.
+func ParseLimits(e Event) map[string]LimitWindow {
+	windows := map[string]LimitWindow{}
+	m, _ := e["windows"].(map[string]any)
+	for name, w := range m {
+		w, _ := w.(map[string]any)
+		used, resets := number(w["used"]), count(w["resets_at"])
+		if used != nil && resets != nil {
+			windows[name] = LimitWindow{Used: *used, ResetsAt: *resets}
+		}
+	}
+	return windows
 }
 
 // NewError is something the harness printed that isn't an event.

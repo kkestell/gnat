@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,8 +13,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kkestell/gnat/internal/control"
+	"github.com/kkestell/gnat/internal/events"
 	"github.com/kkestell/gnat/internal/layout"
 	"github.com/kkestell/gnat/internal/protocol"
 	"github.com/kkestell/gnat/internal/state"
@@ -493,6 +496,52 @@ func TestStatusMergesContainerStates(t *testing.T) {
 	want := "alpha\tidle\t3 queued: 1 from you (1 now), 2 from beta\t2 turns\nbeta\tmissing\t0 queued\t0 turns\n"
 	if out.String() != want {
 		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+func TestStatusShowsContextAndTheLatestLimits(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"), agent("beta", "claude"))
+	resets := time.Now().Add(3 * time.Hour).Unix()
+	reported := time.Now().Unix()
+	useExec(t, func(c command) (result, error) {
+		args := strings.Join(c.args, " ")
+		switch {
+		case strings.Contains(args, "--format {{.Names}}\t{{.State}}"):
+			return result{stdout: "gnat-demo-control\trunning\ngnat-demo-alpha\trunning\ngnat-demo-beta\trunning\n"}, nil
+		case strings.Contains(args, "gnat-container control status"):
+			return result{stdout: fmt.Sprintf(`{"agent": "alpha", "state": "idle", "turns": 1, "exit": 0, "context": {"used": 230000, "size": 1000000}, `+
+				`"limits": {"windows": {"five_hour": {"used": 0.5, "resets_at": %d}}, "reported": %d}}`+"\n"+
+				`{"agent": "beta", "state": "idle", "turns": 1, "exit": 0, "context": {"used": 5000, "size": null}, `+
+				`"limits": {"windows": {"five_hour": {"used": 0.07, "resets_at": %d}}, "reported": %d}}`+"\n",
+				resets, reported-60, resets, reported)}, nil
+		}
+		return result{}, nil
+	})
+	out, _ := useOutput(t)
+	if err := status("demo", nil); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 || !strings.HasSuffix(lines[0], "\tcontext 23% of 1M") || !strings.HasSuffix(lines[1], "\tcontext 5k") ||
+		!strings.HasPrefix(lines[2], "usage limits: 5h 7% (resets ") {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestLimitsLineSaysWhenStaleLimitsWereReported(t *testing.T) {
+	now := time.Now()
+	l := protocol.Limits{Windows: map[string]events.LimitWindow{"five_hour": {Used: 0.07, ResetsAt: now.Add(time.Hour).Unix()}},
+		Reported: float64(now.Add(-2 * time.Hour).Unix())}
+	if got := limitsLine(l, now); !strings.HasSuffix(got, ", reported 2h00m ago") {
+		t.Errorf("got %q", got)
+	}
+	l.Reported = float64(now.Unix())
+	if got := limitsLine(l, now); strings.Contains(got, "reported") {
+		t.Errorf("got %q", got)
+	}
+	l.Windows["five_hour"] = events.LimitWindow{Used: 1, ResetsAt: now.Add(-time.Minute).Unix()}
+	if got := limitsLine(l, now); got != "" {
+		t.Errorf("got %q for limits that have reset", got)
 	}
 }
 

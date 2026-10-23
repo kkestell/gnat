@@ -5,6 +5,7 @@ package recorded
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -31,12 +32,8 @@ func Current(db *sql.DB, agent, id string) (bool, error) {
 		return true, nil
 	}
 	// A database no control plane with IDs has opened has no table for them.
-	var tables int
-	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_ids'").Scan(&tables); err != nil {
+	if ok, err := hasTable(db, "agent_ids"); !ok || err != nil {
 		return false, err
-	}
-	if tables == 0 {
-		return false, nil
 	}
 	var recorded string
 	err := db.QueryRow("SELECT id FROM agent_ids WHERE agent = ?", agent).Scan(&recorded)
@@ -132,6 +129,50 @@ func LoadUsage(db *sql.DB, agent string, total *events.UsageTotals) error {
 	return err
 }
 
+// hasTable is whether the database has the table, which one written by an earlier
+// version of gnat, or by the Python swarm, may not.
+func hasTable(db *sql.DB, name string) (bool, error) {
+	var tables int
+	err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&tables)
+	return tables > 0, err
+}
+
+// LoadContext reads how full the agent's context window last was, nil if the database
+// has nothing on it.
+func LoadContext(db *sql.DB, agent string) (*events.ContextWindow, error) {
+	if ok, err := hasTable(db, "context"); !ok || err != nil {
+		return nil, err
+	}
+	var c events.ContextWindow
+	err := db.QueryRow("SELECT used, size FROM context WHERE agent = ?", agent).Scan(&c.Used, &c.Size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// LoadLimits reads the usage limits the agent's harness last reported, nil if the
+// database has none.
+func LoadLimits(db *sql.DB, agent string) (*protocol.Limits, error) {
+	if ok, err := hasTable(db, "limits"); !ok || err != nil {
+		return nil, err
+	}
+	var l protocol.Limits
+	var windows string
+	err := db.QueryRow("SELECT windows, reported FROM limits WHERE agent = ?", agent).Scan(&windows, &l.Reported)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(windows), &l.Windows); err != nil {
+		return nil, err
+	}
+	return &l, nil
+}
+
 // Write writes each agent's status as `status` does, from what control.db in logDir last
 // recorded, for `gnat status` while the swarm is down. It only reads the database. A turn
 // an agent was running when the swarm went down is reported as interrupted, as it will
@@ -152,6 +193,8 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 		var turn Turn
 		var usage events.UsageTotals
 		var queue Queue
+		var context *events.ContextWindow
+		var limits *protocol.Limits
 		current := false
 		if db != nil {
 			var err error
@@ -170,6 +213,12 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 			if err := LoadUsage(db, agent, &usage); err != nil {
 				return err
 			}
+			if context, err = LoadContext(db, agent); err != nil {
+				return err
+			}
+			if limits, err = LoadLimits(db, agent); err != nil {
+				return err
+			}
 		}
 		if turn.Busy {
 			turn.Busy, turn.Exit, turn.Stopped = false, nil, false
@@ -179,7 +228,7 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 		r.State, r.Turns, r.Exit, r.Stopped = "down", turn.Turns, turn.Exit, turn.Stopped
 		r.Queued, r.QueuedBy = queue.Total, queue.By
 		r.Reply, r.Error = turn.Reply, turn.Error
-		r.Usage = &usage
+		r.Usage, r.Context, r.Limits = &usage, context, limits
 		line, err := protocol.Encode(protocol.StatusLine(agent, r))
 		if err != nil {
 			return err

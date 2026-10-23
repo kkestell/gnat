@@ -82,6 +82,7 @@ type Control struct {
 	MaxRequestBytes int
 
 	agents []string
+	db     *sql.DB
 	// setups is each agent's harness, model, and effort, by name, for the web UI.
 	setups map[string]state.Agent
 	logDir string
@@ -92,10 +93,14 @@ type Control struct {
 
 	mailboxes map[string]*Mailbox
 
-	// mu guards the statuses, usage, active, and daemons.
+	// mu guards the statuses, usage, context, limits, active, and daemons.
 	mu       sync.Mutex
 	statuses map[string]*Status
 	usage    map[string]*usageTotal
+	// context is how full each agent's context window last was, and limits the usage
+	// limits its harness last reported; absent if it hasn't.
+	context map[string]*events.ContextWindow
+	limits  map[string]*protocol.Limits
 	// active is when each agent last started a turn or sent an event.
 	active map[string]time.Time
 	// daemons are each agent's attached daemon.
@@ -117,8 +122,9 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 	}
 	c := &Control{
 		MaxRequestBytes: DefaultMaxRequestBytes,
-		agents:          agents, setups: setups, logDir: logDir,
+		agents:          agents, db: db, setups: setups, logDir: logDir,
 		mailboxes: map[string]*Mailbox{}, statuses: map[string]*Status{}, usage: map[string]*usageTotal{},
+		context: map[string]*events.ContextWindow{}, limits: map[string]*protocol.Limits{},
 		active: map[string]time.Time{}, daemons: map[string]*Daemon{}, watchers: map[*watcher]bool{},
 	}
 	// Forget agents the swarm no longer has, so one added later by the same name starts fresh.
@@ -127,7 +133,7 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 	for i, agent := range agents {
 		args[i], marks[i] = agent, "?"
 	}
-	for _, table := range []string{"messages", "statuses", "usage", "agent_ids"} {
+	for _, table := range []string{"messages", "statuses", "usage", "context", "limits", "agent_ids"} {
 		query := fmt.Sprintf("DELETE FROM %s WHERE agent NOT IN (%s)", table, strings.Join(marks, ", "))
 		if _, err := db.Exec(query, args...); err != nil {
 			return nil, err
@@ -163,6 +169,12 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 		if c.usage[agent], err = newUsage(db, agent); err != nil {
 			return nil, err
 		}
+		if c.context[agent], err = recorded.LoadContext(db, agent); err != nil {
+			return nil, err
+		}
+		if c.limits[agent], err = recorded.LoadLimits(db, agent); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
@@ -178,7 +190,7 @@ func (c *Control) forget(db *sql.DB, agent, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"messages", "statuses", "usage"} {
+	for _, table := range []string{"messages", "statuses", "usage", "context", "limits"} {
 		if _, err := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE agent = ?", table), agent); err != nil {
 			return err
 		}
@@ -276,6 +288,7 @@ func (c *Control) describe(agent string) *protocol.Response {
 	r.Reply, r.Error = s.Reply, s.Error
 	total := c.usage[agent].total
 	r.Usage = &total
+	r.Context, r.Limits = c.context[agent], c.limits[agent]
 	if t, ok := c.active[agent]; ok {
 		since := time.Since(t).Seconds()
 		r.SinceActive = &since
@@ -311,6 +324,22 @@ func (c *Control) event(agent string, event events.Event) {
 	switch event.Type() {
 	case events.Usage:
 		logErr(c.usage[agent].add(event))
+	case events.Context:
+		if context, ok := events.ParseContext(event); ok {
+			// A harness that hasn't learned the window's size yet, such as Claude's after
+			// a restart, still has the one it reported before.
+			if context.Size == nil && c.context[agent] != nil {
+				context.Size = c.context[agent].Size
+			}
+			c.context[agent] = &context
+			logErr(saveContext(c.db, agent, context))
+		}
+	case events.Limits:
+		if windows := events.ParseLimits(event); len(windows) > 0 {
+			limits := protocol.Limits{Windows: windows, Reported: float64(time.Now().Unix())}
+			c.limits[agent] = &limits
+			logErr(saveLimits(c.db, agent, limits))
+		}
 	case events.TurnEnd:
 		s := c.statuses[agent]
 		s.Reply, s.Error = stringOrNil(event["reply"]), stringOrNil(event["error"])

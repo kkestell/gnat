@@ -46,8 +46,11 @@ func j(v any) string {
 
 type m = map[string]any
 
+// translate is the events for one line, read on its own.
+func translate(line string) []events.Event { return new(translator).line(line) }
+
 func TestClaudeTextThinkingAndToolCalls(t *testing.T) {
-	got := Translate(line("assistant", nil,
+	got := translate(line("assistant", nil,
 		m{"type": "thinking", "thinking": "hm", "signature": "x"},
 		m{"type": "thinking", "thinking": "", "signature": strings.Repeat("x", 1000)},
 		m{"type": "text", "text": "Let me look."},
@@ -60,7 +63,7 @@ func TestClaudeTextThinkingAndToolCalls(t *testing.T) {
 }
 
 func TestClaudeToolResults(t *testing.T) {
-	got := Translate(line("user", nil,
+	got := translate(line("user", nil,
 		m{"type": "tool_result", "tool_use_id": "t1", "content": "a\nb"},
 		m{"type": "tool_result", "tool_use_id": "t2", "is_error": true,
 			"content": []any{m{"type": "text", "text": "boom"}, m{"type": "image"}}},
@@ -71,9 +74,9 @@ func TestClaudeToolResults(t *testing.T) {
 }
 
 func TestClaudeSubagentEventsNameTheirToolCall(t *testing.T) {
-	got := Translate(line("assistant", m{"parent_tool_use_id": "t1"}, m{"type": "text", "text": "a"}))
+	got := translate(line("assistant", m{"parent_tool_use_id": "t1"}, m{"type": "text", "text": "a"}))
 	assertEvents(t, got, []events.Event{events.NewMessage("a").WithParent("t1")})
-	got = Translate(line("user", m{"parent_tool_use_id": "t1"},
+	got = translate(line("user", m{"parent_tool_use_id": "t1"},
 		m{"type": "tool_result", "tool_use_id": "t2", "content": "x"}))
 	assertEvents(t, got, []events.Event{events.NewToolResult("t2", "x", false).WithParent("t1")})
 }
@@ -82,9 +85,9 @@ func TestClaudeFinalResults(t *testing.T) {
 	ok := j(m{"type": "result", "subtype": "success", "is_error": false, "result": "Done."})
 	failed := j(m{"type": "result", "subtype": "error_during_execution", "is_error": true})
 	limited := j(m{"type": "result", "is_error": true, "result": "rate limited"})
-	assertEvents(t, Translate(ok), []events.Event{events.NewTurnEnd("Done.", "")})
-	assertEvents(t, Translate(failed), []events.Event{events.NewTurnEnd("", "error_during_execution")})
-	assertEvents(t, Translate(limited), []events.Event{events.NewTurnEnd("", "rate limited")})
+	assertEvents(t, translate(ok), []events.Event{events.NewTurnEnd("Done.", "")})
+	assertEvents(t, translate(failed), []events.Event{events.NewTurnEnd("", "error_during_execution")})
+	assertEvents(t, translate(limited), []events.Event{events.NewTurnEnd("", "rate limited")})
 }
 
 func TestClaudeResultsReportEveryModelsUsage(t *testing.T) {
@@ -94,19 +97,49 @@ func TestClaudeResultsReportEveryModelsUsage(t *testing.T) {
 			"opus": m{"inputTokens": 2, "cacheReadInputTokens": 100,
 				"cacheCreationInputTokens": 30, "outputTokens": 40},
 			"haiku": m{"inputTokens": 3, "cacheReadInputTokens": 10, "outputTokens": 5}}}
-	assertEvents(t, Translate(j(result)), []events.Event{
+	assertEvents(t, translate(j(result)), []events.Event{
 		usageEvent(n(5), n(110), n(30), n(45), ptr(0.5)),
 		events.NewTurnEnd("Done.", "")})
 	delete(result, "modelUsage")
 	result["is_error"] = true
-	assertEvents(t, Translate(j(result)), []events.Event{
+	assertEvents(t, translate(j(result)), []events.Event{
 		usageEvent(n(1), nil, nil, n(1), ptr(0.5)), events.NewTurnEnd("", "Done.")})
 }
 
+func TestClaudeReportsTheMainModelsContextOncePerCall(t *testing.T) {
+	var tr translator
+	call := func(id string, parent any, cacheRead int) string {
+		return j(m{"type": "assistant", "parent_tool_use_id": parent, "message": m{"id": id, "content": []any{},
+			"usage": m{"input_tokens": 2, "cache_read_input_tokens": cacheRead, "cache_creation_input_tokens": 100, "output_tokens": 9}}})
+	}
+	assertEvents(t, tr.line(j(m{"type": "system", "subtype": "init", "model": "opus"})), nil)
+	assertEvents(t, tr.line(call("m1", nil, 1000)), []events.Event{events.NewContext(1102, nil)})
+	// The same call in another line, and a subagent's call.
+	assertEvents(t, tr.line(call("m1", nil, 1000)), nil)
+	assertEvents(t, tr.line(call("m2", "t1", 50)), nil)
+	assertEvents(t, tr.line(call("m3", nil, 2000)), []events.Event{events.NewContext(2102, nil)})
+	result := m{"type": "result", "result": "Done.", "modelUsage": m{
+		"opus": m{"contextWindow": 1_000_000}, "haiku": m{"contextWindow": 200_000}}}
+	got := tr.line(j(result))
+	assertEvents(t, got[1:], []events.Event{events.NewContext(2102, ptr(int64(1_000_000))), events.NewTurnEnd("Done.", "")})
+	// The next turn knows the window from the start.
+	assertEvents(t, tr.line(call("m4", nil, 3000)), []events.Event{events.NewContext(3102, ptr(int64(1_000_000)))})
+}
+
+func TestClaudeRateLimitEventsAreTheAccountsLimits(t *testing.T) {
+	event := m{"type": "rate_limit_event", "rate_limit_info": m{"status": "allowed", "rateLimitType": "five_hour",
+		"unifiedWindows": m{
+			"five_hour": m{"utilization": 0.07, "resetsAt": 1792779600},
+			"seven_day": m{"utilization": 0.49, "resetsAt": 1792983600}}}}
+	assertEvents(t, translate(j(event)), []events.Event{events.NewLimits(map[string]events.LimitWindow{
+		"five_hour": {Used: 0.07, ResetsAt: 1792779600}, "seven_day": {Used: 0.49, ResetsAt: 1792983600}})})
+	assertEvents(t, translate(j(m{"type": "rate_limit_event", "rate_limit_info": m{"status": "allowed"}})), nil)
+}
+
 func TestClaudeOutputThatIsntAnEventIsAnError(t *testing.T) {
-	assertEvents(t, Translate("Error: no auth\n"), []events.Event{events.NewError("Error: no auth")})
-	assertEvents(t, Translate("\n"), nil)
-	assertEvents(t, Translate(j(m{"type": "system", "subtype": "init"})), nil)
+	assertEvents(t, translate("Error: no auth\n"), []events.Event{events.NewError("Error: no auth")})
+	assertEvents(t, translate("\n"), nil)
+	assertEvents(t, translate(j(m{"type": "system", "subtype": "init"})), nil)
 }
 
 func fakeClaudeRunner(t *testing.T, mode string) (*claudeRunner, *collector) {
@@ -187,9 +220,9 @@ func TestClaudeReadsLinesLongerThanAPipeBuffer(t *testing.T) {
 
 func TestClaudeIsErrorIsATruthinessTest(t *testing.T) {
 	failed := j(m{"type": "result", "is_error": 1, "result": "x"})
-	assertEvents(t, Translate(failed), []events.Event{events.NewTurnEnd("", "x")})
-	got := Translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 1, "content": "x"}))
+	assertEvents(t, translate(failed), []events.Event{events.NewTurnEnd("", "x")})
+	got := translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 1, "content": "x"}))
 	assertEvents(t, got, []events.Event{events.NewToolResult("t", "x", true)})
-	got = Translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 0, "content": "x"}))
+	got = translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 0, "content": "x"}))
 	assertEvents(t, got, []events.Event{events.NewToolResult("t", "x", false)})
 }

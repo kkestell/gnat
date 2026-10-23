@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -941,15 +942,17 @@ func wait(swarmName string, agentArgs []string, timeout *float64, anyOf bool) er
 // agentStatus is a line of `gnat-container control status`: the control plane's view of
 // an agent.
 type agentStatus struct {
-	Agent       string            `json:"agent"`
-	State       string            `json:"state"`
-	Queued      int               `json:"queued"`
-	QueuedBy    []protocol.Queued `json:"queued_by"`
-	Turns       int               `json:"turns"`
-	Exit        *int              `json:"exit"`
-	Stopped     bool              `json:"stopped"`
-	SinceActive *float64          `json:"since_active"`
-	Usage       map[string]any    `json:"usage"`
+	Agent       string                `json:"agent"`
+	State       string                `json:"state"`
+	Queued      int                   `json:"queued"`
+	QueuedBy    []protocol.Queued     `json:"queued_by"`
+	Turns       int                   `json:"turns"`
+	Exit        *int                  `json:"exit"`
+	Stopped     bool                  `json:"stopped"`
+	SinceActive *float64              `json:"since_active"`
+	Usage       map[string]any        `json:"usage"`
+	Context     *events.ContextWindow `json:"context"`
+	Limits      *protocol.Limits      `json:"limits"`
 }
 
 // statusLine is one agent's line of `gnat status`. containerState is "" for a container
@@ -969,6 +972,9 @@ func statusLine(name string, s agentStatus, containerState string) string {
 	}
 	if usage := render.UsageSummary(events.ParseUsage(s.Usage)); usage != "" {
 		fields = append(fields, usage)
+	}
+	if s.Context != nil {
+		fields = append(fields, render.ContextSummary(*s.Context))
 	}
 	switch {
 	case s.Stopped:
@@ -1042,6 +1048,8 @@ func status(swarmName string, agentArgs []string) error {
 	if err != nil {
 		return err
 	}
+	// The limits are the account's, so the latest any agent reported are everyone's.
+	var limits *protocol.Limits
 	for _, line := range strings.Split(out, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -1055,8 +1063,30 @@ func status(swarmName string, agentArgs []string) error {
 			containerState = "down"
 		}
 		fmt.Fprintln(stdout, statusLine(s.Agent, s, containerState))
+		if s.Limits != nil && (limits == nil || s.Limits.Reported > limits.Reported) {
+			limits = s.Limits
+		}
+	}
+	if limits != nil {
+		if line := limitsLine(*limits, time.Now()); line != "" {
+			fmt.Fprintln(stdout, line)
+		}
 	}
 	return nil
+}
+
+// limitsLine is the account's usage limits as of now, saying how long ago they were
+// reported if it's been a while, or empty if every window has reset since.
+func limitsLine(l protocol.Limits, now time.Time) string {
+	summary := render.LimitsSummary(l.Windows, now)
+	if summary == "" {
+		return ""
+	}
+	line := "usage limits: " + summary
+	if ago := now.Sub(time.Unix(int64(l.Reported), 0)); ago > 10*time.Minute {
+		line += ", reported " + duration(ago.Seconds()) + " ago"
+	}
+	return line
 }
 
 // recordedStatus is the agents' status lines, given their IDs, from what the swarm's

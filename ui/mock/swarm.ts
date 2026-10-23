@@ -35,6 +35,25 @@ function usage(cost: number, output: number): Event {
   return { type: "usage", input_tokens: 6, cache_read_tokens: 48666, cache_write_tokens: 7158, output_tokens: output, cost };
 }
 
+// The context window after a model call, which grows a little each time.
+let contextUsed = 40_000;
+function context(size: number | null = 1_000_000): Event {
+  contextUsed += 9_000;
+  return { type: "context", used: contextUsed, size };
+}
+
+// The account's usage limits, as Claude reports them at the start of a turn.
+function limits(): Event {
+  const hour = Math.floor(Date.now() / 3_600_000) * 3600;
+  return {
+    type: "limits",
+    windows: {
+      five_hour: { used: 0.07 + (contextUsed % 50) / 100, resets_at: hour + 3 * 3600 },
+      seven_day: { used: 0.49, resets_at: hour + 2 * 86_400 + 7 * 3600 },
+    },
+  };
+}
+
 function done(exit: number | null = 0, stopped = false): Event {
   return { type: "swarm_done", exit, stopped };
 }
@@ -68,7 +87,9 @@ function summaryTurn(): Event[] {
       ".gitignore\nAGENTS.md\nREADME.md\nsrc/hello.py\n---\n4"),
     ...tool("Bash", { command: "cat README* 2>/dev/null | head -60; echo ---; cat AGENTS.md", description: "Show README and AGENTS.md" },
       "# Test workspace\n\nFixture for testing what `swarm` copies into agent containers.\n---\n# Workspace instructions"),
+    context(null),
     ...tool("Read", { file_path: "/workspace/src/hello.py" }, 'print("hello from the workspace")'),
+    context(),
     { type: "message", text:
       "This is a small test fixture, not a real project. Nothing was changed.\n\n" +
       "- **Purpose:** a fixture for testing what `swarm` copies into agent containers.\n" +
@@ -86,7 +107,9 @@ function featureTurn(): Event[] {
   return [
     { type: "swarm_message", new: true, mid_turn: false, sender: null,
       text: "Add a `--json` flag to `hello.py` that prints the greeting as JSON. Open a PR." },
+    limits(),
     { type: "message", text: "I'll look at how the script is structured first." },
+    context(),
     { type: "tool_call", id: task, name: "Task", input: { description: "Explore the CLI entry points" } },
     { type: "message", parent: task, text: "Searching for argument parsing." },
     ...tool("Grep", { pattern: "argparse|sys.argv", path: "/workspace" }, "(no matches)", { parent: task }),
@@ -98,6 +121,7 @@ function featureTurn(): Event[] {
     ...tool("Bash", { command: "git push -u origin add-json-flag && gh pr create --fill" },
       "https://github.com/kkestell/swarm-test/pull/12"),
     ...sent("gamma", "Can you review PR #12 when you get a chance?"),
+    context(),
     { type: "message", text:
       "Opened **#12**: https://github.com/kkestell/swarm-test/pull/12\n\n" +
       "| Flag | Output |\n|:--|:--|\n| (none) | `hello from the workspace` |\n| `--json` | `{\"greeting\": ...}` |\n\n" +

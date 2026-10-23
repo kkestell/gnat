@@ -152,6 +152,10 @@ type Response struct {
 	Reply       *string             `json:"reply,omitempty"`
 	Usage       *events.UsageTotals `json:"usage,omitempty"`
 	SinceActive *float64            `json:"since_active,omitempty"`
+	// Context is how full the agent's context window last was, and Limits the usage
+	// limits its harness last reported; nil if it hasn't reported them.
+	Context *events.ContextWindow `json:"context,omitempty"`
+	Limits  *Limits               `json:"limits,omitempty"`
 
 	// github: the result, as text for an agent to read, or for GitIdentity the account.
 	Output   string       `json:"output,omitempty"`
@@ -286,6 +290,13 @@ type Queued struct {
 	Now    int     `json:"now"`
 }
 
+// Limits are the usage limits of the account an agent's harness runs on, by window, as
+// it last reported them, and when it did, in Unix seconds.
+type Limits struct {
+	Windows  map[string]events.LimitWindow `json:"windows"`
+	Reported float64                       `json:"reported"`
+}
+
 // StatusLine is an agent's status as `status` prints it: every field, as the response
 // carries them all.
 func StatusLine(agent string, r *Response) any {
@@ -294,17 +305,20 @@ func StatusLine(agent string, r *Response) any {
 		queuedBy = []Queued{}
 	}
 	return struct {
-		Agent       string   `json:"agent"`
-		OK          bool     `json:"ok"`
-		State       string   `json:"state"`
-		Queued      int      `json:"queued"`
-		QueuedBy    []Queued `json:"queued_by"`
-		Turns       int      `json:"turns"`
-		Exit        *int     `json:"exit"`
-		Stopped     bool     `json:"stopped"`
-		Reply       *string  `json:"reply"`
-		Error       *string  `json:"error"`
-		Usage       any      `json:"usage"`
-		SinceActive *float64 `json:"since_active"`
-	}{agent, true, r.State, r.Queued, queuedBy, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive}
+		Agent       string                `json:"agent"`
+		OK          bool                  `json:"ok"`
+		State       string                `json:"state"`
+		Queued      int                   `json:"queued"`
+		QueuedBy    []Queued              `json:"queued_by"`
+		Turns       int                   `json:"turns"`
+		Exit        *int                  `json:"exit"`
+		Stopped     bool                  `json:"stopped"`
+		Reply       *string               `json:"reply"`
+		Error       *string               `json:"error"`
+		Usage       any                   `json:"usage"`
+		SinceActive *float64              `json:"since_active"`
+		Context     *events.ContextWindow `json:"context"`
+		Limits      *Limits               `json:"limits"`
+	}{agent, true, r.State, r.Queued, queuedBy, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive,
+		r.Context, r.Limits}
 }

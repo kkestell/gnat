@@ -30,6 +30,8 @@ func TestConstructorsMatchTheWireFormat(t *testing.T) {
 		{NewTurnEnd("Done.", "boom"), `{"error":"boom","reply":"Done.","type":"turn_end"}`},
 		{NewError("oops"), `{"text":"oops","type":"error"}`},
 		{NewUsage(UsageTotals{}), `{"cache_read_tokens":null,"cache_write_tokens":null,"cost":null,"input_tokens":null,"output_tokens":null,"type":"usage"}`},
+		{NewContext(5, nil), `{"size":null,"type":"context","used":5}`},
+		{NewLimits(map[string]LimitWindow{"five_hour": {Used: 0.07, ResetsAt: 1792779600}}), `{"type":"limits","windows":{"five_hour":{"resets_at":1792779600,"used":0.07}}}`},
 	}
 	for _, c := range cases {
 		if got := marshal(t, c.event); got != c.want {
@@ -50,6 +52,29 @@ func TestUsageRoundTrips(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 	if got := ParseUsage(e); *got.InputTokens != 5 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestContextAndLimitsRoundTrip(t *testing.T) {
+	var decoded Event
+	size := int64(1_000_000)
+	if err := json.Unmarshal([]byte(marshal(t, NewContext(25_246, &size))), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := ParseContext(decoded); !ok || got.Used != 25_246 || *got.Size != size {
+		t.Fatalf("got %+v", got)
+	}
+	if _, ok := ParseContext(Event{"type": Context}); ok {
+		t.Fatal("a context event without used parsed")
+	}
+	windows := map[string]LimitWindow{"five_hour": {Used: 0.07, ResetsAt: 1792779600}, "seven_day": {Used: 0.49, ResetsAt: 1792983600}}
+	decoded = nil
+	if err := json.Unmarshal([]byte(marshal(t, NewLimits(windows))), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded["windows"].(map[string]any)["bogus"] = map[string]any{"used": 0.5}
+	if got := ParseLimits(decoded); len(got) != 2 || got["seven_day"] != windows["seven_day"] {
 		t.Fatalf("got %+v", got)
 	}
 }

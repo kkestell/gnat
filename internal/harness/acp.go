@@ -448,8 +448,11 @@ func (r *acpRunner) handle(message map[string]any, id int, method string,
 }
 
 // usage notes the session's cost so far, which the server reports as it grows; when
-// report is set, as during a prompt, it emits what it grew by.
+// report is set, as during a prompt, it emits what it grew by, and the context window.
 func (r *acpRunner) usage(update map[string]any, report bool) {
+	if used := count(update["used"]); report && used != nil {
+		r.emit(events.NewContext(*used, count(update["size"])))
+	}
 	cost, _ := update["cost"].(map[string]any)
 	if cost["currency"] != "USD" {
 		return
