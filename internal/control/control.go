@@ -93,7 +93,7 @@ type Control struct {
 
 	mailboxes map[string]*Mailbox
 
-	// mu guards the statuses, usage, context, limits, active, and daemons.
+	// mu guards the statuses, usage, context, limits, active, daemons, and wrapUps.
 	mu       sync.Mutex
 	statuses map[string]*Status
 	usage    map[string]*usageTotal
@@ -105,6 +105,9 @@ type Control struct {
 	active map[string]time.Time
 	// daemons are each agent's attached daemon.
 	daemons map[string]*Daemon
+	// wrapUps are the messages `gnat pause` gave agents' running turns, until the hook
+	// takes them or the turn ends.
+	wrapUps map[string]string
 	// turnEnded is notified whenever a turn ends, for wait.
 	turnEnded broadcast
 
@@ -125,7 +128,8 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 		agents:          agents, db: db, setups: setups, logDir: logDir,
 		mailboxes: map[string]*Mailbox{}, statuses: map[string]*Status{}, usage: map[string]*usageTotal{},
 		context: map[string]*events.ContextWindow{}, limits: map[string]*protocol.Limits{},
-		active: map[string]time.Time{}, daemons: map[string]*Daemon{}, watchers: map[*watcher]bool{},
+		active: map[string]time.Time{}, daemons: map[string]*Daemon{}, wrapUps: map[string]string{},
+		watchers: map[*watcher]bool{},
 	}
 	// Forget agents the swarm no longer has, so one added later by the same name starts fresh.
 	args := make([]any, len(agents))
@@ -133,7 +137,7 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 	for i, agent := range agents {
 		args[i], marks[i] = agent, "?"
 	}
-	for _, table := range []string{"messages", "statuses", "usage", "context", "limits", "agent_ids"} {
+	for _, table := range []string{"messages", "statuses", "usage", "context", "limits", "paused", "agent_ids"} {
 		query := fmt.Sprintf("DELETE FROM %s WHERE agent NOT IN (%s)", table, strings.Join(marks, ", "))
 		if _, err := db.Exec(query, args...); err != nil {
 			return nil, err
@@ -161,8 +165,10 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 		}
 	}
 	for _, agent := range agents {
-		c.mailboxes[agent] = NewMailbox(db, agent)
 		var err error
+		if c.mailboxes[agent], err = NewMailbox(db, agent); err != nil {
+			return nil, err
+		}
 		if c.statuses[agent], err = newStatus(db, agent); err != nil {
 			return nil, err
 		}
@@ -179,7 +185,7 @@ func New(agents []string, db *sql.DB, setups map[string]state.Agent, logDir stri
 	return c, nil
 }
 
-// forget clears the agent's log, queue, status, and usage, which were another agent's by
+// forget clears the agent's log, queue, status, usage, and pause, which were another agent's by
 // the same name, and records its ID as the one they now belong to.
 func (c *Control) forget(db *sql.DB, agent, id string) error {
 	if err := os.Truncate(c.logPath(agent), 0); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -190,7 +196,7 @@ func (c *Control) forget(db *sql.DB, agent, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"messages", "statuses", "usage", "context", "limits"} {
+	for _, table := range []string{"messages", "statuses", "usage", "context", "limits", "paused"} {
 		if _, err := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE agent = ?", table), agent); err != nil {
 			return err
 		}
@@ -265,24 +271,28 @@ func (c *Control) Agents() []string { return c.agents }
 // Setups is each agent's harness, model, and effort, by name.
 func (c *Control) Setups() map[string]state.Agent { return c.setups }
 
-// Idle is whether the agent has finished every message sent to it.
+// Idle is whether the agent has finished every message sent to it, or, if it's paused,
+// its turn.
 func (c *Control) idle(agent string) bool {
 	// Look at the queue first: a message leaves it only as its agent turns busy (see
-	// pushTurns), so a queue found empty means the busy flag that follows is current.
-	pending := c.mailboxes[agent].Pending()
+	// pushTurns), so a queue found empty or paused means the busy flag that follows is
+	// current.
+	mailbox := c.mailboxes[agent]
+	waiting := !mailbox.Paused() && mailbox.Pending() > 0
 	c.mu.Lock()
 	busy := c.statuses[agent].Busy
 	c.mu.Unlock()
-	return pending == 0 && !busy
+	return !waiting && !busy
 }
 
 // describe is the agent's status as a successful response.
 func (c *Control) describe(agent string) *protocol.Response {
-	queue := c.mailboxes[agent].Queue()
+	queue, paused := c.mailboxes[agent].Queue(), c.mailboxes[agent].Paused()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := c.statuses[agent]
 	r := protocol.OK()
+	r.Paused = paused
 	r.Queued, r.QueuedBy = queue.Total, queue.By
 	r.State, r.Turns, r.Exit, r.Stopped = s.State(), s.Turns, s.Exit, s.Stopped
 	r.Reply, r.Error = s.Reply, s.Error

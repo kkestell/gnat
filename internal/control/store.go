@@ -14,8 +14,8 @@ import (
 
 // schema is control.db's, the same as the Python version's so either can read the file,
 // with tables added: agent_ids, the ID each agent's history belongs to (see
-// recorded.Current), and each agent's context window and the usage limits its harness
-// last reported (windows as JSON, reported in Unix seconds).
+// recorded.Current), each agent's context window and the usage limits its harness last
+// reported (windows as JSON, reported in Unix seconds), and the agents that are paused.
 const schema = `
 CREATE TABLE IF NOT EXISTS messages (
     position INTEGER PRIMARY KEY, agent TEXT NOT NULL, urgent INTEGER NOT NULL,
@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE TABLE IF NOT EXISTS agent_ids (agent TEXT PRIMARY KEY, id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS context (agent TEXT PRIMARY KEY, used INTEGER NOT NULL, size INTEGER);
 CREATE TABLE IF NOT EXISTS limits (agent TEXT PRIMARY KEY, windows TEXT NOT NULL, reported REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS paused (agent TEXT PRIMARY KEY);
 `
 
 // Connect opens the database at path (":memory:" for a throwaway one) and creates its
@@ -95,17 +96,51 @@ func (m Message) ForAgent() string {
 // call; any still pending when the turn ends start the next turn, ahead of the regular
 // queue. A message sent with new starts a fresh session, which only a message that
 // starts a turn can do, so it can't also be now.
+//
+// A paused mailbox gives up no message to start a turn with until it is resumed. Messages
+// sent with now still go into a running turn.
 type Mailbox struct {
 	db    *sql.DB
 	agent string
 
 	mu      sync.Mutex
-	changed chan struct{} // closed, and replaced, whenever a message is put
+	changed chan struct{} // closed, and replaced, whenever a message is put or it resumes
+	paused  bool
 }
 
-// NewMailbox is the agent's mailbox in db.
-func NewMailbox(db *sql.DB, agent string) *Mailbox {
-	return &Mailbox{db: db, agent: agent, changed: make(chan struct{})}
+// NewMailbox is the agent's mailbox in db, paused if the database says it is.
+func NewMailbox(db *sql.DB, agent string) (*Mailbox, error) {
+	paused, err := recorded.LoadPaused(db, agent)
+	if err != nil {
+		return nil, err
+	}
+	return &Mailbox{db: db, agent: agent, changed: make(chan struct{}), paused: paused}, nil
+}
+
+// SetPaused pauses the mailbox, or resumes it.
+func (m *Mailbox) SetPaused(paused bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	query := "DELETE FROM paused WHERE agent = ?"
+	if paused {
+		query = "INSERT OR IGNORE INTO paused (agent) VALUES (?)"
+	}
+	if _, err := m.db.Exec(query, m.agent); err != nil {
+		return err
+	}
+	m.paused = paused
+	if !paused {
+		close(m.changed)
+		m.changed = make(chan struct{})
+	}
+	return nil
+}
+
+// Paused is whether the mailbox is paused.
+func (m *Mailbox) Paused() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.paused
 }
 
 // Put queues a message: after the others, or before them all if front.
@@ -172,7 +207,7 @@ func (m *Mailbox) pop() (msg Message, urgent, ok bool, err error) {
 }
 
 // Get is the next message to start a turn with, and whether it was sent with now. It
-// waits for one until done is closed; the error is then ErrCancelled. A message it
+// waits for one, and while the mailbox is paused, until done is closed; the error is then ErrCancelled. A message it
 // returns has been taken even if done closed meanwhile. If taken isn't nil it runs once
 // the message is out of the queue, before anything can see the queue without it, so the
 // caller can show the message in progress with no moment when it is nowhere.
@@ -180,7 +215,12 @@ func (m *Mailbox) Get(done <-chan struct{}, taken func()) (Message, bool, error)
 	for {
 		m.mu.Lock()
 		changed := m.changed
-		msg, urgent, ok, err := m.pop()
+		var msg Message
+		var urgent, ok bool
+		var err error
+		if !m.paused {
+			msg, urgent, ok, err = m.pop()
+		}
 		if ok && taken != nil {
 			taken()
 		}

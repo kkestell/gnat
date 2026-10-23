@@ -80,12 +80,19 @@ func TestStatusLine(t *testing.T) {
 		{withQueue(mkStatus("idle", 1, 3, ptr(0), false), protocol.Queued{Sender: ptr("beta"), Queued: 1}), "running", "alpha\tidle\t1 queued: 1 from beta\t3 turns"},
 		// Only the operator's, none --now: just the count.
 		{withQueue(mkStatus("busy", 2, 3, ptr(0), false), protocol.Queued{Queued: 2}), "running", "alpha\tbusy\t2 queued\t3 turns"},
+		{paused(mkStatus("idle", 2, 3, ptr(0), false)), "running", "alpha\tidle, paused\t2 queued\t3 turns"},
+		{paused(mkStatus("busy", 0, 3, ptr(0), false)), "", "alpha\tmissing, paused\t0 queued\t3 turns"},
 	}
 	for _, c := range cases {
 		if got := statusLine("alpha", c.s, c.container); got != c.want {
 			t.Errorf("got %q, want %q", got, c.want)
 		}
 	}
+}
+
+func paused(s agentStatus) agentStatus {
+	s.Paused = true
+	return s
 }
 
 func TestStatusLineShowsHowLongABusyAgentHasBeenQuietAndItsUsage(t *testing.T) {

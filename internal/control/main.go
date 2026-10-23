@@ -269,7 +269,7 @@ func (p *parsed) timeout() (*float64, error) {
 }
 
 // Main runs `gnat-container control`: serve, the control plane itself, or one of the
-// commands the host runs in its container (send, stop, wait, status). It returns the
+// commands the host runs in its container (send, stop, pause, resume, wait, status). It returns the
 // exit status.
 func Main(args []string) int {
 	return run(args, os.Stdout, os.Stderr)
@@ -297,7 +297,7 @@ func (e exitError) Error() string { return fmt.Sprintf("exit status %d", int(e))
 
 func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("a command is required: serve, send, stop, wait, or status")
+		return usageError("a command is required: serve, send, stop, pause, resume, wait, or status")
 	}
 	command, args := args[0], args[1:]
 	switch command {
@@ -330,9 +330,13 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		text, agents := p.positional[0], p.positional[1:]
 		for _, agent := range agents {
-			if _, err := call(context.Background(), protocol.Request{Op: protocol.OpSend, Agent: agent, Text: text,
-				Now: p.bools["now"], New: p.bools["new"]}); err != nil {
+			resp, err := call(context.Background(), protocol.Request{Op: protocol.OpSend, Agent: agent, Text: text,
+				Now: p.bools["now"], New: p.bools["new"]})
+			if err != nil {
 				return err
+			}
+			if resp.Paused {
+				fmt.Fprintf(stderr, "%s is paused: its queued messages start no turns until `gnat resume`\n", agent)
 			}
 		}
 		if !p.bools["wait"] {
@@ -357,6 +361,52 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 				state = "stopping its turn"
 			}
 			fmt.Fprintf(stdout, "%s: %s\n", agent, state)
+		}
+		return nil
+	case "pause":
+		p, err := parseArgs(args, []string{"wait"}, []string{"message", "timeout"})
+		if err != nil {
+			return err
+		}
+		if len(p.positional) == 0 {
+			return usageError("pause needs at least one agent")
+		}
+		timeout, err := p.timeout()
+		if err != nil {
+			return err
+		}
+		for _, agent := range p.positional {
+			resp, err := call(context.Background(), protocol.Request{Op: protocol.OpPause, Agent: agent, Text: p.values["message"]})
+			if err != nil {
+				return err
+			}
+			turn := "not running a turn"
+			if resp.Running != nil && *resp.Running {
+				turn = "its running turn will finish"
+				if p.values["message"] != "" {
+					turn = "its running turn was given the message"
+				}
+			}
+			fmt.Fprintf(stdout, "%s: paused, %s; %d queued\n", agent, turn, resp.Queued)
+		}
+		if !p.bools["wait"] {
+			return nil
+		}
+		return waitAndReport(p.positional, timeout, false, stdout, stderr)
+	case "resume":
+		p, err := parseArgs(args, nil, nil)
+		if err != nil {
+			return err
+		}
+		if len(p.positional) == 0 {
+			return usageError("resume needs at least one agent")
+		}
+		for _, agent := range p.positional {
+			resp, err := call(context.Background(), protocol.Request{Op: protocol.OpResume, Agent: agent})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "%s: resumed; %d queued\n", agent, resp.Queued)
 		}
 		return nil
 	case "wait":
@@ -393,7 +443,7 @@ func dispatchCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	}
-	return usageError(fmt.Sprintf("unknown command '%s': use serve, send, stop, wait, or status", command))
+	return usageError(fmt.Sprintf("unknown command '%s': use serve, send, stop, pause, resume, wait, or status", command))
 }
 
 // waitAndReport waits for every agent to be idle, or with anyOf for at least one, and

@@ -13,6 +13,8 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat down SWARM` | Stop the containers. Clones, sessions, queued messages, and logs are kept. |
 | `gnat send SWARM [AGENT...] [-m TEXT] [--now \| --new] [--wait [--timeout SECONDS]]` | Queue a message. Reads stdin without `-m`. |
 | `gnat stop SWARM [AGENT...]` | End running turns. Queues, clones, and sessions are kept. |
+| `gnat pause SWARM [AGENT...] [-m TEXT] [--wait [--timeout SECONDS]]` | Let running turns finish and start no more until `gnat resume`. With `-m`, give each running turn the message, as `send --now` does, dropped if the turn ends first. With `--wait`, then wait for the turns to end and print the replies. |
+| `gnat resume SWARM [AGENT...]` | Let paused agents start their queued messages again. |
 | `gnat wait SWARM [AGENT...] [--any] [--timeout SECONDS]` | Wait until agents finish every message, then print their final replies. Exits 1 if a last turn failed or was stopped, 124 on timeout. With `--any`, return as soon as at least one of them has (one already finished counts at once), printing the replies of those that have, each under its name, and on stderr the ones still busy (`still waiting on: alpha, gamma`); the exit status is for those that have. |
 | `gnat status SWARM [AGENT...]` | Show each agent's state, queue (see [messages](#messages)), time since its last event, usage, how full its context window is, and how its last turn ended, then the Claude account's usage limits. Works while the swarm is down. |
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. `HOST_PATH` is treated as `docker cp` treats it: a directory copied to an existing directory goes inside it, and to a path that doesn't exist creates that path with the directory's contents; a `PATH` ending in `/.` copies the directory's contents, so `AGENT:.` copies the clone's contents. |
@@ -141,6 +143,7 @@ Each agent works through its queue one message at a time, continuing one session
 - `--new` starts the message in a fresh session, which later messages continue.
 - `--now` delivers the message into the running turn after the agent's next tool call. If the turn ends first, or the agent is idle, it starts the next turn, ahead of the queue. `gnat send --now` says so instead of "queued message for".
 - `gnat stop` ends the running turn; the agent goes on to its next message.
+- `gnat pause` lets the running turn finish and starts no more: queued messages, and any sent meanwhile, wait until `gnat resume`, though `--now` messages still go into a running turn. `-m TEXT` gives the running turn a message at its next tool call, such as "commit and push what you have, and report"; unlike `send --now`, it's dropped if the turn ends first rather than starting another. A paused agent counts as finished for `gnat wait` once its turn ends, `gnat status` shows it as `idle, paused`, and it stays paused through `gnat down` and `gnat up`.
 
 Agents can message each other with `/opt/gnat/gnat-container send TEAMMATE... [--now] -m TEXT`, which their instructions describe. Two agents can reply to each other forever; watch `gnat logs` and `gnat down` if they do.
 
@@ -157,7 +160,7 @@ request commands. The control plane takes who is asking from the secret, not fro
 anything the request says, so a message labelled as from an agent is from that agent.
 An agent can send, take its own messages, and make the GitHub requests below; asking how
 other agents are doing, waiting on them, or stopping them is the operator's, whose
-commands (`gnat send`, `status`, `wait`, `stop`) reach the control plane by a socket
+commands (`gnat send`, `status`, `wait`, `stop`, `pause`, `resume`) reach the control plane by a socket
 inside its container instead.
 
 ## Pull requests
@@ -182,7 +185,7 @@ saved without it gives no permission.
 ## State
 
 - Swarm definitions: `~/.local/state/gnat/swarms` (`$XDG_STATE_HOME/gnat/swarms`).
-- Logs and `control.db` (queues, status, usage): `~/.local/state/gnat/logs/SWARM`. Each `gnat up` appends to them.
+- Logs and `control.db` (queues, pauses, status, usage): `~/.local/state/gnat/logs/SWARM`. Each `gnat up` appends to them.
 - Clones and sessions: Docker volumes named `gnat-SWARM-AGENT-*`. They survive `gnat down`, so the next `gnat up` picks up where agents left off.
 
 `gnat delete` removes all of it.
@@ -258,6 +261,17 @@ gnat send demo alpha -m "Use Bash to run: python3 -c 'import time; time.sleep(30
 gnat send demo alpha -m "Say DONE."
 gnat stop demo alpha
 gnat wait demo alpha
+```
+
+Pausing with a wrap-up:
+
+```sh
+gnat send demo alpha -m "Count slowly to 20 using Bash, one sleep 5 per number."
+gnat send demo alpha -m "Say QUEUED."
+gnat pause demo alpha -m "Stop counting and say WRAPPED." --wait
+gnat status demo alpha    # idle, paused, 1 queued
+gnat resume demo alpha
+gnat wait demo alpha      # QUEUED
 ```
 
 Fresh session:

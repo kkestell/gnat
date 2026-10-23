@@ -32,6 +32,11 @@ const (
 	OpStatus = "status"
 	OpWait   = "wait"
 	OpStop   = "stop"
+	// OpPause stops the agent's queued messages from starting turns until OpResume, and
+	// gives a running turn the request's Text, if any, as a message sent with now that
+	// is dropped if the turn ends first.
+	OpPause  = "pause"
+	OpResume = "resume"
 	OpOutput = "output"
 	// OpGitHub is a GitHub operation (see GitHubRequest), which the control plane carries
 	// out with its own token for the agent the request's Secret belongs to.
@@ -138,6 +143,8 @@ type Response struct {
 
 	// stop
 	Stopping *bool `json:"stopping,omitempty"`
+	// pause: whether a turn was running.
+	Running *bool `json:"running,omitempty"`
 	// take
 	Messages []TakenMessage `json:"messages,omitempty"`
 	// wait: whether the agent is idle, as well as its status.
@@ -157,6 +164,8 @@ type Response struct {
 	// limits its harness last reported; nil if it hasn't reported them.
 	Context *events.ContextWindow `json:"context,omitempty"`
 	Limits  *Limits               `json:"limits,omitempty"`
+	// Paused (status, wait, send, pause, resume) is whether the agent is paused.
+	Paused bool `json:"paused,omitempty"`
 
 	// github: the result, as text for an agent to read, or for GitIdentity the account.
 	Output   string       `json:"output,omitempty"`
@@ -320,6 +329,7 @@ func StatusLine(agent string, r *Response) any {
 		SinceActive *float64              `json:"since_active"`
 		Context     *events.ContextWindow `json:"context"`
 		Limits      *Limits               `json:"limits"`
+		Paused      bool                  `json:"paused"`
 	}{agent, true, r.State, r.Queued, queuedBy, r.Turns, r.Exit, r.Stopped, r.Reply, r.Error, r.Usage, r.SinceActive,
-		r.Context, r.Limits}
+		r.Context, r.Limits, r.Paused}
 }

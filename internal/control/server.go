@@ -135,7 +135,7 @@ func (c *Control) handle(conn net.Conn, fromAgents bool) {
 			respond(conn, protocol.Fail("a message's sender is the agent whose secret it comes with"))
 			return
 		}
-	case protocol.OpStop, protocol.OpStatus, protocol.OpWait:
+	case protocol.OpStop, protocol.OpPause, protocol.OpResume, protocol.OpStatus, protocol.OpWait:
 	default:
 		respond(conn, protocol.Fail(fmt.Sprintf("'%s' is only for agents", req.Op)))
 		return
@@ -217,7 +217,9 @@ func (c *Control) dispatch(req protocol.Request, r io.Reader) *protocol.Response
 		if req.Sender != "" {
 			c.record(req.Sender, events.Event{"type": "swarm_sent", "to": req.Agent, "text": req.Text})
 		}
-		return protocol.OK()
+		r := protocol.OK()
+		r.Paused = mailbox.Paused()
+		return r
 	case protocol.OpStop:
 		// Only a running turn can be stopped. The daemon reads the stop before any later
 		// turn, so it can't linger to kill the next.
@@ -231,11 +233,39 @@ func (c *Control) dispatch(req protocol.Request, r io.Reader) *protocol.Response
 		r := protocol.OK()
 		r.Stopping = &stopping
 		return r
+	case protocol.OpPause:
+		if err := mailbox.SetPaused(true); err != nil {
+			return protocol.Fail(err.Error())
+		}
+		// Paused first, so no turn starts after the look at whether one is running.
+		c.mu.Lock()
+		running := c.statuses[req.Agent].Busy && c.daemons[req.Agent] != nil
+		if running && req.Text != "" {
+			c.wrapUps[req.Agent] = req.Text
+		}
+		c.mu.Unlock()
+		r := c.describe(req.Agent)
+		r.Running = &running
+		return r
+	case protocol.OpResume:
+		c.mu.Lock()
+		delete(c.wrapUps, req.Agent)
+		c.mu.Unlock()
+		if err := mailbox.SetPaused(false); err != nil {
+			return protocol.Fail(err.Error())
+		}
+		return c.describe(req.Agent)
 	case protocol.OpTake:
 		taken, err := mailbox.TakeUrgent()
 		if err != nil {
 			return protocol.Fail(err.Error())
 		}
+		c.mu.Lock()
+		if text, ok := c.wrapUps[req.Agent]; ok {
+			taken = append([]Message{{Text: text}}, taken...)
+			delete(c.wrapUps, req.Agent)
+		}
+		c.mu.Unlock()
 		r := protocol.OK()
 		for _, m := range taken {
 			c.log(req.Agent, m.LogLine(true))
@@ -501,6 +531,8 @@ func (c *Control) endTurn(agent string, code *int, stopped bool) {
 	s.Busy, s.Exit, s.Stopped = false, code, stopped
 	s.Turns++
 	logErr(s.save())
+	// A wrap-up the turn ended before getting was for that turn only.
+	delete(c.wrapUps, agent)
 	c.mu.Unlock()
 	var exit any
 	if code != nil {

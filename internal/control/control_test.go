@@ -284,12 +284,21 @@ func requestErr(t *testing.T, err error, want string) {
 	}
 }
 
+func mailbox(t *testing.T, db *sql.DB, agent string) *Mailbox {
+	t.Helper()
+	m, err := NewMailbox(db, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func TestMailboxPutsUrgentMessagesFirst(t *testing.T) {
 	db, err := Connect(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := NewMailbox(db, "alpha")
+	m := mailbox(t, db, "alpha")
 	for _, put := range []struct {
 		text       string
 		now, front bool
@@ -318,7 +327,7 @@ func TestMailboxPutsUrgentMessagesFirst(t *testing.T) {
 
 func TestMailboxGetWaitsForAMessage(t *testing.T) {
 	db, _ := Connect(":memory:")
-	m := NewMailbox(db, "alpha")
+	m := mailbox(t, db, "alpha")
 	cancel := make(chan struct{})
 	close(cancel)
 	if _, _, err := m.Get(cancel, nil); !errors.Is(err, ErrCancelled) {
@@ -341,9 +350,47 @@ func TestMailboxGetWaitsForAMessage(t *testing.T) {
 	}
 }
 
+func TestAPausedMailboxGivesUpNoMessageUntilResumed(t *testing.T) {
+	db, _ := Connect(":memory:")
+	m := mailbox(t, db, "alpha")
+	m.Put(Message{Text: "queued"}, false, false)
+	if err := m.SetPaused(true); err != nil {
+		t.Fatal(err)
+	}
+	// It stays paused for the next control plane.
+	if again := mailbox(t, db, "alpha"); !again.Paused() {
+		t.Fatal("not paused when opened again")
+	}
+	got := make(chan Message, 1)
+	go func() {
+		msg, _, _ := m.Get(nil, nil)
+		got <- msg
+	}()
+	m.Put(Message{Text: "urgent"}, true, false)
+	select {
+	case msg := <-got:
+		t.Fatalf("got %+v while paused", msg)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := m.SetPaused(false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-got:
+		if msg.Text != "urgent" {
+			t.Fatalf("got %+v", msg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out")
+	}
+	if mailbox(t, db, "alpha").Paused() {
+		t.Fatal("still paused when opened again")
+	}
+}
+
 func TestTakeUrgentLeavesRegularMessages(t *testing.T) {
 	db, _ := Connect(":memory:")
-	m := NewMailbox(db, "alpha")
+	m := mailbox(t, db, "alpha")
 	m.Put(Message{Text: "later"}, false, false)
 	m.Put(Message{Text: "a"}, true, false)
 	m.Put(Message{Text: "b"}, true, false)
@@ -923,7 +970,7 @@ func TestAnAgentCreatedAgainByTheSameNameStartsFresh(t *testing.T) {
 	// alpha is deleted and created again while the swarm is down: the new one has another ID.
 	ids := map[string]string{"alpha": "two", "beta": "b"}
 	fresh := map[string]any{"ok": true, "agent": "alpha", "state": "down", "since_active": nil, "queued": 0.0, "queued_by": []any{}, "turns": 0.0, "exit": nil,
-		"stopped": false, "reply": nil, "error": nil, "context": nil, "limits": nil,
+		"stopped": false, "reply": nil, "error": nil, "context": nil, "limits": nil, "paused": false,
 		"usage": map[string]any{"input_tokens": nil, "cache_read_tokens": nil, "cache_write_tokens": nil, "output_tokens": nil, "cost": nil}}
 	if got := recordedStatus(t, dir, "alpha", ids); !reflect.DeepEqual(got, fresh) {
 		t.Fatalf("got %v, want %v", got, fresh)
@@ -1053,6 +1100,98 @@ func TestStopEndsOnlyARunningTurnAndKeepsTheQueue(t *testing.T) {
 	}
 }
 
+func TestPauseLetsTheRunningTurnFinishWithItsMessageAndStartsNoMore(t *testing.T) {
+	p := startPlane(t, t.TempDir())
+	daemon := p.attach("alpha")
+	p.send("alpha", "one")
+	if got := daemon.receive().Text; got != "one" {
+		t.Fatalf("got %q", got)
+	}
+	p.send("alpha", "#3 merged; merge origin/main")
+	r := p.must(protocol.Request{Op: protocol.OpPause, Agent: "alpha", Text: "Wrap up."})
+	if !*r.Running || !r.Paused || r.Queued != 1 {
+		t.Fatalf("got %+v", r)
+	}
+	// A teammate's --now message still goes in, after the wrap-up.
+	p.must(protocol.Request{Op: protocol.OpSend, Agent: "alpha", Sender: "", Text: "also this", Now: true})
+	taken := p.must(protocol.Request{Op: protocol.OpTake, Agent: "alpha"}).Messages
+	if len(taken) != 2 || taken[0].Text != "Wrap up." || taken[0].Sender != nil || taken[1].Text != "also this" {
+		t.Fatalf("took %+v", taken)
+	}
+	if taken := p.must(protocol.Request{Op: protocol.OpTake, Agent: "alpha"}).Messages; len(taken) != 0 {
+		t.Fatalf("took %+v again", taken)
+	}
+	if !strings.Contains(p.log("alpha"), ">>> (mid-turn) Wrap up.") {
+		t.Fatalf("log %q", p.log("alpha"))
+	}
+	daemon.turnEnd("Saved and pushed.", "")
+	daemon.done(0, false)
+	// Paused, it's idle once the turn ends, with its queue kept.
+	w := p.wait("alpha")
+	if !*w.Idle || !w.Paused || w.Queued != 1 || *w.Reply != "Saved and pushed." {
+		t.Fatalf("got %+v", w)
+	}
+	if s := p.status("alpha"); s.State != "idle" || !s.Paused {
+		t.Fatalf("got %+v", s)
+	}
+	// What's sent meanwhile waits too.
+	if r := p.must(protocol.Request{Op: protocol.OpSend, Agent: "alpha", Text: "two"}); !r.Paused {
+		t.Fatalf("send %+v", r)
+	}
+	daemon.conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if line, err := daemon.r.ReadBytes('\n'); err == nil {
+		t.Fatalf("got %s while paused", line)
+	}
+	r = p.must(protocol.Request{Op: protocol.OpResume, Agent: "alpha"})
+	if r.Paused || r.Queued != 2 {
+		t.Fatalf("resumed %+v", r)
+	}
+	if got := daemon.receive().Text; got != "#3 merged; merge origin/main" {
+		t.Fatalf("got %q", got)
+	}
+	daemon.done(0, false)
+	if got := daemon.receive().Text; got != "two" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAPauseMessageTheTurnEndsWithoutIsDropped(t *testing.T) {
+	p := startPlane(t, t.TempDir())
+	daemon := p.attach("alpha")
+	// Idle: nothing to give the message to.
+	p.waitUntil("attached", func() bool { return p.hasDaemon("alpha") })
+	if r := p.must(protocol.Request{Op: protocol.OpPause, Agent: "alpha", Text: "Wrap up."}); *r.Running {
+		t.Fatalf("got %+v", r)
+	}
+	p.must(protocol.Request{Op: protocol.OpResume, Agent: "alpha"})
+	p.send("alpha", "one")
+	daemon.receive()
+	p.must(protocol.Request{Op: protocol.OpPause, Agent: "alpha", Text: "Wrap up."})
+	daemon.done(0, false)
+	p.wait("alpha")
+	if r := p.must(protocol.Request{Op: protocol.OpResume, Agent: "alpha"}); r.Queued != 0 {
+		t.Fatalf("got %+v", r)
+	}
+	p.send("alpha", "two")
+	if got := daemon.receive().Text; got != "two" {
+		t.Fatalf("got %q", got)
+	}
+	if taken := p.must(protocol.Request{Op: protocol.OpTake, Agent: "alpha"}).Messages; len(taken) != 0 {
+		t.Fatalf("took %+v", taken)
+	}
+}
+
+func TestOnlyTheOperatorPausesAndResumes(t *testing.T) {
+	p := startPlane(t, t.TempDir(), "alpha", "beta")
+	for _, op := range []string{protocol.OpPause, protocol.OpResume} {
+		_, err := p.request(protocol.Request{Op: op, Agent: "beta", Secret: "alpha-secret"})
+		requestErr(t, err, "only for the operator")
+	}
+	if p.status("beta").Paused {
+		t.Fatal("paused")
+	}
+}
+
 func TestNewSessionsKeepTheirSenderAndArePassedToTheAgent(t *testing.T) {
 	p := startPlane(t, t.TempDir(), "alpha", "beta")
 	p.must(protocol.Request{Op: protocol.OpSend, Agent: "alpha", Text: "a", New: true, Sender: "beta"})
@@ -1163,6 +1302,25 @@ func TestMainStatusAndStopPrintLikePythons(t *testing.T) {
 	}
 	if q := p.status("alpha").Queued; q != 1 {
 		t.Fatalf("queued %d", q)
+	}
+
+	out.Reset()
+	if code := run([]string{"pause", "alpha", "--message", "Wrap up."}, &out, &errOut); code != 0 || out.String() != "alpha: paused, not running a turn; 1 queued\n" {
+		t.Fatalf("exit %d: %q", code, out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run([]string{"send", "more", "alpha"}, &out, &errOut); code != 0 || !strings.Contains(errOut.String(), "alpha is paused") {
+		t.Fatalf("exit %d: %q", code, errOut.String())
+	}
+	// Paused and not running a turn, it's finished.
+	out.Reset()
+	if code := run([]string{"pause", "alpha", "--wait", "--timeout", "1"}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %q", code, errOut.String())
+	}
+	out.Reset()
+	if code := run([]string{"resume", "alpha"}, &out, &errOut); code != 0 || out.String() != "alpha: resumed; 2 queued\n" {
+		t.Fatalf("exit %d: %q", code, out.String())
 	}
 }
 

@@ -137,6 +137,17 @@ func hasTable(db *sql.DB, name string) (bool, error) {
 	return tables > 0, err
 }
 
+// LoadPaused reads whether the agent is paused: `gnat pause` stops its queued messages
+// from starting turns until `gnat resume`.
+func LoadPaused(db *sql.DB, agent string) (bool, error) {
+	if ok, err := hasTable(db, "paused"); !ok || err != nil {
+		return false, err
+	}
+	var n int
+	err := db.QueryRow("SELECT COUNT(*) FROM paused WHERE agent = ?", agent).Scan(&n)
+	return n > 0, err
+}
+
 // LoadContext reads how full the agent's context window last was, nil if the database
 // has nothing on it.
 func LoadContext(db *sql.DB, agent string) (*events.ContextWindow, error) {
@@ -195,7 +206,7 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 		var queue Queue
 		var context *events.ContextWindow
 		var limits *protocol.Limits
-		current := false
+		paused, current := false, false
 		if db != nil {
 			var err error
 			if current, err = Current(db, agent, ids[agent]); err != nil {
@@ -219,6 +230,9 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 			if limits, err = LoadLimits(db, agent); err != nil {
 				return err
 			}
+			if paused, err = LoadPaused(db, agent); err != nil {
+				return err
+			}
 		}
 		if turn.Busy {
 			turn.Busy, turn.Exit, turn.Stopped = false, nil, false
@@ -228,7 +242,7 @@ func Write(logDir string, agents []string, ids map[string]string, w io.Writer) e
 		r.State, r.Turns, r.Exit, r.Stopped = "down", turn.Turns, turn.Exit, turn.Stopped
 		r.Queued, r.QueuedBy = queue.Total, queue.By
 		r.Reply, r.Error = turn.Reply, turn.Error
-		r.Usage, r.Context, r.Limits = &usage, context, limits
+		r.Usage, r.Context, r.Limits, r.Paused = &usage, context, limits, paused
 		line, err := protocol.Encode(protocol.StatusLine(agent, r))
 		if err != nil {
 			return err

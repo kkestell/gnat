@@ -58,7 +58,7 @@ func newRoot() *cobra.Command {
 	root.SetHelpCommand(&cobra.Command{Use: "no-help", Hidden: true})
 	root.AddCommand(
 		createCommand(), deleteCommand(), listCommand(), upCommand(), downCommand(),
-		sendCommand(), stopCommand(), waitCommand(), statusCommand(), copyCommand(),
+		sendCommand(), stopCommand(), pauseCommand(), resumeCommand(), waitCommand(), statusCommand(), copyCommand(),
 		logsCommand(), webCommand(), agentCommands(), fileCommands(), profileCommands(), authCommands(),
 	)
 	return root
@@ -164,6 +164,46 @@ func stopCommand() *cobra.Command {
 		Use: "stop SWARM" + agentsUsage, Args: cobra.MinimumNArgs(1),
 		Short: "end agents' running turns, keeping their queues and sessions",
 		RunE:  action(func(_ *cobra.Command, args []string) error { return stop(args[0], args[1:]) }).run,
+	}
+}
+
+func pauseCommand() *cobra.Command {
+	var message string
+	var wait bool
+	var timeout float64
+	c := &cobra.Command{
+		Use: "pause SWARM" + agentsUsage, Args: cobra.MinimumNArgs(1),
+		Short: "let agents' running turns finish and start no more until resumed",
+		Long: "Let agents' running turns finish, and start no more until `gnat resume`: their queued messages wait, " +
+			"and messages sent meanwhile queue behind them. Messages sent with --now still go into a running turn.\n\n" +
+			"With -m, a running turn is also given the message at its next tool call, as with `send --now`, " +
+			"such as to save its work and report; if the turn ends before getting it, it's dropped. " +
+			"An agent stays paused through `gnat down` and `gnat up`.",
+	}
+	c.RunE = action(func(cmd *cobra.Command, args []string) error {
+		var t *float64
+		if cmd.Flags().Changed("timeout") {
+			if !wait {
+				return fmt.Errorf("--timeout needs --wait")
+			}
+			t = &timeout
+		}
+		if cmd.Flags().Changed("message") && strings.TrimSpace(message) == "" {
+			return fmt.Errorf("message is empty")
+		}
+		return pause(args[0], args[1:], message, wait, t)
+	}).run
+	c.Flags().StringVarP(&message, "message", "m", "", "give each running turn the message `TEXT`")
+	c.Flags().BoolVar(&wait, "wait", false, "then wait for the running turns to end and print the agents' replies, as `wait` does")
+	timeoutFlag(c, &timeout)
+	return c
+}
+
+func resumeCommand() *cobra.Command {
+	return &cobra.Command{
+		Use: "resume SWARM" + agentsUsage, Args: cobra.MinimumNArgs(1),
+		Short: "let paused agents start their queued messages again",
+		RunE:  action(func(_ *cobra.Command, args []string) error { return resume(args[0], args[1:]) }).run,
 	}
 }
 
@@ -916,6 +956,49 @@ func stop(swarmName string, agentArgs []string) error {
 	return docker(append([]string{"exec", container}, controlCommand(append([]string{"stop"}, agentNames(agents)...)...)...)...)
 }
 
+func pause(swarmName string, agentArgs []string, message string, andWait bool, timeout *float64) error {
+	swarm, err := state.Load(swarmName)
+	if err != nil {
+		return err
+	}
+	agents, err := selectAgents(swarm, agentArgs)
+	if err != nil {
+		return err
+	}
+	container, err := requireUp(swarm.Name)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"pause"}, agentNames(agents)...)
+	if message != "" {
+		args = append(args, "--message", message)
+	}
+	if !andWait {
+		return docker(append([]string{"exec", container}, controlCommand(args...)...)...)
+	}
+	args = append(args, "--wait")
+	if timeout != nil {
+		args = append(args, "--timeout", formatFloat(*timeout))
+	}
+	return dockerInOrder(append([]string{"exec", container}, controlCommand(args...)...)...)
+}
+
+func resume(swarmName string, agentArgs []string) error {
+	swarm, err := state.Load(swarmName)
+	if err != nil {
+		return err
+	}
+	agents, err := selectAgents(swarm, agentArgs)
+	if err != nil {
+		return err
+	}
+	container, err := requireUp(swarm.Name)
+	if err != nil {
+		return err
+	}
+	return docker(append([]string{"exec", container}, controlCommand(append([]string{"resume"}, agentNames(agents)...)...)...)...)
+}
+
 func wait(swarmName string, agentArgs []string, timeout *float64, anyOf bool) error {
 	swarm, err := state.Load(swarmName)
 	if err != nil {
@@ -953,6 +1036,7 @@ type agentStatus struct {
 	Usage       map[string]any        `json:"usage"`
 	Context     *events.ContextWindow `json:"context"`
 	Limits      *protocol.Limits      `json:"limits"`
+	Paused      bool                  `json:"paused"`
 }
 
 // statusLine is one agent's line of `gnat status`. containerState is "" for a container
@@ -966,7 +1050,11 @@ func statusLine(name string, s agentStatus, containerState string) string {
 			agentState = "missing"
 		}
 	}
-	fields := []string{name, agentState, queued(s), fmt.Sprintf("%d turns", s.Turns)}
+	shown := agentState
+	if s.Paused {
+		shown += ", paused"
+	}
+	fields := []string{name, shown, queued(s), fmt.Sprintf("%d turns", s.Turns)}
 	if agentState == "busy" && s.SinceActive != nil {
 		fields = append(fields, "last event "+duration(*s.SinceActive)+" ago")
 	}

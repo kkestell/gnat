@@ -97,7 +97,8 @@ gnat web NAME [--no-open]     # print the web UI URL (a card per agent: setup, c
 
 - `gnat stop NAME [AGENT...]` ends an agent's running turn (for Claude, killing the processes its tools started; for Ox, cancelling the prompt). Its queue, clone, and session survive and it moves to its next message. Use it for runaway or wrong-direction work; then send a corrected message (add `--new` if the session is polluted).
 - If two agents are bouncing messages at each other, `gnat stop` both, then `gnat down` if needed.
-- When the user asks to stop and the agents' work so far is worth keeping, first `gnat send --now` them to stop, save what they have (commit it, or write the report or patch the task asked for), and reply with it, and wait for that reply. `gnat stop` and `gnat down` end the turn without a reply.
+- When the user asks to stop or pause and the agents' work so far is worth keeping, `gnat pause NAME [AGENT...] -m "Stop here: commit and push what you have, and reply with what's done and what isn't." --wait`. It gives each running turn the message at its next tool call, waits for the turns to end, and prints the replies; queued messages, and any sent meanwhile, start no turns until `gnat resume NAME [AGENT...]`. Don't use `gnat send --now` for this: when that turn ends, the next queued message starts another one. `gnat stop` and `gnat down` end the turn without a reply.
+- A paused agent stays paused through `gnat down` and `gnat up`; `gnat status` shows it as `idle, paused`. Messages queued before the pause, such as notes that `main` moved, run as soon as it resumes.
 
 ## Files outside source control
 
