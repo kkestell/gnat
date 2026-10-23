@@ -35,6 +35,8 @@ Agents run with permissions skipped and hold their harness's credential, so anyt
 
 To add packages or files, pass `gnat create --dockerfile FILE`, where `FILE` starts `FROM gnat-agent` (see `Dockerfile` in this repo). It is built with its own directory as the context, usually a checkout of the swarm's repository. Containers always start as UID 1000 in `/workspace` with `/opt/gnat/gnat-container` as the entrypoint, so a trailing `USER`, `WORKDIR`, `ENTRYPOINT`, or `CMD` doesn't matter. `gnat up` fails if the image lacks `git` or a harness the swarm uses.
 
+Agents run git as `agent`, which refuses a repository owned by another user ("detected dubious ownership"). If the Dockerfile clones a repository as root, such as a toolchain built from source, add `RUN git config --system --add safe.directory PATH` for it, or `chown` it to 1000.
+
 ## Files outside source control
 
 For files agents need that aren't in the repository, such as a `.env`, pass `--file` to `gnat create` or use `gnat file add`:

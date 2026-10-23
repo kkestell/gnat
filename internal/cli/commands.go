@@ -887,7 +887,7 @@ func send(swarmName string, agentArgs []string, o sendOptions) error {
 	if o.timeout != nil {
 		args = append(args, "--timeout", formatFloat(*o.timeout))
 	}
-	return docker(append([]string{"exec", container}, controlCommand(args...)...)...)
+	return dockerInOrder(append([]string{"exec", container}, controlCommand(args...)...)...)
 }
 
 // formatFloat is a number as Python's str(float) writes it, which the control plane parses.
@@ -935,7 +935,7 @@ func wait(swarmName string, agentArgs []string, timeout *float64, anyOf bool) er
 	if err != nil {
 		return err
 	}
-	return docker(append([]string{"exec", container}, controlCommand(args...)...)...)
+	return dockerInOrder(append([]string{"exec", container}, controlCommand(args...)...)...)
 }
 
 // agentStatus is a line of `gnat-container control status`: the control plane's view of

@@ -46,6 +46,9 @@ type command struct {
 	// capture returns the program's output instead of showing it, and quiet discards
 	// its standard output; otherwise both go to the terminal.
 	capture, quiet bool
+	// inOrder shows the program's standard output and then its standard error once it
+	// exits, since docker exec doesn't keep the order between them.
+	inOrder bool
 }
 
 type result struct{ stdout, stderr string }
@@ -62,7 +65,7 @@ var execute = func(c command) (result, error) {
 	}
 	var out, errs bytes.Buffer
 	switch {
-	case c.capture:
+	case c.capture, c.inOrder:
 		cmd.Stdout, cmd.Stderr = &out, &errs
 	case c.quiet:
 		cmd.Stderr = stderr
@@ -70,6 +73,10 @@ var execute = func(c command) (result, error) {
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 	}
 	err := cmd.Run()
+	if c.inOrder {
+		stdout.Write(out.Bytes())
+		stderr.Write(errs.Bytes())
+	}
 	res := result{out.String(), errs.String()}
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) {
@@ -99,6 +106,13 @@ func firstNonEmpty(values ...string) string {
 // docker runs docker, showing its output.
 func docker(args ...string) error {
 	_, err := execute(command{name: "docker", args: args})
+	return err
+}
+
+// dockerInOrder runs docker, showing its standard output and then its standard error
+// once it exits.
+func dockerInOrder(args ...string) error {
+	_, err := execute(command{name: "docker", args: args, inOrder: true})
 	return err
 }
 

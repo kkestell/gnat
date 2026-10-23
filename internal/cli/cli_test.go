@@ -68,6 +68,20 @@ func TestWaitAnyPassesItOn(t *testing.T) {
 	if last := f.lines()[len(f.lines())-1]; last != want {
 		t.Errorf("got %q, want %q", last, want)
 	}
+	if !f.calls[len(f.calls)-1].inOrder {
+		t.Error("wait's output isn't shown in order")
+	}
+}
+
+func TestInOrderShowsOutputThenErrorsAndKeepsTheStatus(t *testing.T) {
+	var both bytes.Buffer
+	savedOut, savedErr := stdout, stderr
+	t.Cleanup(func() { stdout, stderr = savedOut, savedErr })
+	stdout, stderr = &both, &both
+	_, err := execute(command{name: "sh", args: []string{"-c", "echo err >&2; echo out; exit 3"}, inOrder: true})
+	if both.String() != "out\nerr\n" || exitStatus(err) != 3 || err.Error() != "" {
+		t.Errorf("output %q, error %v", both.String(), err)
+	}
 }
 
 func TestFlagsMayFollowPositionals(t *testing.T) {
