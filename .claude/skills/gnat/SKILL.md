@@ -52,10 +52,13 @@ Use `--model` and `--effort` to make cheap agents for simple work (e.g. `--model
 
 Each agent has its own clone, so collisions show up as merge conflicts in PRs, not live. Prevent them:
 
+- Size the swarm to the work. When most of it runs through one critical path, a second coder mostly waits on the first; one coder and a reviewer will do nearly as much with fewer coordination turns.
 - Give each agent a distinct task, and distinct files or directories where possible. Name the files each owns in the message.
+- Split by feature, not by layer, when one layer can't be tested without the other. An agent that owns a library its teammate's code must first be able to call writes code it can't test, and reports itself blocked; one that takes a feature from end to end produces work that can be tested and merged.
 - Don't give two agents work that touches the same files, a shared lockfile, or the same generated output without telling them to coordinate (they can message each other, but two agents can reply to each other forever).
 - Separate files don't prevent conflicts in files every change registers itself in (a module list, a registry, a spec's index). Before sending, list those insertion points, and either give each agent a distinct place in them or plan to resolve them yourself and test the combined result in a scratch clone, even when each PR passes on its own.
 - Sequence dependent work: wait for the first PR to merge, then tell the next agent to pull `main` and start.
+- Prefer a short idle to a stack. Branch new work off `main`, not off an unmerged PR. When an agent's next task depends on its open PR, give it independent work or let it wait for the merge: each layer of a stack costs draft and ready changes, and a merge of `origin/main` at every layer below it, all of which cost more than one idle review.
 - Prefer one task per message with an explicit goal and a "done" condition. Agents can't see your conversation; include the issue text, file paths, and constraints.
 
 ## Sending work
@@ -70,6 +73,7 @@ echo "long task" | gnat send NAME AGENT    # message from stdin when -m is omitt
 - `--now`: deliver into the agent's running turn at its next tool call, for either harness (to redirect or add a constraint). If the turn ends first, it starts the next turn ahead of the queue. `gnat status` counts it as `(1 now)` until it's delivered. Don't use it for ordinary tasks.
 - `--wait [--timeout SECONDS]`: send, then block until the agents finish and print their final replies. Use it for short tasks; for long ones, send without it and poll.
 - Different tasks per agent need separate `send` commands, one per agent.
+- Every message is a turn of its own, at the agent's model and effort, with its whole context. Don't send notes that need no work now ("#38 merged; merge `origin/main` when convenient"): fold them into the agent's next task.
 
 ## Watching
 
@@ -122,9 +126,10 @@ Passing tests show a change does what its own tests check, not that it keeps the
 
 If the user delegates merging, or the work is a chain of dependent PRs where merging is part of the loop:
 
+- Merge each PR as soon as it's approved and passes on the host, before sending more work. Approved PRs left open grow stacks and merge conflicts.
 - Before merging, test the combined result in a scratch clone on the host: start from a freshly fetched `origin/main` (not the user's checkout, which may have diverged), fetch the PR branches, merge them locally in the order you'll merge them, and build and test from scratch on the host (anything built inside an agent's container is a Linux build).
-- Stacked PRs (B based on A's branch): retarget the top one at `main` (`gh pr edit B --base main`), merge it with `gh pr merge B --rebase`, which brings A's commits along, then close A (`gh pr close A`) with a comment naming B.
-- After each merge, tell agents whose work depends on it to merge `origin/main` into their branch before continuing.
+- Stacked PRs (B contains A's commits): check which merge methods the repository allows (`gh repo view --json mergeCommitAllowed,rebaseMergeAllowed,squashMergeAllowed`). With merge commits, merge A, then B, each with `gh pr merge --merge`; if B targets A's branch rather than `main`, retarget it first (`gh pr edit B --base main`). With rebase merging only, retarget B at `main`, merge it with `gh pr merge B --rebase`, which brings A's commits along, then close A (`gh pr close A`) with a comment naming B.
+- After a merge, tell agents whose work depends on it to merge `origin/main` into their branch, in their next task rather than in a message of its own.
 
 ## Review-only swarms
 
