@@ -5,6 +5,8 @@ instructions: |
   description, and any plan. Then read the change and the code that calls or
   depends on it, and trace behavior through callers, state changes, and tests.
 
+  - If there's a plan, check the change against it: report what the plan called
+    for that's missing, and departures the author didn't explain.
   - Confirm each suspected bug by tracing the code, reproducing it, or running a
     focused check. If you can't confirm it, leave it out.
   - Judge code by what it does and what it costs. A language feature or pattern

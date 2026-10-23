@@ -25,8 +25,8 @@ gnat up NAME
 
 - `gnat list` and `gnat agent list NAME` (name, harness, model, effort, merge) show what exists.
 - `gnat profiles list` and `gnat profiles list --swarm` show the user's agent profiles (role instructions and settings) and swarm profiles (a whole set of agents). Use one when it fits what the user asked for; flags override an agent profile's settings. `--profile` also takes a profile YAML file's path (anything with a slash or ending in `.yaml`/`.yml`).
-- `make install` provides four agent profiles: `coder` implements changes, `reviewer` reports code review findings, `researcher` investigates questions and compares options, and `orchestrator` hands out work to its teammates, has their pull requests reviewed, and merges them.
-- **You are the orchestrator.** When you drive gnat, you divide the work, send it, and decide what gets reviewed and merged, so don't create an `orchestrator` agent. Build the swarm from `coder`, `reviewer`, and `researcher` agents. Of the bundled swarm profiles, use `small` (two coders, two reviewers) or `large` (four of each), not `small-orchestrated` or `large-orchestrated`, which add an orchestrator.
+- `make install` provides five agent profiles: `coder` implements changes, `planner` plans them without making them, `reviewer` reports code review findings, `researcher` investigates questions and compares options, and `orchestrator` hands out work to its teammates, has their pull requests reviewed, and merges them.
+- **You are the orchestrator.** When you drive gnat, you divide the work, send it, and decide what gets reviewed and merged, so don't create an `orchestrator` agent. Build the swarm from `coder`, `planner`, `reviewer`, and `researcher` agents. Of the bundled swarm profiles, use `small` (two coders, two reviewers) or `large` (four of each), not `small-orchestrated` or `large-orchestrated`, which add an orchestrator.
 - `--harness` defaults to `claude` (Claude Code). `ox` runs Ox: `--model` takes a qualified ID such as `openrouter:deepseek/deepseek-v4.1-flash`. Efforts: for claude, `low`, `medium`, `high`, `xhigh`, `max`; for ox, `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (the model must support it). Both default to the harness's own.
 - A profile can set the harness, model, and effort too, and its settings win over these defaults: the bundled `reviewer` runs Ox on DeepSeek. If the user named a harness or model, pass it as a flag, and check `gnat agent list NAME` after creating agents.
 - `--dockerfile` is optional, and must start `FROM gnat-agent`. Use it only for packages the repo's build or tests need that the base image lacks. The base image has build-essential, python3, uv, git, and common CLI tools (`rg`, `fd`, `jq`, `sqlite3`, `ps`, `lsof`, ...). Once it exists (after any `gnat up`), check whether it already builds and tests the repo: `docker run --rm -e GH_TOKEN gnat-agent bash -c 'git clone -q https://x-access-token:$GH_TOKEN@github.com/OWNER/NAME r && cd r && TEST_COMMAND'` with `GH_TOKEN` exported. If that passes, leave `--dockerfile` out; if not, install only what failed. The build context is the Dockerfile's directory. If a test fails or flakes on `main` in the container, tell agents which one and why when you send work; otherwise each agent diagnoses it separately.
@@ -60,6 +60,21 @@ Each agent has its own clone, so collisions show up as merge conflicts in PRs, n
 - Sequence dependent work: wait for the first PR to merge, then tell the next agent to pull `main` and start.
 - Prefer a short idle to a stack. Branch new work off `main`, not off an unmerged PR. When an agent's next task depends on its open PR, give it independent work or let it wait for the merge: each layer of a stack costs draft and ready changes, and a merge of `origin/main` at every layer below it, all of which cost more than one idle review.
 - Prefer one task per message with an explicit goal and a "done" condition. Agents can't see your conversation; include the issue text, file paths, and constraints.
+
+## Planning
+
+The `coder` profile plans before it builds: unless the task includes a plan or says to go ahead without one, it reads the code, replies with a plan, and waits. That reply is the point to catch a wrong approach, before any code exists.
+
+- Read the plan against the task and the code. Send corrections in the same session (no `--new`), and approve with "The plan is approved; go ahead." For large or risky work, or a plan that settles a design decision, show the user first.
+- For small, obvious tasks, write "No plan needed; go ahead." in the task, so the coder doesn't spend a turn on one.
+- An agent with another profile or its own `--instructions` may not plan first; check its profile before relying on it.
+
+Add a `planner` agent when it should run a stronger model than the coders, or when it can plan the next task while a coder builds the current one, so the coder isn't idle through planning. Otherwise the coder's own plan is enough, and it keeps what it read while planning.
+
+- Send the planner the task. It replies with the plan and changes nothing; it doesn't commit, push, or message teammates.
+- Review the plan as above. To revise it, send feedback without `--new`, so the planner keeps what it read.
+- Send a coder the task with the approved plan in full, and say it's approved. Plans go through you, not from planner to coder by message or on a branch, so each is checked before code is written. The coder puts the plan in its PR description, which is the record.
+- When the PR is reviewed, say it has a plan: the `reviewer` profile checks the change against it.
 
 ## Sending work
 

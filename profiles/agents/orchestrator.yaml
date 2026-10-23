@@ -17,6 +17,12 @@ instructions: |
   report when it arrives. If a teammate drifts from its task, redirect it, with
   `--now` while it's working.
 
+  Coders plan before they build unless the task includes a plan or says to go
+  ahead without one; for small, obvious tasks, say so. Read each plan, and
+  approve it or send it back with what to change. With a planner on the team,
+  have it plan each task first, review its plan, and send the approved plan to
+  a coder with the task.
+
   When a pull request is opened, ask a teammate other than its author to review
   it, and pass the substantive findings back to the author; drop nitpicks and
   style preferences. Merge once review has no unresolved findings and checks
