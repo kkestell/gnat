@@ -48,10 +48,11 @@ const (
 	PRComment = "pr_comment"
 	PRReview  = "pr_review"
 	PRMerge   = "pr_merge"
-	// PRClose and PREdit act only on a pull request from one of the asking agent's own
-	// branches.
+	// PRClose, PREdit, and PRReady act only on a pull request from one of the asking
+	// agent's own branches. PRReady marks a draft ready for review.
 	PRClose = "pr_close"
 	PREdit  = "pr_edit"
+	PRReady = "pr_ready"
 	// GitIdentityAction asks who commits should be by: the name and email of the GitHub account
 	// the control plane's token belongs to (Response.Identity).
 	GitIdentityAction = "git_identity"

@@ -39,7 +39,7 @@ var repoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z`)
 // the request says about who is asking, or where, is believed. The agent is whoever's
 // secret it carries, the repository is always Repo, and the head of a pull request must
 // be under that agent's own branch prefix (see state.BranchPrefix), both to open one and
-// to close or edit it.
+// to close, edit, or mark it ready.
 type GitHub struct {
 	// Swarm is the swarm's name, the first part of every agent's branch prefix.
 	Swarm string
@@ -192,6 +192,21 @@ func (g *GitHub) do(ctx context.Context, c *Control, agent string, r protocol.Gi
 			return "", err
 		}
 		return g.update(ctx, "Edited", r.Number, changes)
+	case protocol.PRReady:
+		if err := needNumber(); err != nil {
+			return "", err
+		}
+		p, err := g.own(ctx, agent, r.Number)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case p.state() != "open":
+			return "", fmt.Errorf("#%d is %s", r.Number, p.state())
+		case !p.Draft:
+			return "", fmt.Errorf("#%d isn't a draft", r.Number)
+		}
+		return g.ready(ctx, p)
 	}
 	return "", fmt.Errorf("unknown action '%s'", r.Action)
 }
@@ -251,7 +266,7 @@ func (g *GitHub) own(ctx context.Context, agent string, number int) (pullJSON, e
 	}
 	ours := p.Head.Repo != nil && strings.EqualFold(p.Head.Repo.FullName, g.Repo)
 	if !ours || !strings.HasPrefix(p.Head.Ref, prefix) || p.Head.Ref == prefix {
-		return pullJSON{}, fmt.Errorf("agent '%s' may only close or edit pull requests from its own branches, named %sNAME; #%d is from %q",
+		return pullJSON{}, fmt.Errorf("agent '%s' may only close, edit, or mark ready pull requests from its own branches, named %sNAME; #%d is from %q",
 			agent, prefix, number, p.Head.Label)
 	}
 	return p, nil
@@ -266,8 +281,37 @@ func (g *GitHub) update(ctx context.Context, done string, number int, changes ma
 	return fmt.Sprintf("%s #%d: %s\n", done, number, p.HTMLURL), nil
 }
 
+// ready marks a draft pull request ready for review, which only GitHub's GraphQL API can.
+func (g *GitHub) ready(ctx context.Context, p pullJSON) (string, error) {
+	data, err := g.send(ctx, "POST", "/graphql", map[string]any{
+		"query":     "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }",
+		"variables": map[string]any{"id": p.NodeID},
+	}, "application/json")
+	if err != nil {
+		return "", err
+	}
+	var answer struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &answer); err != nil {
+		return "", fmt.Errorf("GitHub's answer: %w", err)
+	}
+	if len(answer.Errors) > 0 {
+		var messages []string
+		for _, e := range answer.Errors {
+			messages = append(messages, e.Message)
+		}
+		return "", fmt.Errorf("GitHub refused: %s", strings.Join(messages, "; "))
+	}
+	return fmt.Sprintf("Marked #%d ready for review: %s\n", p.Number, p.HTMLURL), nil
+}
+
 type pullJSON struct {
-	Number   int     `json:"number"`
+	Number int `json:"number"`
+	// NodeID is its ID in GitHub's GraphQL API.
+	NodeID   string  `json:"node_id"`
 	Title    string  `json:"title"`
 	Body     *string `json:"body"`
 	HTMLURL  string  `json:"html_url"`

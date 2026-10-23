@@ -177,14 +177,14 @@ inside its container instead.
 ## Pull requests
 
 Agents reach GitHub's pull requests through the control plane, which holds the
-GitHub token and enforces the rules, with `gnat-container pr create|list|view|diff|checks|comment|review|close|edit|merge`.
+GitHub token and enforces the rules, with `gnat-container pr create|list|view|diff|checks|comment|review|close|edit|ready|merge`.
 Each agent has a secret `gnat up` generates for it, which is how the control
 plane knows who is asking. Pull requests are always on the swarm's repository,
 and one is opened only from a branch named `SWARM/AGENT/...` (the swarm's and the
 agent's own name; names that would make invalid git refs, such as `a..b` or
-`x.lock`, are refused). An agent may close or edit (`pr edit NUMBER --title TEXT`,
-`--body TEXT`, or `--body-file FILE`) only a pull request whose head is one of its own
-branches in the swarm's repository. Only agents saved with `merge` (`gnat agent create --merge`,
+`x.lock`, are refused). An agent may close, edit (`pr edit NUMBER --title TEXT`,
+`--body TEXT`, or `--body-file FILE`), or mark a draft ready for review (`pr ready NUMBER`)
+only a pull request whose head is one of its own branches in the swarm's repository. Only agents saved with `merge` (`gnat agent create --merge`,
 or `merge: true` in a profile) may run `gnat-container pr merge`. A definition
 saved without it gives no permission.
 

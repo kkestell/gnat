@@ -78,6 +78,7 @@ func TestCommandsSendTheirRequestWithTheSecret(t *testing.T) {
 		{[]string{"edit", "3", "--title", "T", "--body-file", file}, "",
 			protocol.GitHubRequest{Action: protocol.PREdit, Number: 3, Title: "T", Body: "from a file"}},
 		{[]string{"edit", "3", "--body-file", "-"}, "piped", protocol.GitHubRequest{Action: protocol.PREdit, Number: 3, Body: "piped"}},
+		{[]string{"ready", "#3"}, "", protocol.GitHubRequest{Action: protocol.PRReady, Number: 3}},
 	} {
 		got := fake(t, "the output\n", nil)
 		out, errs, status := do(c.args, c.stdin)
@@ -100,6 +101,7 @@ func TestUsageErrorsSendNothing(t *testing.T) {
 		{"create", "--title", "T", "--body", "a", "--body-file", "x"},
 		{"view", "1", "--nope"},
 		{"close"}, {"close", "1", "2"}, {"close", "1", "--body", "x"},
+		{"ready"}, {"ready", "1", "2"},
 		{"edit"}, {"edit", "1"}, {"edit", "1", "--title", " "}, {"edit", "1", "--body", ""},
 		{"edit", "1", "--title", "T", "--body", "  "}, {"edit", "1", "--body-file", "-"},
 		{"edit", "1", "--body", "a", "--body-file", "x"},

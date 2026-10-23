@@ -336,15 +336,16 @@ func TestGitHubRefusesToCloseOrEditOthersPullRequests(t *testing.T) {
 	for _, n := range []int{5, 6, 7, 8, 9, 10} {
 		for _, r := range []protocol.GitHubRequest{
 			{Action: protocol.PRClose, Number: n}, {Action: protocol.PREdit, Number: n, Title: "t"},
+			{Action: protocol.PRReady, Number: n},
 		} {
-			p.refused(gh("alpha-secret", r), "may only close or edit pull requests from its own branches, named demo/alpha/NAME")
+			p.refused(gh("alpha-secret", r), "may only close, edit, or mark ready pull requests from its own branches, named demo/alpha/NAME")
 		}
 	}
 	// The secret says who is asking, not the request, and merging rights don't help.
 	forged := gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 6})
 	forged.Agent = "alpha"
-	p.refused(forged, "agent 'beta' may only close or edit")
-	p.refused(gh("merger-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 5}), "agent 'merger' may only close or edit")
+	p.refused(forged, "agent 'beta' may only close, edit, or mark ready")
+	p.refused(gh("merger-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 5}), "agent 'merger' may only close, edit, or mark ready")
 	for _, r := range f.asked() {
 		if r.method != "GET" {
 			t.Fatalf("GitHub was asked to %s %s", r.method, r.path)
@@ -368,6 +369,36 @@ func TestGitHubCloseAndEditCheckTheirArguments(t *testing.T) {
 		"head": map[string]any{"ref": "demo/alpha/x", "repo": map[string]any{"full_name": "o/r"}}}
 	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 5}), "#5 is already merged")
 	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRClose, Number: 4}), "404 Not Found")
+}
+
+func TestGitHubMarksTheAgentsOwnDraftsReady(t *testing.T) {
+	f := newFakeGitHub(t)
+	draft := pull(5, "demo/alpha/x", "o/r", "open")
+	draft["draft"], draft["node_id"] = true, "PR_kw5"
+	f.answers["GET /repos/o/r/pulls/5"] = draft
+	f.answers["POST /graphql"] = map[string]any{"data": map[string]any{}}
+	p := githubPlane(t, f)
+	ready := gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRReady, Number: 5})
+	if resp := p.must(ready); resp.Output != "Marked #5 ready for review: https://github.com/o/r/pull/5\n" {
+		t.Errorf("got %q", resp.Output)
+	}
+	got := f.asked()
+	if len(got) != 2 || got[1].method != "POST" || got[1].path != "/graphql" || got[1].auth != "Bearer "+fakeToken {
+		t.Fatalf("asked %+v", got)
+	}
+	query, _ := got[1].body["query"].(string)
+	if !strings.Contains(query, "markPullRequestReadyForReview") || !reflect.DeepEqual(got[1].body["variables"], map[string]any{"id": "PR_kw5"}) {
+		t.Errorf("asked GraphQL %v", got[1].body)
+	}
+
+	f.answers["POST /graphql"] = map[string]any{"errors": []map[string]any{{"message": "Pull request is not a draft"}}}
+	p.refused(ready, "GitHub refused: Pull request is not a draft")
+
+	f.answers["GET /repos/o/r/pulls/5"] = pull(5, "demo/alpha/x", "o/r", "open")
+	p.refused(ready, "#5 isn't a draft")
+	f.answers["GET /repos/o/r/pulls/5"] = pull(5, "demo/alpha/x", "o/r", "closed")
+	p.refused(ready, "#5 is closed")
+	p.refused(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRReady}), "number is required")
 }
 
 func TestGitHubMergeReportsWhatGitHubRefuses(t *testing.T) {

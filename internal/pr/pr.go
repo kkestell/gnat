@@ -30,8 +30,9 @@ commands:
   merge NUMBER [--merge | --squash | --rebase]   (only for agents allowed to merge)
   close NUMBER
   edit NUMBER [--title TITLE] [--body TEXT | --body-file FILE]
+  ready NUMBER   (mark a draft ready for review)
 
-close and edit work only on pull requests from your own branches.
+close, edit, and ready work only on pull requests from your own branches.
 A body of "-" for --body-file is read from stdin.`
 
 // call makes a request to the control plane; a variable so tests can fake it.
@@ -88,7 +89,7 @@ func run(args []string, secret string, stdin io.Reader, stdout, stderr io.Writer
 		needsNumber = false
 		fs.StringVar(&status, "state", "open", "open, closed, merged, or all")
 		fs.IntVar(&limit, "limit", 30, "the most pull requests to list")
-	case "view", "diff", "checks", "close":
+	case "view", "diff", "checks", "close", "ready":
 	case "comment":
 		fs.StringVar(&body, "body", "", "the comment")
 		fs.StringVar(&bodyFile, "body-file", "", "read the comment from `FILE` (- for stdin)")
@@ -217,7 +218,7 @@ func run(args []string, secret string, stdin io.Reader, stdout, stderr io.Writer
 var actions = map[string]string{
 	"create": protocol.PRCreate, "list": protocol.PRList, "view": protocol.PRView, "diff": protocol.PRDiff,
 	"checks": protocol.PRChecks, "comment": protocol.PRComment, "review": protocol.PRReview, "merge": protocol.PRMerge,
-	"close": protocol.PRClose, "edit": protocol.PREdit,
+	"close": protocol.PRClose, "edit": protocol.PREdit, "ready": protocol.PRReady,
 }
 
 // request is the request for a command: its pull request number if it takes one, then
