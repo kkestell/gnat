@@ -33,6 +33,9 @@ commands:
   ready NUMBER   (mark a draft ready for review)
 
 close, edit, and ready work only on pull requests from your own branches.
+review --approve and --request-changes also label the pull request gnat:approved or
+gnat:changes-requested, and are posted as comments on the operator's own pull requests,
+which GitHub doesn't let it approve.
 A body of "-" for --body-file is read from stdin.`
 
 // call makes a request to the control plane; a variable so tests can fake it.

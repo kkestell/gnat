@@ -183,7 +183,7 @@ func TestAgentInstructionsSayWhatTheAgentMayPushAndHowToUsePullRequests(t *testi
 	text := AgentInstructions("x", nil, "GH_TOKEN", "demo/alpha/")
 	for _, want := range []string{
 		"push only to branches named `demo/alpha/NAME`", "force-pushing",
-		"`/opt/gnat/gnat-container pr`", "approving one fails",
+		"`/opt/gnat/gnat-container pr`", "`gnat:approved`",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q", want)

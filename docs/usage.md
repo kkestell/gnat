@@ -170,7 +170,12 @@ and one is opened only from a branch named `SWARM/AGENT/...` (the swarm's and th
 agent's own name; names that would make invalid git refs, such as `a..b` or
 `x.lock`, are refused). An agent may close, edit (`pr edit NUMBER --title TEXT`,
 `--body TEXT`, or `--body-file FILE`), or mark a draft ready for review (`pr ready NUMBER`)
-only a pull request whose head is one of its own branches in the swarm's repository. Only agents saved with `merge` (`gnat agent create --merge`,
+only a pull request whose head is one of its own branches in the swarm's repository.
+`pr review --approve` and `--request-changes` also label the pull request
+`gnat:approved` or `gnat:changes-requested` (taking away the other), so
+`gh pr list --label gnat:approved` lists what agents have approved. Pull requests
+opened by the operator's account, as the agents' are, can't be approved by it, so
+on those the verdict is posted as a comment that says which. Only agents saved with `merge` (`gnat agent create --merge`,
 or `merge: true` in a profile) may run `gnat-container pr merge`. A definition
 saved without it gives no permission.
 

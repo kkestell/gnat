@@ -423,11 +423,12 @@ func TestGitHubOnlyEverTouchesTheSwarmsRepository(t *testing.T) {
 		{Action: protocol.PRCreate, Title: "t", Head: "demo/merger/x"}, // Asks for the default branch.
 		{Action: protocol.PRCreate, Title: "t", Head: "demo/merger/x", Base: "main"}, {Action: protocol.PRMerge, Number: 1},
 		{Action: protocol.PRClose, Number: 1}, {Action: protocol.PREdit, Number: 1, Title: "t"},
+		{Action: protocol.PRReady, Number: 1},
 	} {
 		_, _ = p.request(gh("merger-secret", a)) // GitHub answers 404; only where it was asked matters.
 	}
 	got := f.asked()
-	if len(got) != 12 {
+	if len(got) != 13 {
 		t.Fatalf("asked %+v", got)
 	}
 	defaultBranch := false
@@ -466,14 +467,15 @@ func TestGitHubListsPullRequests(t *testing.T) {
 		{"number": 3, "title": "Open one", "html_url": "u3", "state": "open", "draft": true, "head": map[string]any{"ref": "demo/alpha/a"},
 			"base": map[string]any{"ref": "main"}, "user": map[string]any{"login": "kyle"}},
 		{"number": 2, "title": "Merged one", "html_url": "u2", "state": "closed", "merged_at": "2026-01-01T00:00:00Z",
-			"head": map[string]any{"ref": "demo/beta/b"}, "base": map[string]any{"ref": "main"}, "user": map[string]any{"login": "kyle"}},
+			"head": map[string]any{"ref": "demo/beta/b"}, "base": map[string]any{"ref": "main"}, "user": map[string]any{"login": "kyle"},
+			"labels": []map[string]any{{"name": "gnat:approved"}, {"name": "bug"}}},
 		{"number": 1, "title": "Closed one", "html_url": "u1", "state": "closed",
 			"head": map[string]any{"ref": "c"}, "base": map[string]any{"ref": "main"}, "user": map[string]any{"login": "kyle"}},
 	}
 	p := githubPlane(t, f)
 	all := p.must(gh("alpha-secret", protocol.GitHubRequest{Action: protocol.PRList, State: "all"})).Output
 	want := "#3\topen\tOpen one\tdemo/alpha/a → main\tkyle (u3, draft)\n" +
-		"#2\tmerged\tMerged one\tdemo/beta/b → main\tkyle (u2)\n" +
+		"#2\tmerged\tMerged one\tdemo/beta/b → main\tkyle (u2, gnat:approved, bug)\n" +
 		"#1\tclosed\tClosed one\tc → main\tkyle (u1)\n"
 	if all != want {
 		t.Errorf("got:\n%s\nwant:\n%s", all, want)
@@ -500,7 +502,7 @@ func TestGitHubViewShowsCommentsAndReviews(t *testing.T) {
 		"number": 4, "title": "Add x", "body": "Does x.\nTwice.", "html_url": "u4", "state": "open",
 		"mergeable": false, "mergeable_state": "dirty", "changed_files": 2, "additions": 10, "deletions": 3,
 		"head": map[string]any{"ref": "demo/alpha/x", "sha": "abc1234"}, "base": map[string]any{"ref": "main"},
-		"user": map[string]any{"login": "kyle"},
+		"user": map[string]any{"login": "kyle"}, "labels": []map[string]any{{"name": "gnat:changes-requested"}},
 	}
 	f.answers["GET /repos/o/r/pulls/4/reviews"] = []map[string]any{
 		{"user": map[string]any{"login": "rev"}, "state": "CHANGES_REQUESTED", "body": "Fix y.", "submitted_at": "t1"},
@@ -517,6 +519,7 @@ func TestGitHubViewShowsCommentsAndReviews(t *testing.T) {
 u4
 demo/alpha/x → main, opened by kyle
 2 changed files, +10 -3
+Labels: gnat:changes-requested
 Mergeable: no (dirty)
 
 Does x.
@@ -571,18 +574,90 @@ func TestGitHubDiffChecksCommentAndReview(t *testing.T) {
 	if got := p.must(gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRComment, Number: 4, Body: "hi"})).Output; got != "Commented on #4: uc\n" {
 		t.Errorf("comment %q", got)
 	}
+	// Someone else's pull request gets a real verdict, and the label.
+	f.answers["GET /repos/o/r/pulls/4"] = map[string]any{"number": 4, "user": map[string]any{"login": "someone"}}
+	f.answers["GET /user"] = map[string]any{"login": "theuser", "id": 42}
 	f.answers["POST /repos/o/r/pulls/4/reviews"] = map[string]any{"html_url": "ur"}
+	f.answers["POST /repos/o/r/labels"] = map[string]any{}
+	f.answers["POST /repos/o/r/issues/4/labels"] = []any{}
 	got := p.must(gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRReview, Number: 4, Review: protocol.ReviewRequestChanges, Body: "no"})).Output
-	if got != "Reviewed #4 (request changes): ur\n" {
+	if got != "Reviewed #4 (request changes): ur\nLabeled #4 gnat:changes-requested\n" {
 		t.Errorf("review %q", got)
 	}
-	last := f.asked()[len(f.asked())-1]
-	if last.body["event"] != "REQUEST_CHANGES" || last.body["body"] != "no" {
-		t.Errorf("review body %v", last.body)
+	asked := f.asked()
+	review := asked[len(asked)-3]
+	if review.path != "/repos/o/r/pulls/4/reviews" || review.body["event"] != "REQUEST_CHANGES" || review.body["body"] != "no" {
+		t.Errorf("review %+v", review)
 	}
 	p.must(gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRReview, Number: 4, Review: protocol.ReviewApprove}))
-	if last := f.asked()[len(f.asked())-1]; last.body["event"] != "APPROVE" {
-		t.Errorf("review body %v", last.body)
+	asked = f.asked()
+	if review := asked[len(asked)-3]; review.body["event"] != "APPROVE" {
+		t.Errorf("review body %v", review.body)
+	}
+
+	// A comment is no verdict: no label, and no need to look at the pull request.
+	before := len(f.asked())
+	p.must(gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRReview, Number: 4, Review: protocol.ReviewComment, Body: "hm"}))
+	if asked := f.asked()[before:]; len(asked) != 1 || asked[0].body["event"] != "COMMENT" {
+		t.Errorf("asked %+v", asked)
+	}
+}
+
+func TestGitHubReviewsTheOperatorsOwnPullRequestsWithACommentAndALabel(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.answers["GET /repos/o/r/pulls/4"] = map[string]any{"number": 4, "user": map[string]any{"login": "TheUser"},
+		"labels": []map[string]any{{"name": "bug"}, {"name": "gnat:changes-requested"}}}
+	f.answers["GET /user"] = map[string]any{"login": "theuser", "id": 42}
+	f.answers["POST /repos/o/r/pulls/4/reviews"] = map[string]any{"html_url": "ur"}
+	f.answers["POST /repos/o/r/labels"] = map[string]any{}
+	f.answers["POST /repos/o/r/issues/4/labels"] = []any{}
+	f.answers["DELETE /repos/o/r/issues/4/labels/gnat:changes-requested"] = []any{}
+	p := githubPlane(t, f)
+	got := p.must(gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRReview, Number: 4, Review: protocol.ReviewApprove, Body: "Looks right."})).Output
+	want := "Reviewed #4 (approve, as a comment, since the pull request's author is the account reviewing it): ur\nLabeled #4 gnat:approved\n"
+	if got != want {
+		t.Errorf("got %q", got)
+	}
+	var did []string
+	for _, r := range f.asked() {
+		did = append(did, r.method+" "+r.path)
+	}
+	if want := []string{"GET /repos/o/r/pulls/4", "GET /user", "POST /repos/o/r/pulls/4/reviews", "POST /repos/o/r/labels",
+		"POST /repos/o/r/issues/4/labels", "DELETE /repos/o/r/issues/4/labels/gnat:changes-requested"}; !reflect.DeepEqual(did, want) {
+		t.Fatalf("asked %v", did)
+	}
+	asked := f.asked()
+	if b := asked[2].body; b["event"] != "COMMENT" || b["body"] != "**Approved.**\n\nLooks right." {
+		t.Errorf("review %v", b)
+	}
+	if b := asked[3].body; b["name"] != "gnat:approved" || b["color"] == "" {
+		t.Errorf("label made %v", b)
+	}
+	if b := asked[4].body; !reflect.DeepEqual(b["labels"], []any{"gnat:approved"}) {
+		t.Errorf("labels added %v", b)
+	}
+
+	// A label it already has isn't added again, and one the repository can't give is
+	// reported without undoing the review.
+	f.answers["GET /repos/o/r/pulls/4"] = map[string]any{"number": 4, "user": map[string]any{"login": "theuser"}}
+	delete(f.answers, "POST /repos/o/r/issues/4/labels")
+	got = p.must(gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRReview, Number: 4, Review: protocol.ReviewRequestChanges, Body: "No."})).Output
+	want = "Reviewed #4 (request changes, as a comment, since the pull request's author is the account reviewing it): ur\n" +
+		"Couldn't label #4 gnat:changes-requested: GitHub answered 404 Not Found: Not Found\n"
+	if got != want {
+		t.Errorf("got %q", got)
+	}
+	if b := f.asked()[7].body; b["body"] != "**Changes requested.**\n\nNo." {
+		t.Errorf("review %v", b)
+	}
+	before := len(f.asked())
+	f.answers["GET /repos/o/r/pulls/4"] = map[string]any{"number": 4, "user": map[string]any{"login": "theuser"},
+		"labels": []map[string]any{{"name": "gnat:approved"}}}
+	p.must(gh("beta-secret", protocol.GitHubRequest{Action: protocol.PRReview, Number: 4, Review: protocol.ReviewApprove}))
+	for _, r := range f.asked()[before:] {
+		if strings.Contains(r.path, "labels") {
+			t.Errorf("asked %s %s", r.method, r.path)
+		}
 	}
 }
 

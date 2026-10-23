@@ -52,6 +52,7 @@ type GitHub struct {
 
 	identityMu *sync.Mutex
 	who        *protocol.GitIdentity
+	login      string
 }
 
 // EnableGitHub lets the agents act on GitHub through the control plane.
@@ -337,9 +338,30 @@ type pullJSON struct {
 	User struct {
 		Login string `json:"login"`
 	} `json:"user"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
 	Additions    int `json:"additions"`
 	Deletions    int `json:"deletions"`
 	ChangedFiles int `json:"changed_files"`
+}
+
+func (p pullJSON) hasLabel(name string) bool {
+	for _, l := range p.Labels {
+		if l.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// labels is the names of the pull request's labels, joined by commas.
+func (p pullJSON) labels() string {
+	names := make([]string, len(p.Labels))
+	for i, l := range p.Labels {
+		names[i] = l.Name
+	}
+	return strings.Join(names, ", ")
 }
 
 func (p pullJSON) state() string {
@@ -379,11 +401,14 @@ func (g *GitHub) list(ctx context.Context, r protocol.GitHubRequest) (string, er
 		if n++; n > limit {
 			break
 		}
-		draft := ""
+		extra := ""
 		if p.Draft {
-			draft = ", draft"
+			extra = ", draft"
 		}
-		fmt.Fprintf(&out, "#%d\t%s\t%s\t%s → %s\t%s (%s%s)\n", p.Number, p.state(), p.Title, p.Head.Ref, p.Base.Ref, p.User.Login, p.HTMLURL, draft)
+		if len(p.Labels) > 0 {
+			extra += ", " + p.labels()
+		}
+		fmt.Fprintf(&out, "#%d\t%s\t%s\t%s → %s\t%s (%s%s)\n", p.Number, p.state(), p.Title, p.Head.Ref, p.Base.Ref, p.User.Login, p.HTMLURL, extra)
 	}
 	if n == 0 {
 		return "No pull requests.\n", nil
@@ -439,6 +464,9 @@ func (g *GitHub) view(ctx context.Context, number int) (string, error) {
 	}
 	fmt.Fprintf(&out, "#%d %s [%s]\n%s\n%s → %s, opened by %s\n", p.Number, p.Title, state, p.HTMLURL, p.Head.Ref, p.Base.Ref, p.User.Login)
 	fmt.Fprintf(&out, "%d changed files, +%d -%d\n", p.ChangedFiles, p.Additions, p.Deletions)
+	if len(p.Labels) > 0 {
+		fmt.Fprintf(&out, "Labels: %s\n", p.labels())
+	}
 	switch {
 	case p.state() != "open":
 	case p.Mergeable == nil:
@@ -544,13 +572,24 @@ func (g *GitHub) checks(ctx context.Context, number int) (string, error) {
 	return out.String(), nil
 }
 
+// The labels a review that approves a pull request or asks for changes gives it, taking
+// away the other, so the pull requests agents have approved can be listed without reading
+// their reviews.
+const (
+	ApprovedLabel = "gnat:approved"
+	ChangesLabel  = "gnat:changes-requested"
+)
+
+// labelColors are the labels' colors, for making them in a repository that lacks them.
+var labelColors = map[string]string{ApprovedLabel: "0e8a16", ChangesLabel: "d93f0b"}
+
 func (g *GitHub) review(ctx context.Context, r protocol.GitHubRequest) (string, error) {
-	var event string
+	var event, label, other, verdict string
 	switch r.Review {
 	case protocol.ReviewApprove:
-		event = "APPROVE"
+		event, label, other, verdict = "APPROVE", ApprovedLabel, ChangesLabel, "Approved."
 	case protocol.ReviewRequestChanges:
-		event = "REQUEST_CHANGES"
+		event, label, other, verdict = "REQUEST_CHANGES", ChangesLabel, ApprovedLabel, "Changes requested."
 	case protocol.ReviewComment:
 		event = "COMMENT"
 	default:
@@ -559,9 +598,30 @@ func (g *GitHub) review(ctx context.Context, r protocol.GitHubRequest) (string, 
 	if event != "APPROVE" && strings.TrimSpace(r.Body) == "" {
 		return "", errors.New("a review that doesn't approve needs text")
 	}
-	body := map[string]any{"event": event}
-	if r.Body != "" {
-		body["body"] = r.Body
+	kind := strings.ToLower(strings.ReplaceAll(event, "_", " "))
+	posted, text := event, r.Body
+	var p pullJSON
+	if label != "" {
+		if err := g.json(ctx, "GET", fmt.Sprintf("/pulls/%d", r.Number), nil, &p); err != nil {
+			return "", err
+		}
+		if _, err := g.identity(ctx); err != nil {
+			return "", err
+		}
+		// GitHub refuses to let a pull request's author approve it or ask for changes,
+		// and the agents' pull requests are opened by the token's account, so the
+		// verdict goes in a comment, and in the label.
+		if strings.EqualFold(p.User.Login, g.login) {
+			posted, kind = "COMMENT", kind+", as a comment, since the pull request's author is the account reviewing it"
+			text = "**" + verdict + "**"
+			if strings.TrimSpace(r.Body) != "" {
+				text += "\n\n" + r.Body
+			}
+		}
+	}
+	body := map[string]any{"event": posted}
+	if text != "" {
+		body["body"] = text
 	}
 	var made struct {
 		HTMLURL string `json:"html_url"`
@@ -569,7 +629,35 @@ func (g *GitHub) review(ctx context.Context, r protocol.GitHubRequest) (string, 
 	if err := g.json(ctx, "POST", fmt.Sprintf("/pulls/%d/reviews", r.Number), body, &made); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Reviewed #%d (%s): %s\n", r.Number, strings.ToLower(strings.ReplaceAll(event, "_", " ")), made.HTMLURL), nil
+	out := fmt.Sprintf("Reviewed #%d (%s): %s\n", r.Number, kind, made.HTMLURL)
+	if label == "" {
+		return out, nil
+	}
+	if err := g.label(ctx, p, label, other); err != nil {
+		return out + fmt.Sprintf("Couldn't label #%d %s: %v\n", r.Number, label, err), nil
+	}
+	return out + fmt.Sprintf("Labeled #%d %s\n", r.Number, label), nil
+}
+
+// label gives the pull request the label, making it in the repository first if it isn't
+// there, and takes away other if the pull request has it.
+func (g *GitHub) label(ctx context.Context, p pullJSON, label, other string) error {
+	if !p.hasLabel(label) {
+		// Making a label the repository already has fails; adding it then says whether
+		// it's there.
+		_, _ = g.request(ctx, "POST", "/labels", map[string]any{"name": label, "color": labelColors[label]},
+			"application/vnd.github+json")
+		var labels []struct{}
+		if err := g.json(ctx, "POST", fmt.Sprintf("/issues/%d/labels", p.Number), map[string]any{"labels": []string{label}}, &labels); err != nil {
+			return err
+		}
+	}
+	if p.hasLabel(other) {
+		_, err := g.request(ctx, "DELETE", fmt.Sprintf("/issues/%d/labels/%s", p.Number, url.PathEscape(other)), nil,
+			"application/vnd.github+json")
+		return err
+	}
+	return nil
 }
 
 func (g *GitHub) merge(ctx context.Context, r protocol.GitHubRequest) (string, error) {
@@ -631,6 +719,7 @@ func (g *GitHub) identity(ctx context.Context) (*protocol.GitIdentity, error) {
 		name = *user.Name
 	}
 	g.who = &protocol.GitIdentity{Name: name, Email: fmt.Sprintf("%d+%s@users.noreply.github.com", user.ID, user.Login)}
+	g.login = user.Login
 	return g.who, nil
 }
 
