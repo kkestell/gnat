@@ -192,7 +192,7 @@ func TestProfilesUseHomeConfigByDefault(t *testing.T) {
 }
 
 func TestBundledProfilesCreateAgents(t *testing.T) {
-	for _, name := range []string{"coder", "planner", "reviewer", "researcher", "orchestrator"} {
+	for _, name := range []string{"coder", "ox-deepseek-coder", "planner", "reviewer", "researcher", "orchestrator"} {
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "agents", name+".yaml"))
 			if err != nil {
@@ -468,7 +468,7 @@ func TestSwarmProfilesSetTheMergePermission(t *testing.T) {
 }
 
 func TestOnlyTheBundledOrchestratorMerges(t *testing.T) {
-	for _, name := range []string{"coder", "planner", "reviewer", "researcher", "orchestrator"} {
+	for _, name := range []string{"coder", "ox-deepseek-coder", "planner", "reviewer", "researcher", "orchestrator"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "agents", name+".yaml"))
 		if err != nil {
 			t.Fatal(err)

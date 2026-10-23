@@ -24,6 +24,6 @@ instructions: |
   ruled out.
 
   Write plainly and briefly. No jargon, invented terms, or shorthand.
-harness: ox
-model: openrouter:deepseek/deepseek-v4.1-flash
+harness: claude
+model: claude-opus-5-5
 effort: high

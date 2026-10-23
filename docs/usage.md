@@ -33,19 +33,19 @@ Commands for a swarm take its name first. Commands that address agents take thei
 
 ## Agent profiles
 
-`make install` includes five agent profiles from the repository's
-`profiles/agents` directory: `coder` implements changes, `planner` plans them
+`make install` includes six agent profiles from the repository's
+`profiles/agents` directory: `coder` implements changes (`ox-deepseek-coder`
+too, more cheaply), `planner` plans them
 without making them, `reviewer` reports code review findings, `researcher`
 investigates questions and compares options, and `orchestrator` hands out work
 to its teammates, has their pull requests reviewed, and merges them. They
 provide role instructions. `coder` replies with a plan and waits for approval
 before building, unless its task includes a plan or says to go ahead without
 one; `planner` replies with a plan and changes nothing; `reviewer` checks a
-change against its plan. `orchestrator` and `planner` run
-`claude-opus-5-5`, `coder` runs `claude-sonnet-5-5`, and `reviewer` runs
-`openrouter:deepseek/deepseek-v4.1-flash` on Ox, each at `high` effort;
-`researcher` uses the default harness, model, and effort. Existing profile files
-are preserved during installation, so you can customize them.
+change against its plan. Each runs `claude-opus-5-5` at `high` effort.
+`ox-deepseek-coder` is `coder` on Ox with
+`openrouter:deepseek/deepseek-v4.1-flash`. Existing profile
+files are preserved during installation, so you can customize them.
 
 Save reusable agent settings in `~/.config/gnat/profiles/agents/NAME.yaml`
 (`$XDG_CONFIG_HOME/gnat/profiles/agents/NAME.yaml` when set). For example,

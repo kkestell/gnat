@@ -39,5 +39,5 @@ instructions: |
 
   Write plainly and briefly. No jargon, invented terms, or shorthand.
 harness: claude
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 effort: high
