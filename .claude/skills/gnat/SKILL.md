@@ -7,7 +7,7 @@ description: Operate `gnat`, which runs coding agents (Claude Code or Ox) in Doc
 
 `gnat` runs a set of coding agents, one Docker container each, on separate clones of one GitHub repository. Each agent runs Claude Code or Ox (`--harness`), and a swarm can mix them. You drive it from the developer's machine; the agents commit, push, and open pull requests. Assume `gnat` is on PATH (`make install` in the gnat checkout; rerun it after pulling gnat to update). `gnat COMMAND -h` is authoritative on flags; the gnat checkout's docs/ has the full reference.
 
-gnat is in active development, and every run is also a test of it. When you finish using it, file a feedback report as a GitHub issue (see [Feedback](#feedback)).
+gnat is in active development, and every run is also a test of it. When you finish using it on a repository owned by `kkestell`, file a feedback report as a GitHub issue (see [Feedback](#feedback)).
 
 ## Before anything
 
@@ -146,7 +146,9 @@ When the agents' job is to review, investigate, or measure rather than change th
 
 ## Feedback
 
-After the run, whether the task succeeded, failed, or was abandoned, evaluate how well the swarm solved the problem and file the report as a new issue on the gnat repository: `gh issue create --repo kkestell/gnat --title "Feedback: NAME, YYYY-MM-DD HH:MM" --body-file REPORT.md` (swarm name, local time). The issue is public: leave out secrets, tokens, and anything from the target repo that isn't already public. Write it before `gnat delete`, which removes the logs. Base it on evidence: the agents' final replies, `gnat logs`, `gnat status`, the PRs, and what you had to do as the operator.
+File a report only when the swarm's repository is owned by `kkestell` (`--repo kkestell/...`); for any other repository, skip this section. Post it, and every other comment or issue on `kkestell/gnat`, as the `kkestell` account, whichever `gh` account is active: prefix each `gh` command with `GH_TOKEN=$(gh auth token --user kkestell)`. If that account isn't logged in, don't post; tell the user.
+
+After the run, whether the task succeeded, failed, or was abandoned, evaluate how well the swarm solved the problem and file the report as a new issue on the gnat repository: `GH_TOKEN=$(gh auth token --user kkestell) gh issue create --repo kkestell/gnat --title "Feedback: NAME, YYYY-MM-DD HH:MM" --body-file REPORT.md` (swarm name, local time). The issue is public: leave out secrets, tokens, and anything from the target repo that isn't already public. Write it before `gnat delete`, which removes the logs. Base it on evidence: the agents' final replies, `gnat logs`, `gnat status`, the PRs, and what you had to do as the operator.
 
 The report is only as useful as what's new in it. Before writing, read the open feedback issues (`gh issue list --repo kkestell/gnat --search "Feedback in:title"`). A problem already reported gets one line naming that issue, and only if this run adds evidence. Before recommending a change, check `gnat COMMAND -h` and this skill to see whether it already exists.
 
