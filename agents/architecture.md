@@ -58,7 +58,7 @@ An agent's daemon is its container's main process, restarted by Docker on failur
 
 Every harness is translated, in the agent container, into the same event format before anything leaves it. The control plane, the readable logs, `events.jsonl`, `gnat wait`'s reply, usage totals, and the web UI know nothing of any harness's own output, and adding a harness touches nothing on the control plane's side. Events are maps rather than structs because they cross the wire and into files that readers of other builds, and the UI, must read while ignoring what they don't know.
 
-The control plane adds its own events for what only it sees: a message arriving, a message sent to a teammate, and a turn ending. With those, `events.jsonl` is the whole history of a swarm, and the web UI is a pure function of it: the page replays every record, then follows new ones, and rebuilds each agent's transcript and totals itself. The server keeps no UI state. The readable log is a rendering of the same stream for `tail`.
+The control plane adds its own events for what only it sees: a message arriving, a message sent to a teammate, and a turn ending. With those, `events.jsonl` is the whole history of a swarm, and the web UI is a pure function of it: the page replays every record, then follows new ones, and rebuilds each agent's transcript and totals itself. The server keeps no UI state. The readable log is a rendering of the same stream for `tail`. The host also reads `events.jsonl` through `recorded` for `gnat logs --replies`, which recovers complete final replies with their turn and task sender, even while the swarm is down.
 
 ## Harnesses
 

@@ -1,6 +1,6 @@
-// Package recorded reads what the control plane keeps in control.db, which the host reads
-// too: `gnat status` reports a swarm that is down from it. The control plane writes the
-// database (see the control package) and uses the loaders here to read it back.
+// Package recorded reads the control plane's files: control.db for status and
+// events.jsonl for final replies. Both can be read while the swarm is down. The
+// control plane writes the database and uses the loaders here to read it back.
 package recorded
 
 import (

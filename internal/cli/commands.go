@@ -251,9 +251,12 @@ func copyCommand() *cobra.Command {
 
 func logsCommand() *cobra.Command {
 	var lines int
-	var follow bool
+	var follow, replies bool
 	c := &cobra.Command{Use: "logs SWARM" + agentsUsage, Short: "show agents' messages and output", Args: cobra.MinimumNArgs(1)}
 	c.RunE = action(func(cmd *cobra.Command, args []string) error {
+		if replies {
+			return replyLogs(args[0], args[1:])
+		}
 		tail := "+1"
 		if cmd.Flags().Changed("lines") {
 			tail = strconv.Itoa(lines)
@@ -262,6 +265,9 @@ func logsCommand() *cobra.Command {
 	}).run
 	c.Flags().IntVarP(&lines, "lines", "n", 0, "show only the last `LINES` lines of each log")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "keep printing new output")
+	c.Flags().BoolVar(&replies, "replies", false, "show all final replies, headed by agent, turn, and who sent the task; works while down")
+	c.MarkFlagsMutuallyExclusive("replies", "lines")
+	c.MarkFlagsMutuallyExclusive("replies", "follow")
 	return c
 }
 
@@ -1290,6 +1296,22 @@ func cleanPosix(p string) string {
 func specifiesContents(p string) bool {
 	p = strings.TrimRight(p, "/")
 	return p == "." || strings.HasSuffix(p, "/.")
+}
+
+func replyLogs(swarmName string, agentArgs []string) error {
+	swarm, err := state.Load(swarmName)
+	if err != nil {
+		return err
+	}
+	agents, err := selectAgents(swarm, agentArgs)
+	if err != nil {
+		return err
+	}
+	dir, err := state.LogsDirectory(swarm.Name)
+	if err != nil {
+		return err
+	}
+	return recorded.WriteReplies(dir, agentNames(agents), agentIDs(agents), stdout)
 }
 
 func logs(swarmName string, agentArgs []string, lines string, follow bool) error {

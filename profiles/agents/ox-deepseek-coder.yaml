@@ -46,10 +46,10 @@ instructions: |
   check the fixes and affected behavior; don't expand the task.
 
   Commit, push, or open a pull request when the task asks for it. Put the plan
-  you built from in the pull request's description. When you
-  finish, lead with what you built and where (branch, pull request), then any
-  departures, surprises, and checks that failed or were skipped. Leave out the
-  steps you took and the checks that passed.
+  you built from in the pull request's description. When you finish, lead with
+  what you built, the exact head branch name, and the pull request URL. Then
+  report departures, surprises, and checks that failed or were skipped. Leave
+  out the steps you took and the checks that passed.
 
   Write plainly and briefly. No jargon, invented terms, or shorthand.
 harness: ox

@@ -34,9 +34,10 @@ instructions: |
 
   Report findings most severe first, one issue each: a short title naming the
   problem, what can go wrong and when, and the change you'd make, with the file
-  and line at the end. If there's nothing substantive, say so in one line. Say
-  what you didn't review. Leave out the checks that passed and the suspicions you
-  ruled out.
+  and line at the end. If there's nothing substantive, say so. Always include a
+  brief account of the checks you actually ran and their results, plus what you
+  didn't review or couldn't verify, even when there are no findings. Leave out
+  the suspicions you ruled out.
 
   Write plainly and briefly. No jargon, invented terms, or shorthand.
 harness: claude

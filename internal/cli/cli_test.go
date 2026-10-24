@@ -2,11 +2,15 @@ package cli
 
 import (
 	"bytes"
-	"github.com/kkestell/gnat/internal/layout"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/kkestell/gnat/internal/layout"
+	"github.com/kkestell/gnat/internal/recorded"
+	"github.com/kkestell/gnat/internal/state"
 )
 
 // runGnat runs gnat with the arguments and returns its status and output.
@@ -122,6 +126,44 @@ func TestLogsTailsTheHostLogs(t *testing.T) {
 	runGnat(t, "logs", "demo")
 	if got := f.calls[0].args; got[0] != "-n" || got[1] != "+1" || len(got) != 4 {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestLogsRepliesReadsHistoryWithoutDocker(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"), agent("beta", "claude"))
+	f := useExec(t, nil)
+	dir, err := state.LogsDirectory("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := "{\"agent\":\"alpha\",\"event\":{\"type\":\"swarm_message\",\"sender\":null}}\n" +
+		"{\"agent\":\"alpha\",\"event\":{\"type\":\"turn_end\",\"reply\":\"Plan:\\n  keep the body\"}}\n" +
+		"{\"agent\":\"beta\",\"event\":{\"type\":\"turn_end\",\"reply\":\"other agent\"}}\n"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, recorded.EventsFile), data); err != nil {
+		t.Fatal(err)
+	}
+	status, out, errs := runGnat(t, "logs", "demo", "alpha", "--replies")
+	if want := "==> alpha: turn 1 (reply to operator) <==\nPlan:\n  keep the body\n\n"; status != 0 || out != want || errs != "" {
+		t.Fatalf("status %d, stdout %q, stderr %q", status, out, errs)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("ran external commands: %v", f.lines())
+	}
+	if status, _, errs := runGnat(t, "logs", "demo", "missing", "--replies"); status != 1 || !strings.Contains(errs, "missing") {
+		t.Fatalf("unknown agent: status %d, stderr %q", status, errs)
+	}
+}
+
+func TestLogsRepliesRejectsTailFlags(t *testing.T) {
+	useSwarm(t)
+	for _, flags := range [][]string{{"-n", "20"}, {"-f"}} {
+		args := append([]string{"logs", "demo", "--replies"}, flags...)
+		if status, _, errs := runGnat(t, args...); status != 2 {
+			t.Fatalf("%v: status %d, stderr %q", args, status, errs)
+		}
 	}
 }
 
