@@ -46,9 +46,9 @@ An agent runs one turn at a time, and a turn is one message. The control plane k
 
 A message leaves the queue at the moment the agent becomes busy with it, so there is no instant at which a message is neither queued nor running. "Idle" means an empty queue and no turn running, and that is what `wait` waits for. Because agents message each other and a reply can arrive after a wait saw an agent idle, waiting on several agents means passing over them until a pass finds all idle and no turn has ended since the pass before. `wait --any` needs no passes: it waits on every agent at once, returns when one is idle, and reports that one with whichever others are idle at that moment.
 
-Messages sent with `--now` are delivered through the harness's own hook mechanism: both harnesses run gnat's hook after every tool call, and the hook takes the urgent messages from the control plane and returns them as context. That is why mid-turn delivery happens only at tool calls, why a turn without tool calls never sees them, and why urgent messages still pending when a turn ends start the next turn ahead of the queue. The hook is given a short timeout and never fails the turn: a message it can't fetch waits for the next tool call. A message that starts a fresh session can only start a turn, so `--now` and `--new` exclude each other.
+Messages sent with `--now` are delivered through the harness's own hook mechanism: all harnesses run gnat's hook after every tool call, and the hook takes the urgent messages from the control plane and returns them as context. That is why mid-turn delivery happens only at tool calls, why a turn without tool calls never sees them, and why urgent messages still pending when a turn ends start the next turn ahead of the queue. The hook is given a short timeout and never fails the turn: a message it can't fetch waits for the next tool call. A message that starts a fresh session can only start a turn, so `--now` and `--new` exclude each other.
 
-Stopping is a line on the same connection. The daemon kills the harness's process group (Claude) or cancels the prompt (ACP) and reports the turn stopped. Because the daemon reads the stop before it reads any later turn, a stop can't outlive its turn and kill the next.
+Stopping is a line on the same connection. The daemon kills the harness's process group (Claude), cancels the prompt (ACP), or interrupts the turn (Codex) and reports the turn stopped. Codex is killed with its process group if it cannot finish the interrupt. Because the daemon reads the stop before it reads any later turn, a stop can't outlive its turn and kill the next.
 
 Pausing needs nothing from the daemon: the control plane stops handing out turns. A paused queue gives up no message, and pausing takes the queue's lock, which starting a turn holds while it marks the agent busy, so once a pause returns no turn starts and whether one is running is settled. The message a pause gives the running turn is held in memory, not queued, so the hook's next take delivers it and the turn's end drops it; it never becomes a turn of its own.
 
@@ -65,6 +65,19 @@ The control plane adds its own events for what only it sees: a message arriving,
 A harness is two halves that never meet. On the host it says what `gnat up` needs to set a container up: the program the image must have, the credential's environment variable, the user-level config files (the agent's instructions and settings that install the hook), and the directories where it keeps sessions, which become volumes. In the container it gives the daemon a runner that turns one message into events and an exit status, continuing the last session or starting a new one on request.
 
 Session continuity is the harness's own, kept in its own files on its volume: Claude Code is run once per turn with `--continue`, and an ACP server is kept running across turns with its session ID saved to a file so a restarted daemon loads it. gnat doesn't keep or inspect sessions.
+
+Codex also keeps one app-server process across turns. Its `.codex` volume holds
+its own conversation files and gnat's current thread ID and cumulative usage
+baseline. A restarted runner resumes that exact thread; a failed resume is an
+error rather than a fresh conversation. All harness output is translated before
+it leaves the agent container.
+
+`gnat auth login codex` runs a separate temporary ChatGPT login and saves an
+access-only snapshot in the host keyring. All Codex agents receive that snapshot
+through `GNAT_CODEX_AUTH`, without a refresh token. They cannot rotate the shared
+login. Renewal is an operator action: log in again, then bring affected swarms
+down and up so they receive the replacement while keeping their sessions. The
+control plane has no Codex authentication responsibilities.
 
 What gnat tells every agent is facts: its teammates, how to message them, what the container has, that it has no GitHub credential, which branches it may push, and which pull request commands exist. Roles and workflow are left to profiles and the operator, because gnat assumes no team structure. Instructions are written into the harness's config directory at `up`, so changing them is a definition change, made while the swarm is down.
 

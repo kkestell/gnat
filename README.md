@@ -1,6 +1,6 @@
 # gnat
 
-Run a swarm of coding agents, each in its own Docker container on its own clone of a GitHub repository. Agents run [Claude Code](https://code.claude.com) or [Ox](https://github.com/kkestell/ox), commit, push, and open pull requests.
+Run a swarm of coding agents, each in its own Docker container on its own clone of a GitHub repository. Agents run [Claude Code](https://code.claude.com), [Codex](https://developers.openai.com/codex/cli), or [Ox](https://github.com/kkestell/ox), commit, push, and open pull requests.
 
 ## Install
 
@@ -21,7 +21,7 @@ To build from source instead, with Go 1.26:
 make install
 ```
 
-Save a credential for each harness your agents use: `gnat auth login claude` (paste the token from `claude setup-token`) or `gnat auth login ox` (an OpenRouter API key). Only the control container uses `GH_TOKEN` (or else `gh auth token`): agents have no GitHub credential, and clone, fetch, push, and use pull requests through it, limited to the swarm's repository and their own branches. See [docs/setup.md](docs/setup.md).
+Save a credential for each harness your agents use: `gnat auth login claude` (paste the token from `claude setup-token`), `gnat auth login codex` (ChatGPT browser sign-in through the installed Codex CLI), or `gnat auth login ox` (an OpenRouter API key). Only the control container uses `GH_TOKEN` (or else `gh auth token`): agents have no GitHub credential, and clone, fetch, push, and use pull requests through it, limited to the swarm's repository and their own branches. See [docs/setup.md](docs/setup.md).
 
 ## Usage
 
@@ -48,7 +48,7 @@ agent profile with its own settings, so
 
 ## Docs
 
-- [docs/setup.md](docs/setup.md): installing, credentials, images and Dockerfiles, files outside source control, Ox agents, and the Claude Code plugin.
+- [docs/setup.md](docs/setup.md): installing, credentials, images and Dockerfiles, files outside source control, Codex and Ox agents, and the Claude Code plugin.
 - [docs/usage.md](docs/usage.md): commands, how messages are delivered, state and logs, and worked examples.
 
 ## Development

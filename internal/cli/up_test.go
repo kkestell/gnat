@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,9 +9,51 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/kkestell/gnat/internal/harness"
 	"github.com/kkestell/gnat/internal/state"
 )
+
+func TestUpKeepsCodexSessionsAndIsolatesMixedHarnessCredentials(t *testing.T) {
+	useSwarm(t, agent("alpha", "claude"), agent("beta", "ox"), state.Agent{Name: "gamma", Harness: "codex", Model: "codex-model", Effort: "high"})
+	f := useUp(t, nil)
+	snapshot := harness.CodexCredential{AccessToken: "codex-access-secret", AccountID: "account", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	encoded, _ := json.Marshal(snapshot)
+	useSecrets(t, map[string]string{"claude": "claude-secret", "ox": "ox-secret", "codex": string(encoded)})
+	useOutput(t)
+	if err := up("demo"); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, c := range f.calls {
+		args := strings.Join(c.args, " ")
+		if strings.Contains(args, "codex-access-secret") {
+			t.Fatal("Codex credential exposed in arguments")
+		}
+		if c.name != "docker" || len(c.args) < 3 || c.args[0] != "create" {
+			continue
+		}
+		name := c.args[2]
+		codexEnv := contains2(c.env, "GNAT_CODEX_AUTH="+string(encoded))
+		if name == "gnat-demo-gamma" {
+			seen[name] = true
+			if !codexEnv || strings.Contains(args, "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(args, "OPENROUTER_API_KEY") ||
+				!strings.Contains(args, "gnat-demo-gamma-codex:/home/agent/.codex") ||
+				!strings.Contains(args, "--harness codex --model codex-model --effort high") {
+				t.Fatal("Codex container has the wrong credential, settings, or volumes")
+			}
+		} else if codexEnv {
+			t.Fatal("Codex credential given to another container")
+		}
+		if strings.Contains(strings.Join(c.env, " "), "refresh_token") {
+			t.Fatal("refresh token distributed")
+		}
+	}
+	if !seen["gnat-demo-gamma"] {
+		t.Fatal("Codex agent not started")
+	}
+}
 
 // useUp sets up what `up` needs besides docker: credentials, a binary to embed, and a
 // docker that answers like a working one.

@@ -98,7 +98,7 @@ func createCommand() *cobra.Command {
 		}).run,
 	}
 	c.Flags().StringVar(&profile, "profile", "", "add the agents of the swarm `PROFILE`: a name in gnat's config profiles/swarms directory, or a YAML file's path")
-	c.Flags().StringVar(&dockerfile, "dockerfile", "", "Dockerfile extending gnat-agent for the agent image (default: gnat-agent)")
+	c.Flags().StringVar(&dockerfile, "dockerfile", "", "override Dockerfile.gnat in the current directory (uses gnat-agent if absent)")
 	c.Flags().StringVar(&repo, "repo", "", "GitHub repository each agent clones, `OWNER/NAME`")
 	c.Flags().StringArrayVar(&files, "file", nil, "copy a file outside source control into each agent's /workspace "+
 		"(default path: the file's name); repeatable, `HOST_PATH[:WORKSPACE_PATH]`")
@@ -450,6 +450,13 @@ func newSwarm(name, dockerfile, repo string, fileSpecs []string) (*state.Swarm, 
 		return nil, err
 	} else if exists {
 		return nil, fmt.Errorf("swarm '%s' already exists", name)
+	}
+	if dockerfile == "" {
+		if _, err := os.Stat("Dockerfile.gnat"); err == nil {
+			dockerfile = "Dockerfile.gnat"
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
 	}
 	if dockerfile != "" {
 		abs, err := filepath.Abs(dockerfile)

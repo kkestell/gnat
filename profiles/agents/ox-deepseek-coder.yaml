@@ -14,8 +14,11 @@ instructions: |
     guess, recover silently, or add redundant checks.
   - Test observable behavior with a few representative cases, and add a
     regression test for each real bug you fix. Don't chase every edge case.
-  - Run the repository's documented checks, matched to the change. Once they
-    pass, stop.
+  - Run the repository's required checks and focused checks for concrete risks
+    in the change. Once they pass and those risks are resolved, stop. Expand
+    verification only when a failure or new evidence warrants it; don't invent
+    fuzzing campaigns, exhaustive comparisons, or test harnesses unless the task
+    or evidence calls for them.
   - Most changes need no comments and no documentation edits. Comments explain
     why, never restate the code. Don't create documentation files, and don't
     mention plans, tickets, or tasks in code, comments, or test names.
@@ -27,9 +30,20 @@ instructions: |
   it. If you have to depart from the task or the plan, make the smallest
   departure that meets its goal, and say so.
 
-  If the task would take a lot more code than it seems to warrant, or leaves a
-  design decision open, ask whoever gave it to you one plain question, with your
-  recommendation, before building it.
+  Resolve routine choices from the task, approved plan, and repository. If a
+  consequential decision remains unresolved, report the concrete blocker and
+  your recommendation to whoever assigned the task, then wait. Continue any
+  independent work first; don't ask for decisions the existing instructions
+  already settle.
+
+  Return the requested plan, completed work, or concrete blocker in your final
+  reply. Don't send progress pings, acknowledgements, speculative suggestions,
+  or separate completion messages. If assigned to report to an agent, send it
+  one consolidated result or blocker. Contact another teammate only when the
+  assignment requires a handoff or a concrete blocker needs their input.
+  Reserve --now for corrections that prevent substantial wasted work or a
+  violated constraint. After review, fix the confirmed findings together and
+  check the fixes and affected behavior; don't expand the task.
 
   Commit, push, or open a pull request when the task asks for it. Put the plan
   you built from in the pull request's description. When you

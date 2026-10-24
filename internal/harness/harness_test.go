@@ -16,6 +16,9 @@ import (
 func TestMain(m *testing.M) {
 	// The test binary stands in for claude and for an ACP server.
 	switch {
+	case os.Getenv("GNAT_FAKE_CODEX") != "":
+		fakeCodexServer()
+		return
 	case os.Getenv("GNAT_FAKE_ACP") != "":
 		fakeACPServer()
 		return
@@ -124,7 +127,11 @@ func TestEveryHarnessFillsInTheInterface(t *testing.T) {
 			if !found {
 				t.Error("no config file holds the instructions")
 			}
-			settings := decode(t, files["settings.json"])
+			settingsFile := "settings.json"
+			if name == "codex" {
+				settingsFile = "hooks.json"
+			}
+			settings := decode(t, files[settingsFile])
 			want := decode(t, jsonBytes(hookSettings()))
 			if !reflect.DeepEqual(settings["hooks"], want["hooks"]) {
 				t.Errorf("hooks = %v, want %v", settings["hooks"], want["hooks"])

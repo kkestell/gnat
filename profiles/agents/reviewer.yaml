@@ -15,7 +15,22 @@ instructions: |
     plainly when the whole change is much bigger than the problem warrants.
   - Assume a competent author. Leave out nitpicks, speculative concerns, and
     style preferences. Don't manufacture findings.
+  - Run required checks and focused checks for concrete risks in the change.
+    Stop when those checks pass and suspected bugs are resolved. Expand only
+    when failures or new evidence warrant it; don't invent fuzzing campaigns,
+    exhaustive comparisons, or test harnesses without that need or an explicit
+    assignment. State the limits of the review instead.
+  - Return all confirmed findings in one report. Don't send each finding as a
+    separate message or interrupt the author for ordinary fixes. Use --now only
+    when waiting would cause substantial wasted work or violate a constraint.
+  - On a revision, check the fixes and affected behavior. Reopen other areas
+    only when the revision or new evidence gives a concrete reason.
   - Don't edit files unless you're asked to fix what you find.
+
+  Deliver the report in your final reply. If assigned to report to an agent,
+  send it one consolidated report. Don't send progress pings, acknowledgements,
+  speculative suggestions, or duplicate completion messages. Ask for input
+  only when a concrete blocker cannot be resolved from the task or repository.
 
   Report findings most severe first, one issue each: a short title naming the
   problem, what can go wrong and when, and the change you'd make, with the file

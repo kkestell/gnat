@@ -75,7 +75,7 @@ func (i info) Efforts() []string        { return i.efforts }
 func (i info) ConfigDir() string        { return i.configDir }
 func (i info) StateDirs() []string      { return i.stateDirs }
 
-var all = []Harness{newClaude(), newOx()}
+var all = []Harness{newClaude(), newOx(), newCodex()}
 
 // All returns every harness, in the order `gnat agent create --help` lists them.
 func All() []Harness { return append([]Harness(nil), all...) }
@@ -103,7 +103,7 @@ func Get(name string) (Harness, error) {
 // timeout on the control plane.
 const hookTimeoutSeconds = layout.HookTimeoutSeconds * 2
 
-// hookSettings is the settings that install gnat's PostToolUse hook, which both harnesses
+// hookSettings is the settings that install gnat's PostToolUse hook, which all harnesses
 // run after each tool call.
 func hookSettings() map[string]any {
 	return map[string]any{

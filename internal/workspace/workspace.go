@@ -129,9 +129,12 @@ func AgentInstructions(instructions string, teammates []string, credential, bran
 			"Each has its own clone of the repository; they see your work only once you push it.\n\n" +
 			"To message one or more teammates, run `" + send + " TEAMMATE... -m TEXT` " +
 			"(or pipe the text to stdin). Add `--now` to deliver it into the teammate's running turn " +
-			"at its next tool call instead of queueing it. Messages arrive labelled with your name, " +
-			"and teammates reply the same way. You can't message yourself. Say what you need " +
-			"and where to find it (branch, PR, file), and don't message just to acknowledge."
+			"at its next tool call instead of queueing it. Messages arrive labelled with your name. " +
+			"You can't message yourself. Each queued message starts a separate turn; " +
+			"a message sent with --now also starts a turn if none is running when it is taken. " +
+			"Say what action is needed and where to find the work (branch, PR, file). " +
+			"Don't send acknowledgements or progress pings. Reserve --now for corrections " +
+			"that prevent substantial wasted work or a violated constraint."
 		also = " and your teammates"
 	}
 	tools := make([]string, len(Tools))

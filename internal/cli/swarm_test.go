@@ -21,13 +21,15 @@ func TestAgentImageIsTheBaseUnlessTheSwarmHasADockerfile(t *testing.T) {
 
 func TestBaseDockerfileShipsWithThePackage(t *testing.T) {
 	text := string(agentDockerfile)
-	// Built from stdin, with no context: an ox-server build stage, then the image itself.
-	if got := strings.Count(text, "\nFROM ") + btoi(strings.HasPrefix(text, "FROM ")); got != 2 {
+	// Built from stdin, with no context: Ox and Codex stages, then the agent image.
+	if got := strings.Count(text, "\nFROM ") + btoi(strings.HasPrefix(text, "FROM ")); got != 3 {
 		t.Errorf("%d FROM lines", got)
 	}
 	for _, needed := range []string{"ripgrep", "build-essential", "uv", "claude.ai/install.sh", "--uid 1000",
 		"procps", "jq", "fd-find", "python3",
-		"ADD https://github.com/kkestell/ox.git#main", "COPY --from=ox /out/ox-server"} {
+		"ADD https://github.com/kkestell/ox.git#main", "COPY --from=ox /out/ox-server",
+		"CODEX_VERSION=0.163.0", "arm64) codex_arch=aarch64", "amd64) codex_arch=x86_64", "COPY --from=codex /out/codex",
+		"COPY --from=codex /out/codex-code-mode-host"} {
 		if !strings.Contains(text, needed) {
 			t.Errorf("missing %q", needed)
 		}

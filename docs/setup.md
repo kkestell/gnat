@@ -2,7 +2,7 @@
 
 ## Installing
 
-On a Mac with Apple silicon, the Claude Code plugin installs gnat from the latest [release](https://github.com/kkestell/gnat/releases): `/plugin install gnat --marketplace kkestell/gnat`, then `/gnat:install`. It puts `gnat` in `~/.local/bin`, installs the bundled profiles (keeping any you have), checks Docker and `gh`, and saves the credentials below from your clipboard. Rerun it to update. The release archive, `gnat-darwin-arm64.tar.gz`, holds the `gnat` binary and the `profiles` directory, with a SHA-256 checksum beside it; pushing a `v*` tag builds it (`make release`) and publishes it.
+On a Mac with Apple silicon, the Claude Code plugin installs gnat from the latest [release](https://github.com/kkestell/gnat/releases): `/plugin install gnat --marketplace kkestell/gnat`, then `/gnat:install`. It puts `gnat` in `~/.local/bin`, installs the bundled profiles (keeping any you have), checks Docker and `gh`, and helps save the credentials below. Rerun it to update. The release archive, `gnat-darwin-arm64.tar.gz`, holds the `gnat` binary and the `profiles` directory, with a SHA-256 checksum beside it; pushing a `v*` tag builds it (`make release`) and publishes it.
 
 Elsewhere, or to build from source, `make install` cross-builds the static linux `gnat-container` binaries containers run (amd64 and arm64), embeds them in the `gnat` binary, and installs it with `go install`. Rerun it after pulling.
 
@@ -14,7 +14,7 @@ profiles.
 
 ## Credentials
 
-`gnat auth login HARNESS` saves a harness's credential in the system keyring (the macOS keychain, or the Secret Service through `secret-tool` elsewhere). It reads the credential from the terminal without echoing it, or as one line of standard input. `gnat auth logout HARNESS` removes it.
+`gnat auth login HARNESS` saves a harness's credential in the system keyring (the macOS keychain, or the Secret Service through `secret-tool` elsewhere). For Claude and Ox it reads the credential from the terminal without echoing it, or as one line of standard input; Codex opens a browser login. `gnat auth logout HARNESS` removes it.
 
 For Claude Code agents, `claude setup-token` signs you in through the browser and prints a long-lived OAuth token (`sk-ant-oat…`). Copy it, then paste it at the prompt:
 
@@ -25,6 +25,23 @@ gnat auth login claude
 
 For Ox agents, create an OpenRouter API key and paste it at the prompt of `gnat auth login ox`. Agents hold the key, so give them one of their own rather than the one you use yourself.
 
+For Codex agents, install the [Codex CLI](https://developers.openai.com/codex/cli)
+on the host, then run:
+
+```sh
+gnat auth login codex
+```
+
+Complete ChatGPT sign-in in the browser. gnat uses a private temporary login,
+leaving your normal Codex configuration and login alone. It saves only the
+access token, account ID, and expiry in its keyring; it discards the refresh
+token. One saved credential serves all Codex agents, which share your ChatGPT
+subscription allowance. Codex does not fall back to API billing.
+
+Renew manually when the credential expires: rerun `gnat auth login codex`, then
+`gnat down SWARM` and `gnat up SWARM` for each running Codex swarm. Sessions
+survive that restart. Login prints the actual expiry; token lifetimes can vary.
+
 `GH_TOKEN` is for cloning, pushing, and the pull request commands. Without it, gnat uses `gh auth token`; for another logged-in account, `export GH_TOKEN=$(gh auth token --user NAME)`. Only the control container gets it. Agents clone, fetch, and push through the control plane, with a secret `gnat up` generates for each, so a prompt injection in an agent can't take the token; what it can still do is what the control plane allows an agent: push branches named `SWARM/AGENT/...` to the one repository, never delete or force-push, and use the pull request commands.
 
 `gnat up` needs only the credentials of the harnesses its agents use, and each agent gets only its own harness's.
@@ -33,9 +50,9 @@ Agents run with permissions skipped and hold their harness's credential, so anyt
 
 ## Images
 
-`gnat up` builds `gnat-agent` from `internal/cli/Dockerfile`: `claude`, `ox-server` (from Ox's main branch on every build), `git`, `python3`, `uv`, build-essential, and common command-line tools, with an `agent` user (UID 1000) that owns `/workspace`.
+`gnat up` builds `gnat-agent` from `internal/cli/Dockerfile`: `claude`, `codex` and its code-mode host (pinned to 0.163.0), `ox-server` (from Ox's main branch on every build), `git`, `python3`, `uv`, build-essential, and common command-line tools, with an `agent` user (UID 1000) that owns `/workspace`.
 
-To add packages or files, pass `gnat create --dockerfile FILE`, where `FILE` starts `FROM gnat-agent` (see `Dockerfile` in this repo). It is built with its own directory as the context, usually a checkout of the swarm's repository. Containers always start as UID 1000 in `/workspace` with `/opt/gnat/gnat-container` as the entrypoint, so a trailing `USER`, `WORKDIR`, `ENTRYPOINT`, or `CMD` doesn't matter. `gnat up` fails if the image lacks `git` or a harness the swarm uses.
+`gnat create` automatically selects `Dockerfile.gnat` in the current directory when present; otherwise agents use the base `gnat-agent` image. Put repository-specific packages or files in `Dockerfile.gnat`, starting with `FROM gnat-agent` (see this repo's example). Use `--dockerfile FILE` to select a different file. The selected absolute path is saved in the swarm definition, and `gnat up` builds it with its own directory as the context. Containers always start as UID 1000 in `/workspace` with `/opt/gnat/gnat-container` as the entrypoint, so a trailing `USER`, `WORKDIR`, `ENTRYPOINT`, or `CMD` doesn't matter. `gnat up` fails if the image lacks `git` or a harness the swarm uses.
 
 Agents run git as `agent`, which refuses a repository owned by another user ("detected dubious ownership"). If the Dockerfile clones a repository as root, such as a toolchain built from source, add `RUN git config --system --add safe.directory PATH` for it, or `chown` it to 1000.
 
@@ -48,6 +65,20 @@ gnat create demo --repo OWNER/NAME --file .env --file ~/keys/ci.json:config/ci.j
 ```
 
 `WORKSPACE_PATH` (after the colon) is relative to `/workspace` and defaults to the file's name. Files are read at `gnat up`, never baked into an image, copied into each clone with mode 0600, and added to `.git/info/exclude`. A path the repository tracks is refused. To change what agents get, edit the host file, then `gnat down` and `gnat up`. Agents can read these files, so use narrowly scoped keys.
+
+## Codex agents
+
+```sh
+gnat agent create demo delta --harness codex --instructions "Implement the requested change."
+```
+
+Alternatively, use the bundled `codex-coder` profile. Omitted model and effort
+use Codex's defaults; `--model` and `--effort` override them, and the selected
+model must support the effort. gnat drives Codex's app-server, keeps each
+agent's thread on its own volume, and uses its tool hook for `--now` and pause
+messages. The external-token login interface is experimental and tied to the
+pinned Codex release. Token and context usage appear in status and the web UI;
+Codex does not report a dollar cost through this integration.
 
 ## Ox agents
 

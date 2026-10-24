@@ -6,7 +6,7 @@ Commands for a swarm take its name first. Commands that address agents take thei
 
 | Command | Description |
 | --- | --- |
-| `gnat create SWARM --repo OWNER/NAME [--profile NAME\|PATH] [--dockerfile FILE] [--file PATH]...` | Define a swarm. `--profile` adds a [swarm profile](#swarm-profiles)'s agents. |
+| `gnat create SWARM --repo OWNER/NAME [--profile NAME\|PATH] [--dockerfile FILE] [--file PATH]...` | Define a swarm. Uses `./Dockerfile.gnat` if present; `--dockerfile` overrides it. `--profile` adds a [swarm profile](#swarm-profiles)'s agents. |
 | `gnat delete SWARM` | Bring the swarm down and delete it, with its logs, clones, and sessions. |
 | `gnat list` | List swarms. |
 | `gnat up SWARM` | Build images and start the control plane and one container per agent. Returns once the control plane answers. |
@@ -20,29 +20,30 @@ Commands for a swarm take its name first. Commands that address agents take thei
 | `gnat cp SWARM AGENT:PATH HOST_PATH` | Copy a file or directory out of an agent's clone. Works while the swarm is down. `-` writes a tar to stdout. `HOST_PATH` is treated as `docker cp` treats it: a directory copied to an existing directory goes inside it, and to a path that doesn't exist creates that path with the directory's contents; a `PATH` ending in `/.` copies the directory's contents, so `AGENT:.` copies the clone's contents. |
 | `gnat logs SWARM [AGENT...] [-n LINES] [-f]` | Show agents' messages, text, and tool calls. Works while the swarm is down. |
 | `gnat web SWARM [--no-open]` | Open the web UI. |
-| `gnat agent create SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
-| `gnat agent set SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox] [--model MODEL] [--effort LEVEL] [--merge\|--no-merge]` | Change an agent's settings (swarm down), keeping its ID, clone, sessions, queue, logs, and history. Flags given replace their settings and the rest keep their values; with `--profile`, the settings the profile names replace the agent's, and flags replace those. A setting the profile leaves out keeps its value: a profile without `harness:` doesn't change the harness. A new harness can't continue the old one's session, so changing it deletes the agent's sessions and its next turn starts a fresh one. Prints what changed. |
+| `gnat agent create SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox\|codex] [--model MODEL] [--effort LEVEL] [--merge]` | Add an agent (swarm down). `--instructions` supplies optional additional instructions. `--merge` lets it merge pull requests (see below); `--merge=false` overrides a profile that grants it. |
+| `gnat agent set SWARM AGENT [--profile NAME\|PATH] [--instructions TEXT] [--harness claude\|ox\|codex] [--model MODEL] [--effort LEVEL] [--merge\|--no-merge]` | Change an agent's settings (swarm down), keeping its ID, clone, sessions, queue, logs, and history. Flags given replace their settings and the rest keep their values; with `--profile`, the settings the profile names replace the agent's, and flags replace those. A setting the profile leaves out keeps its value: a profile without `harness:` doesn't change the harness. A new harness can't continue the old one's session, so changing it deletes the agent's sessions and its next turn starts a fresh one. Prints what changed. |
 | `gnat agent delete SWARM AGENT` | Remove an agent with its clone, sessions, and log (swarm down). |
 | `gnat agent list SWARM` | List agents: name, harness, model, effort, and `merge` if it may merge pull requests. |
 | `gnat profiles list [--swarm]` | List available agent profile names, or swarm profile names with `--swarm`, alphabetically. |
-| `gnat auth login claude\|ox` | Save a harness's credential in the system keyring. See [setup](setup.md#credentials). |
-| `gnat auth logout claude\|ox` | Remove a harness's saved credential. |
+| `gnat auth login claude\|ox\|codex` | Save a harness's credential in the system keyring. See [setup](setup.md#credentials). |
+| `gnat auth logout claude\|ox\|codex` | Remove a harness's saved credential. |
 | `gnat file add SWARM HOST_PATH[:WORKSPACE_PATH]` | Add a file for every clone (swarm down). See [setup](setup.md#files-outside-source-control). |
 | `gnat file delete SWARM WORKSPACE_PATH` | Remove a file (swarm down). |
 | `gnat file list SWARM` | List files. |
 
 ## Agent profiles
 
-`/gnat:install` and `make install` include six agent profiles from the repository's
-`profiles/agents` directory: `coder` implements changes (`ox-deepseek-coder`
-too, more cheaply), `planner` plans them
+`/gnat:install` and `make install` include seven agent profiles from the repository's
+`profiles/agents` directory: `coder` implements changes (`codex-coder` uses
+Codex, and `ox-deepseek-coder` uses a cheaper Ox model), `planner` plans them
 without making them, `reviewer` reports code review findings, `researcher`
 investigates questions and compares options, and `orchestrator` hands out work
 to its teammates, has their pull requests reviewed, and merges them. They
 provide role instructions. `coder` replies with a plan and waits for approval
 before building, unless its task includes a plan or says to go ahead without
 one; `planner` replies with a plan and changes nothing; `reviewer` checks a
-change against its plan. Each runs `claude-opus-5-5` at `high` effort.
+change against its plan. The Claude profiles run `claude-opus-5-5` at `high` effort.
+`codex-coder` uses Codex's model and effort defaults.
 `ox-deepseek-coder` is `coder` on Ox with
 `openrouter:deepseek/deepseek-v4.1-flash`. Existing profile
 files are preserved during installation, so you can customize them.
@@ -198,6 +199,11 @@ Each agent gets an ID when it's created, saved in the definition, which tells it
 
 Usage totals in `gnat status` and the web UI come from what each harness reports. Claude Code's cost is at API list prices and isn't reported for stopped or crashed turns.
 
+Codex reports tokens and context usage, with no dollar cost. Its agents use one
+shared ChatGPT subscription credential. Renew it with `gnat auth login codex`
+when it expires, then restart affected swarms with `down` and `up`; their
+conversations continue. See [Codex setup](setup.md#codex-agents).
+
 Each agent's context shows how full its context window was at its latest model call, as a percentage of the window (`context 23% of 1M`), or in tokens until the harness has said how big the window is; Claude Code says so at the end of its first turn. Claude Code also reports the usage limits of the account its token belongs to, which every Claude agent shares: `gnat status` ends with the latest any agent reported (`usage limits: 5h 7% (resets 13:20), 7d 49% (resets Sun 22:00)`), leaving out windows that have reset since and saying how long ago they were reported if it's been more than ten minutes. The web UI shows them in its header when the swarm has Claude agents.
 
 The web UI lists the repository's pull requests, which the control plane fetches from GitHub with `GH_TOKEN`.
@@ -297,6 +303,15 @@ gnat down demo
 gnat agent create demo gamma --instructions "Be brief." --harness ox --model openrouter:deepseek/deepseek-v4.1-flash
 gnat up demo
 gnat send demo --wait -m "What files are in the repository root?"
+```
+
+A Codex agent alongside the others (after `gnat auth login codex`):
+
+```sh
+gnat down demo
+gnat agent create demo delta --harness codex --instructions "Be brief."
+gnat up demo
+gnat send demo delta --wait -m "What files are in the repository root?"
 ```
 
 Copying out and cleaning up:

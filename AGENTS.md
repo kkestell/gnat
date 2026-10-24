@@ -48,7 +48,7 @@ Two binaries, `cmd/gnat` (the host's commands) and `cmd/gnat-container` (what ru
 - `recorded`: reads `control.db`, which `control` writes and the host reads for `gnat status` while a swarm is down.
 - `control`: the control plane (mailboxes, status, usage, logs, `control.db`), the GitHub requests agents make with their secrets, every agent request, which must carry the agent's secret (`secrets.go`: who is asking is whoever's secret it is, never what the request says; the operator's commands come in over a Unix socket in the container instead), and the git proxy (`git.go`: a bare mirror served by `git http-backend`, with a pre-receive hook that enforces the push rules and pushes on to GitHub).
 - `web`: serves the web UI (embedded from `internal/web/dist`), `/agents`, and the `/events` stream.
-- `harness`: the programs an agent runs turns with (Claude, ACP, Ox).
+- `harness`: the programs an agent runs turns with (Claude, Codex, ACP, Ox).
 - `agent`: the agent daemon, the container's main process.
 - `hook`: the PostToolUse hook that delivers `--now` messages, and `gnat-container send`.
 - `workspace`: cloning, files, instructions, and archives for containers.

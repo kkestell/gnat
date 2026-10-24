@@ -1,13 +1,13 @@
 ---
 name: install
-description: Install or update `gnat` on this Mac from its latest GitHub release, check that Docker and GitHub access are ready, and save the Claude Code token or OpenRouter API key its agents use. Use when the user wants to install, update, or set up gnat, or when `gnat` isn't on PATH.
+description: Install or update `gnat` on this Mac from its latest GitHub release, check that Docker and GitHub access are ready, and save the Claude Code, Codex, or Ox credentials its agents use. Use when the user wants to install, update, or set up gnat, or when `gnat` isn't on PATH.
 ---
 
 # Installing gnat
 
 Get the user from nothing to ready to run `gnat up`: the `gnat` binary on PATH, its bundled profiles, Docker running, GitHub access, and a credential for each harness they'll use. Rerunning this updates gnat and skips what's already done. Tell the user what you're doing at each step, briefly.
 
-Never ask the user to paste a token or key into the chat, and never print one: the transcript is logged. Credentials go into the system keyring through `gnat auth login`, from the user's clipboard.
+Never ask the user to paste a token or key into the chat, and never print one: the transcript is logged. Credentials go into the system keyring through `gnat auth login`, from the user's clipboard for Claude and Ox or a browser login for Codex.
 
 ## 1. Check the machine
 
@@ -81,12 +81,14 @@ Tell the user, once, that gnat acts on GitHub with this token for its agents, so
 Ask which harnesses the user's agents will run, with AskUserQuestion (multi-select):
 
 - **Claude Code**: uses their Claude subscription, through a long-lived OAuth token.
+- **Codex**: uses their ChatGPT subscription, with manual credential renewal.
 - **Ox**: runs models through OpenRouter, with an OpenRouter API key.
 
 Check which are already saved; this prints the keychain item's attributes, never the secret, and fails if there's none:
 
 ```sh
 security find-generic-password -s gnat -a claude >/dev/null 2>&1 && echo saved || echo missing
+security find-generic-password -s gnat -a codex >/dev/null 2>&1 && echo saved || echo missing
 security find-generic-password -s gnat -a ox >/dev/null 2>&1 && echo saved || echo missing
 ```
 
@@ -107,6 +109,21 @@ pbpaste | tr -d '[:space:]' | grep -q '^sk-ant-oat' && pbpaste | tr -d '[:space:
 ```
 
 If the check fails, nothing was saved: tell the user the clipboard doesn't hold a Claude token (don't show what it does hold) and ask them to copy it again.
+
+### Codex
+
+Codex login needs the Codex CLI installed on the host (`command -v codex`). If
+it is missing, direct the user to <https://developers.openai.com/codex/cli>.
+Ask the user to run this in a terminal and complete ChatGPT browser sign-in:
+
+```sh
+~/.local/bin/gnat auth login codex
+```
+
+No credential is copied through chat or the clipboard. gnat saves one access-only
+credential for every Codex agent to share and prints its expiry. When it expires,
+repeat this command and restart affected swarms with `gnat down` and `gnat up`;
+their sessions survive. Codex agents share the account's subscription allowance.
 
 ### Ox (OpenRouter)
 

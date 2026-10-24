@@ -291,6 +291,7 @@ func TestAgentConfigInstallsEachHarnessItsInstructionsAndSettings(t *testing.T) 
 	swarm := &state.Swarm{Name: "demo", Repo: "o/r", Agents: []state.Agent{
 		{Name: "alpha", Instructions: "Review.", Model: "opus", Harness: "claude"},
 		{Name: "beta", Instructions: "Build.", Model: "openrouter:x/y", Effort: "high", Harness: "ox"},
+		{Name: "gamma", Instructions: "Implement.", Model: "codex-model", Effort: "high", Harness: "codex"},
 	}}
 	files := func(a state.Agent) map[string][]byte {
 		data, err := agentConfig(swarm, a)
@@ -346,6 +347,38 @@ func TestAgentConfigInstallsEachHarnessItsInstructionsAndSettings(t *testing.T) 
 	if settings["mode"] != "auto" || settings["model"] != "openrouter:x/y" || settings["effort"] != "high" ||
 		settings["hooks"] == nil {
 		t.Errorf("settings: %v", settings)
+	}
+	codex := files(swarm.Agents[2])
+	if len(codex) != 3 || !strings.Contains(string(codex["home/agent/.codex/AGENTS.md"]), "GNAT_CODEX_AUTH") ||
+		!strings.HasPrefix(string(codex["home/agent/.codex/AGENTS.md"]), "Implement.\n") {
+		t.Fatal("Codex instructions were not installed")
+	}
+	settings = nil
+	if err := json.Unmarshal(codex["home/agent/.codex/hooks.json"], &settings); err != nil || settings["hooks"] == nil {
+		t.Fatal("Codex hook was not installed")
+	}
+	if !strings.Contains(string(codex["home/agent/.codex/config.toml"]), "hooks = true") {
+		t.Fatal("Codex hooks are disabled")
+	}
+}
+
+func TestCodexAgentsUseExplicitSettingsOrHarnessDefaults(t *testing.T) {
+	useSwarm(t)
+	useExec(t, nil)
+	useOutput(t)
+	if status, _, errs := runGnat(t, "agent", "create", "demo", "codex", "--harness", "codex", "--model", "codex-model", "--effort", "high"); status != 0 {
+		t.Fatal(errs)
+	}
+	swarm, _ := state.Load("demo")
+	if a := swarm.Agents[0]; a.Harness != "codex" || a.Model != "codex-model" || a.Effort != "high" {
+		t.Fatalf("agent = %+v", a)
+	}
+	if status, _, errs := runGnat(t, "agent", "set", "demo", "codex", "--model=", "--effort="); status != 0 {
+		t.Fatal(errs)
+	}
+	swarm, _ = state.Load("demo")
+	if a := swarm.Agents[0]; a.Harness != "codex" || a.Model != "" || a.Effort != "" {
+		t.Fatalf("agent = %+v", a)
 	}
 }
 
@@ -723,6 +756,74 @@ func TestCreateDefinesASwarm(t *testing.T) {
 	}
 	if err := create("other", dir+"/nope", "o/r", nil); err == nil || !strings.Contains(err.Error(), "dockerfile not found") {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestCreateSelectsGnatDockerfile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		local   bool
+		flags   []string
+		want    string
+		wantErr string
+	}{
+		{name: "base image without gnat file"},
+		{name: "local default", local: true, want: "Dockerfile.gnat"},
+		{name: "default with swarm profile", local: true, flags: []string{"--profile", "team"}, want: "Dockerfile.gnat"},
+		{name: "explicit override", local: true, flags: []string{"--dockerfile", "custom/agent.Dockerfile"}, want: "custom/agent.Dockerfile"},
+		{name: "explicit without default", flags: []string{"--dockerfile", "custom/agent.Dockerfile"}, want: "custom/agent.Dockerfile"},
+		{name: "missing override fails", local: true, flags: []string{"--dockerfile", "missing"}, wantErr: "dockerfile not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			useProfiles(t, nil)
+			useSwarmProfiles(t, map[string]string{"team.yaml": "agents:\n  - name: coder\n"})
+			dir := t.TempDir()
+			t.Chdir(dir)
+			if err := os.Mkdir("custom", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// An application's Dockerfile must never become the agent image by default.
+			files := []string{"Dockerfile", "custom/agent.Dockerfile"}
+			if tc.local {
+				files = append(files, "Dockerfile.gnat")
+			}
+			for _, file := range files {
+				if err := writeFile(file, "FROM gnat-agent\n"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := append([]string{"create", "demo", "--repo", "o/r"}, tc.flags...)
+			status, _, errs := runGnat(t, args...)
+			if tc.wantErr != "" {
+				if status == 0 || !strings.Contains(errs, tc.wantErr) {
+					t.Fatalf("status %d: %s", status, errs)
+				}
+				if exists, err := state.Exists("demo"); err != nil || exists {
+					t.Fatalf("failed create saved a swarm: exists %v, err %v", exists, err)
+				}
+				return
+			}
+			if status != 0 {
+				t.Fatalf("status %d: %s", status, errs)
+			}
+			// Selection is saved as an absolute path, independent of the directory at up.
+			t.Chdir(t.TempDir())
+			swarm, err := state.Load("demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if tc.want != "" {
+				want, err = filepath.EvalSymlinks(filepath.Join(dir, tc.want))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if swarm.Dockerfile != want {
+				t.Fatalf("dockerfile = %q, want %q", swarm.Dockerfile, want)
+			}
+		})
 	}
 }
 

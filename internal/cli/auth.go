@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,9 @@ func login(name string) error {
 	h, err := harness.Get(name)
 	if err != nil {
 		return err
+	}
+	if name == "codex" {
+		return loginCodex()
 	}
 	secret, err := readSecret(h.CredentialName())
 	if err != nil {
@@ -97,6 +101,15 @@ func loadCredential(h harness.Harness) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("no %s is saved; %s, then run `gnat auth login %s`",
 			h.CredentialName(), h.CredentialSource(), h.Name())
+	}
+	if h.Name() == "codex" {
+		var credential harness.CodexCredential
+		if json.Unmarshal([]byte(value), &credential) != nil {
+			return "", fmt.Errorf("invalid Codex ChatGPT credential; run `gnat auth login codex`")
+		}
+		if err := credential.Validate(); err != nil {
+			return "", err
+		}
 	}
 	return value, nil
 }
