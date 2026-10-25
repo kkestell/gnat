@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -57,7 +58,7 @@ func TestWorkspacePersistenceAndConcurrency(t *testing.T) {
 		if original.ID == "" {
 			original = v
 		}
-		if v != original {
+		if !reflect.DeepEqual(v, original) {
 			t.Fatalf("duplicate identity: %+v %+v", original, v)
 		}
 	}
@@ -69,7 +70,7 @@ func TestWorkspacePersistenceAndConcurrency(t *testing.T) {
 	}
 	s = openTest(t, dir)
 	v, err := s.OpenWorkspace(ws, func() (Settings, error) { t.Fatal("existing swarm reloaded configuration"); return Settings{}, nil })
-	if err != nil || v != original {
+	if err != nil || !reflect.DeepEqual(v, original) {
 		t.Fatalf("reopen: %+v %v", v, err)
 	}
 	other, err := s.OpenWorkspace(workspace.Workspace{Root: "/linked", CommonDir: ws.CommonDir, Name: "linked"}, settings)
@@ -80,7 +81,7 @@ func TestWorkspacePersistenceAndConcurrency(t *testing.T) {
 		t.Fatal("shared repository collapsed distinct checkout identities")
 	}
 	// Explicit ownership redirects a future managed worktree to its owning swarm.
-	_, err = s.db.Exec(`INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?)`, NewID(), v.ID, "worker", "worker", "claude", "model", "high", "pending", "/managed", "branch", NewID())
+	_, err = s.db.Exec(`INSERT INTO agents(id,swarm_id,role,name,harness,model,effort,lifecycle,working_dir,branch,conversation_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, NewID(), v.ID, "worker", "worker", "claude", "model", "high", "pending", "/managed", "branch", NewID())
 	if err != nil {
 		t.Fatal(err)
 	}

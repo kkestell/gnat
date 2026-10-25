@@ -35,6 +35,11 @@ func TestDetachedDaemonLifecycle(t *testing.T) {
 		t.Skip("initial runtime supports macOS")
 	}
 	base := t.TempDir()
+	fixture := filepath.Join(base, "claude")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\ncase \"$1\" in --version) echo fixture;; auth) echo '{\"loggedIn\":true}';; *) exit 1;; esac\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", base+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, "config"))
 	config := filepath.Join(base, "config", "gnat")
@@ -157,7 +162,7 @@ func TestDetachedDaemonLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.ID != first.snapshot.ID || reopened.Orchestrator != first.snapshot.Orchestrator {
+	if reopened.ID != first.snapshot.ID || reopened.Orchestrator.ID != first.snapshot.Orchestrator.ID || reopened.Orchestrator.ConversationID != first.snapshot.Orchestrator.ConversationID || reopened.Orchestrator.Settings != first.snapshot.Orchestrator.Settings || reopened.Orchestrator.WorkingDir != first.snapshot.Orchestrator.WorkingDir {
 		t.Fatal("restart lost saved identity")
 	}
 	if err := Stop(ctx, dir); err != nil {

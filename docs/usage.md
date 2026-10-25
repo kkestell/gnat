@@ -1,6 +1,6 @@
 # Usage
 
-## V2 foundation (current source build)
+## V2 orchestrator (current source build)
 
 Run `gnat` from a committed local Git checkout to start/reuse the per-user daemon
 and open that workspace in the browser. `gnat --no-open` prints its URL without
@@ -11,8 +11,24 @@ Closing the terminal or browser leaves the daemon running.
 A checkout root, subdirectory, and symlink alias reuse one swarm. Separate linked
 user worktrees register separately. The browser links all registered workspaces
 and keeps each selected workspace on an explicit `/swarms/{id}` route.
-The pending orchestrator has saved harness settings and an initial conversation
-identity; no harness runs and chat is not yet available.
+The right sidebar runs Claude Code in the original checkout with saved
+model/effort, normal local credentials, and an exact persistent session. Send
+acknowledgement means the input is committed, even if the browser closes. Queued
+input remains visible; transcript and reported usage replay on reconnection.
+
+- **Pause:** prevent new turns while the active turn finishes.
+- **Stop:** interrupt active execution and prevent new turns.
+- **Interrupt:** end the current turn and pause scheduling.
+- **Resume / Retry:** check prerequisites and enable queued input again.
+- **New conversation:** create a fresh session when execution is settled, keeping
+  queued input, identity, checkout, and prior history. The conversation selector
+  shows earlier transcripts. A failed exact resume never silently starts fresh.
+
+Interrupted input is not replayed: send new direction explicitly. Daemon stop
+interrupts/reaps active processes and preserves queues and sessions. A restart
+marks unfinished persisted turns interrupted and holds their queue for explicit
+continuation. Following a daemon crash, clean up any surviving processes first;
+automatic crash-process cleanup remains outside initial scope.
 
 ## Historical v1 command reference
 

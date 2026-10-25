@@ -2,7 +2,7 @@
 
 This is what the code can't say: the shape of the system, the lines drawn between its parts, and the reasons for them. The packages are listed in `CLAUDE.md`; the commands and formats in `usage.md` and `setup.md`. A change that keeps these lines where they are shouldn't need to change this file.
 
-## Current v2 foundation
+## Current v2 runtime
 
 `cmd/gnat` now uses `internal/v2/entry`. A normal invocation discovers a committed
 local checkout, starts or reuses a detached per-user daemon, registers or opens
@@ -34,12 +34,40 @@ Authenticated CLI mutations register workspaces and stop the daemon. Host and
 Origin checks protect the local HTTP destination. PID values are diagnostic;
 shutdown uses the authenticated endpoint, never a signal to a saved PID.
 
-The daemon embeds a read-only HTML workspace switcher with a distinct
-orchestrator sidebar. It reads the same SQLite snapshots as the HTTP API and
-reports missing saved paths without recreating them. Harness execution, chat,
-message scheduling, worker creation, event streaming, and recovery of running
-turns are later milestones. There are currently no harness processes to stop.
-The retained v1 React dashboard is not served by v2.
+`internal/v2/core` owns scheduling and controls through a neutral adapter
+interface. Each orchestrator has at most one active turn; different swarms run
+independently. Accepted messages, atomic dequeue/turn creation, outcomes, and
+normalized correlated events commit to SQLite together. Durable request IDs
+return the original mutation result on retry. Schema version two migrates the
+milestone-one records in place, retaining their identities and settings.
+
+`internal/v2/harness` currently implements Claude Code. It probes the local
+installation/authentication, runs `claude -p` in the original checkout, and
+translates stream-json text, tools, nested activity, and reported usage. Normal
+local credentials/configuration and native delegation remain intact. Launch-only
+permission bypass enables unattended trusted execution. The provider session ID
+is saved before its output and later turns use exact `--resume`, never
+`--continue`. A failed resume is an error; only explicit conversation reset
+starts fresh. Session creation is lazy on first input after prerequisite checks.
+Other harness adapters remain milestone four.
+
+The daemon embeds a workspace switcher and resizable right-sidebar chat, using
+plain JavaScript/CSS independently of the retained v1 React dashboard. Browser
+mutations require the intended Host, same Origin, and a custom browser header;
+CLI registration/shutdown still requires its private bearer token. Snapshots
+include transcript, queue, conversation history, and a cursor from one read
+transaction. SSE reads only committed events after that cursor, scoped by swarm;
+reconnection uses event IDs to deduplicate. Unknown metrics stay absent.
+
+Pause holds queued input; stop/interrupt cancel execution and hold scheduling.
+Failures and interruptions never requeue delivered input. Resume/retry rechecks
+prerequisites and delivers only pending messages. New conversation requires a
+settled turn, retains old history and queued input, and preserves the checkout.
+Daemon shutdown cancels scheduling, kills active process groups, waits for
+children and outcomes, then closes SQLite. Startup marks persisted running turns
+interrupted and pauses their swarms. Surviving processes after daemon crashes
+remain the user's cleanup responsibility. Worker creation and MCP are milestone
+three. Missing saved paths are reported without recreating them.
 
 The rest of this document describes the retained v1 packages. Their Docker,
 profile, credential proxy, and compatibility constraints do not apply to v2.

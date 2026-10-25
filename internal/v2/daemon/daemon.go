@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kkestell/gnat/internal/v2/core"
+	"github.com/kkestell/gnat/internal/v2/harness"
 	"net"
 	"net/http"
 	"os"
@@ -60,6 +62,11 @@ func Run(dir string) error {
 		return err
 	}
 	defer db.Close()
+	service, err := core.New(db, harness.Claude{})
+	if err != nil {
+		return err
+	}
+	defer service.Close()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -67,7 +74,9 @@ func Run(dir string) error {
 	defer listener.Close()
 	desc := Descriptor{PID: os.Getpid(), URL: "http://" + listener.Addr().String(), Generation: store.NewID(), Token: store.NewID()}
 	stop := make(chan struct{}, 1)
-	server := &http.Server{Handler: Handler(db, desc, func() {
+	serveCtx, cancelServe := context.WithCancel(context.Background())
+	defer cancelServe()
+	server := &http.Server{BaseContext: func(net.Listener) context.Context { return serveCtx }, Handler: Handler(db, service, desc, func() {
 		select {
 		case stop <- struct{}{}:
 		default:
@@ -96,6 +105,8 @@ func Run(dir string) error {
 	case <-stop:
 	case <-ctx.Done():
 	}
+	cancelServe()
+	service.Close()
 	shutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelShutdown()
 	if err := server.Shutdown(shutdown); err != nil {

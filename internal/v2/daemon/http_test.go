@@ -32,7 +32,7 @@ func TestHTTPRoutesAndBoundaries(t *testing.T) {
 	}
 	desc := Descriptor{URL: "http://127.0.0.1:12345", Token: "token", Generation: "generation"}
 	stopped := false
-	handler := Handler(db, desc, func() { stopped = true })
+	handler := Handler(db, nil, desc, func() { stopped = true })
 	cases := []struct {
 		method, path, host, origin, auth string
 		status                           int

@@ -28,13 +28,17 @@ PRAGMA user_version = 1;
 type Store struct{ db *sql.DB }
 
 type Snapshot struct {
-	ID           string              `json:"id"`
-	WorkspaceID  string              `json:"workspace_id"`
-	Workspace    workspace.Workspace `json:"workspace"`
-	Orchestrator Agent               `json:"orchestrator"`
-	Scheduling   string              `json:"scheduling"`
-	CreatedAt    string              `json:"created_at"`
-	Cursor       int64               `json:"cursor"`
+	ID            string              `json:"id"`
+	WorkspaceID   string              `json:"workspace_id"`
+	Workspace     workspace.Workspace `json:"workspace"`
+	Orchestrator  Agent               `json:"orchestrator"`
+	Scheduling    string              `json:"scheduling"`
+	CreatedAt     string              `json:"created_at"`
+	Cursor        int64               `json:"cursor"`
+	Messages      []Message           `json:"messages"`
+	Turns         []Turn              `json:"turns"`
+	Events        []Event             `json:"events"`
+	Conversations []Conversation      `json:"conversations"`
 }
 
 type Agent struct {
@@ -46,6 +50,7 @@ type Agent struct {
 	WorkingDir     string   `json:"working_dir"`
 	Branch         *string  `json:"branch"`
 	ConversationID string   `json:"conversation_id"`
+	Error          string   `json:"error"`
 }
 
 func NewID() string {
@@ -107,8 +112,14 @@ func (s *Store) initialize() error {
 			return err
 		}
 	case 1:
+	case 2:
 	default:
 		return fmt.Errorf("unsupported v2 database schema version %d", version)
+	}
+	if version < 2 {
+		if _, err := tx.Exec(migration2); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -143,7 +154,7 @@ func (s *Store) OpenWorkspace(w workspace.Workspace, load func() (Settings, erro
 		}{
 			{`INSERT INTO workspaces VALUES (?,?,?,?,?)`, []any{wid, w.Root, w.CommonDir, w.Name, now}},
 			{`INSERT INTO swarms VALUES (?,?,?,?,?)`, []any{id, wid, aid, "running", now}},
-			{`INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?)`, []any{aid, id, "orchestrator", "orchestrator", settings.Harness, settings.Model, settings.Effort, "pending", w.Root, nil, cid}},
+			{`INSERT INTO agents(id,swarm_id,role,name,harness,model,effort,lifecycle,working_dir,branch,conversation_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, []any{aid, id, "orchestrator", "orchestrator", settings.Harness, settings.Model, settings.Effort, "pending", w.Root, nil, cid}},
 			{`INSERT INTO conversations VALUES (?,?,?,?,?,?)`, []any{cid, aid, settings.Harness, nil, now, nil}},
 		}
 		for _, stmt := range statements {
@@ -158,7 +169,7 @@ func (s *Store) OpenWorkspace(w workspace.Workspace, load func() (Settings, erro
 			}
 		}
 	}
-	snapshot, err := readSnapshot(tx, id)
+	snapshot, err := fullSnapshot(tx, id)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -172,11 +183,22 @@ type queryer interface{ QueryRow(string, ...any) *sql.Row }
 
 func readSnapshot(q queryer, id string) (Snapshot, error) {
 	var v Snapshot
-	err := q.QueryRow(`SELECT s.id,w.id,w.root,w.common_dir,w.name,s.scheduling,s.created_at,a.id,a.role,a.name,a.harness,a.model,a.effort,a.lifecycle,a.working_dir,a.branch,a.conversation_id,(SELECT coalesce(max(sequence),0) FROM events) FROM swarms s JOIN workspaces w ON w.id=s.workspace_id JOIN agents a ON a.id=s.orchestrator_id WHERE s.id=?`, id).Scan(&v.ID, &v.WorkspaceID, &v.Workspace.Root, &v.Workspace.CommonDir, &v.Workspace.Name, &v.Scheduling, &v.CreatedAt, &v.Orchestrator.ID, &v.Orchestrator.Role, &v.Orchestrator.Name, &v.Orchestrator.Settings.Harness, &v.Orchestrator.Settings.Model, &v.Orchestrator.Settings.Effort, &v.Orchestrator.Lifecycle, &v.Orchestrator.WorkingDir, &v.Orchestrator.Branch, &v.Orchestrator.ConversationID, &v.Cursor)
+	err := q.QueryRow(`SELECT s.id,w.id,w.root,w.common_dir,w.name,s.scheduling,s.created_at,a.id,a.role,a.name,a.harness,a.model,a.effort,a.lifecycle,a.working_dir,a.branch,a.conversation_id,a.error,(SELECT coalesce(max(sequence),0) FROM events) FROM swarms s JOIN workspaces w ON w.id=s.workspace_id JOIN agents a ON a.id=s.orchestrator_id WHERE s.id=?`, id).Scan(&v.ID, &v.WorkspaceID, &v.Workspace.Root, &v.Workspace.CommonDir, &v.Workspace.Name, &v.Scheduling, &v.CreatedAt, &v.Orchestrator.ID, &v.Orchestrator.Role, &v.Orchestrator.Name, &v.Orchestrator.Settings.Harness, &v.Orchestrator.Settings.Model, &v.Orchestrator.Settings.Effort, &v.Orchestrator.Lifecycle, &v.Orchestrator.WorkingDir, &v.Orchestrator.Branch, &v.Orchestrator.ConversationID, &v.Orchestrator.Error, &v.Cursor)
 	return v, err
 }
 
-func (s *Store) Snapshot(id string) (Snapshot, error) { return readSnapshot(s.db, id) }
+func (s *Store) Snapshot(id string) (Snapshot, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer tx.Rollback()
+	v, err := fullSnapshot(tx, id)
+	if err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
 
 func (s *Store) List() ([]Snapshot, error) {
 	tx, err := s.db.Begin()

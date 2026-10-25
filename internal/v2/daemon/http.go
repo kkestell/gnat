@@ -6,21 +6,32 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"github.com/kkestell/gnat/internal/v2/core"
 	"html/template"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/kkestell/gnat/internal/v2/store"
 	"github.com/kkestell/gnat/internal/v2/workspace"
 )
 
-//go:embed page.html
+//go:embed page.html page.js page.css
 var pageFS embed.FS
 var page = template.Must(template.ParseFS(pageFS, "page.html"))
 
-func Handler(db *store.Store, desc Descriptor, stop func()) http.Handler {
+func Handler(db *store.Store, service *core.Service, desc Descriptor, stop func()) http.Handler {
 	mux := http.NewServeMux()
+	chatRoutes(mux, db, service)
+	mux.HandleFunc("GET /assets/{file}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("file") {
+		case "page.js", "page.css":
+			http.ServeFileFS(w, r, pageFS, r.PathValue("file"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
 	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, desc.Generation) })
 	mux.HandleFunc("POST /api/workspaces/open", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
@@ -40,6 +51,9 @@ func Handler(db *store.Store, desc Descriptor, stop func()) http.Handler {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if service != nil {
+			service.Open(snapshot.ID)
 		}
 		writeJSON(w, snapshot)
 	})
@@ -98,7 +112,7 @@ func Handler(db *store.Store, desc Descriptor, stop func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 		if r.Host != address.Host {
 			http.Error(w, "invalid local destination", http.StatusForbidden)
 			return
@@ -108,8 +122,9 @@ func Handler(db *store.Store, desc Descriptor, stop func()) http.Handler {
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" || r.URL.Path == "/api/ready" {
+			browserAction := r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/swarms/") && strings.HasSuffix(r.URL.Path, "/actions") && r.Header.Get("X-Gnat-Browser") == "1" && r.Header.Get("Origin") == desc.URL
 			expected := "Bearer " + desc.Token
-			if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(expected)) != 1 {
+			if !browserAction && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(expected)) != 1 {
 				http.Error(w, "daemon credential required", http.StatusUnauthorized)
 				return
 			}

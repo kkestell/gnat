@@ -1,18 +1,27 @@
 # Setup
 
-## V2 foundation (current source build)
+## V2 orchestrator (current source build)
 
 On macOS, run `go build -o gnat ./cmd/gnat` or `go install ./cmd/gnat`.
-No Docker, GitHub, profiles, or credential setup is needed for milestone one.
+Install Claude Code and authenticate normally with `claude auth login`. No
+Docker, GitHub, profiles, or Gnat-specific credential setup is needed.
 Set the required `orchestrator.harness`, `orchestrator.model`, and
 `orchestrator.effort` in `~/.config/gnat/config.yaml` (under
 `$XDG_CONFIG_HOME/gnat` when set), as shown in the [README](../README.md).
-The browser displays registered workspaces; harness execution and chat are not
-implemented yet. Supported configured harness names are `claude`, `codex`, and
-`opencode`. Existing swarms retain their resolved settings.
+The browser provides right-sidebar chat with one local Claude Code orchestrator.
+Configured names remain `claude`, `codex`, and `opencode`; only `claude` runs in
+milestone two. Missing installation/authentication and unavailable adapters show
+actionable errors in the sidebar. Repair the local installation/login and use
+Retry without losing the swarm or queued input. Existing swarms retain their
+resolved settings.
 
-The native binary embeds its foundation HTML page. `gnat` starts the daemon
-automatically; `gnat daemon stop` preserves SQLite state. Runtime files are
+Gnat uses the normal local Claude configuration, credentials, project
+instructions, and native delegation. It does not rewrite them. Execution uses
+`--dangerously-skip-permissions` for unattended operation with ordinary user
+privileges; the orchestrator works directly in the original checkout.
+
+The native binary embeds its chat page and JavaScript/CSS assets. `gnat` starts the daemon
+automatically; `gnat daemon stop` interrupts managed turns, waits for subprocess cleanup, and preserves SQLite state. Runtime files are
 private under `$XDG_STATE_HOME/gnat/v2/runtime` (default
 `~/.local/state/gnat/v2/runtime`); startup failures identify `daemon.log` there.
 V1 state is preserved separately and is not migrated. Missing saved checkout

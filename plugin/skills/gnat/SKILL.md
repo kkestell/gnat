@@ -7,8 +7,11 @@ description: Operate `gnat`, which runs coding agents (Claude Code, Codex, or Ox
 
 ## Source-build v2 status
 
-The current source entry point implements v2 milestone one, with a detached
-local daemon and workspace browser but no harness execution or chat. For a v2
+The current source entry point implements v2 milestones one and two, with a
+detached local daemon and right-sidebar chat using one local Claude Code
+orchestrator. Install/authenticate Claude normally (`claude auth login`);
+Gnat uses local credentials and trusted execution in the original checkout.
+Workers and other harness adapters are later milestones. For a v2
 source build, follow the repository README: native `go install ./cmd/gnat`,
 required orchestrator settings in `~/.config/gnat/config.yaml`, then `gnat` or
 `gnat --no-open` in a committed checkout. Stop it with `gnat daemon stop`.
