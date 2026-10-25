@@ -18,7 +18,7 @@ import (
 	"github.com/kkestell/gnat/internal/workspace"
 )
 
-//go:embed page.html page.js page.css
+//go:embed page.html assets/page.js assets/page.css
 var pageFS embed.FS
 var page = template.Must(template.ParseFS(pageFS, "page.html"))
 
@@ -29,7 +29,7 @@ func Handler(db *store.Store, service *core.Service, desc Descriptor, stop func(
 	mux.HandleFunc("GET /assets/{file}", func(w http.ResponseWriter, r *http.Request) {
 		switch r.PathValue("file") {
 		case "page.js", "page.css":
-			http.ServeFileFS(w, r, pageFS, r.PathValue("file"))
+			http.ServeFileFS(w, r, pageFS, "assets/"+r.PathValue("file"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -76,8 +76,16 @@ func Handler(db *store.Store, service *core.Service, desc Descriptor, stop func(
 		}
 		writeJSON(w, snapshot)
 	})
+	mux.HandleFunc("GET /api/swarms/{id}/state", func(w http.ResponseWriter, r *http.Request) {
+		state, err := db.State(r.PathValue("id"))
+		if err != nil {
+			recordError(w, err)
+			return
+		}
+		writeJSON(w, state)
+	})
 	mux.HandleFunc("GET /swarms/{id}", func(w http.ResponseWriter, r *http.Request) {
-		snapshot, err := db.Snapshot(r.PathValue("id"))
+		snapshot, err := db.Swarm(r.PathValue("id"))
 		if err != nil {
 			recordError(w, err)
 			return

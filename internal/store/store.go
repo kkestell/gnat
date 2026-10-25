@@ -142,6 +142,7 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // OpenWorkspace commits identity, configuration, conversation and core events together.
 // Settings are only loaded for a new swarm; reopening uses its resolved settings.
+// The result is the swarm's state without event history.
 func (s *Store) OpenWorkspace(w workspace.Workspace, load func() (Settings, error)) (Snapshot, error) {
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -192,7 +193,7 @@ func (s *Store) OpenWorkspace(w workspace.Workspace, load func() (Settings, erro
 			}
 		}
 	}
-	snapshot, err := fullSnapshot(tx, id)
+	snapshot, err := fullSnapshot(tx, id, false)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -217,13 +218,21 @@ func readSnapshot(q queryer, id string) (Snapshot, error) {
 	return v, err
 }
 
-func (s *Store) Snapshot(id string) (Snapshot, error) {
+func (s *Store) Snapshot(id string) (Snapshot, error) { return s.read(id, true) }
+
+// State is the snapshot without its event history.
+func (s *Store) State(id string) (Snapshot, error) { return s.read(id, false) }
+
+// Swarm reads the swarm record and orchestrator without agents, messages, turns or events.
+func (s *Store) Swarm(id string) (Snapshot, error) { return readSnapshot(s.db, id) }
+
+func (s *Store) read(id string, events bool) (Snapshot, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Snapshot{}, err
 	}
 	defer tx.Rollback()
-	v, err := fullSnapshot(tx, id)
+	v, err := fullSnapshot(tx, id, events)
 	if err != nil {
 		return v, err
 	}

@@ -78,7 +78,7 @@ func (s *Service) open(id string, retry bool) {
 	if err != nil {
 		return
 	}
-	v, err := s.db.Snapshot(id)
+	v, err := s.db.Swarm(id)
 	if err != nil {
 		return
 	}
@@ -117,7 +117,7 @@ func (s *Service) prepare(id string, a store.Agent) {
 		}
 		s.schedule(id, a.ID)
 		if probeErr != nil && a.Role == "worker" {
-			v, e := s.db.Snapshot(id)
+			v, e := s.db.Swarm(id)
 			if e == nil {
 				s.schedule(id, v.Orchestrator.ID)
 			}
@@ -160,7 +160,7 @@ func (s *Service) Mutate(id, requestID, kind, text, targetTurn string) (store.Re
 	if err != nil || replay {
 		return result, err
 	}
-	v, err := s.db.Snapshot(id)
+	v, err := s.db.Swarm(id)
 	if err != nil {
 		return result, err
 	}
@@ -226,7 +226,7 @@ func (s *Service) schedule(id, aid string) {
 			s.schedule(id, aid)
 		}
 		if c.Agent.Role == "worker" && state != "completed" {
-			v, err := s.db.Snapshot(id)
+			v, err := s.db.Swarm(id)
 			if err == nil {
 				s.schedule(id, v.Orchestrator.ID)
 			}

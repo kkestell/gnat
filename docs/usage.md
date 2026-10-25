@@ -18,10 +18,19 @@ model/effort, normal local credentials, and an exact persistent session. Send
 acknowledgement means the input is committed, even if the browser closes. Queued
 input remains visible; transcript and reported usage replay on reconnection.
 
+The header shows Paused or Stopped, with Resume, whenever the swarm is not
+scheduling new turns. Each card shows a worker's membership (provisioning,
+provisioning failed, removing, removed) until it is an active member, then its
+execution state, with any error beneath the card header.
+
 - **Pause:** prevent new turns across the swarm while active turns finish.
 - **Stop:** interrupt every agent and prevent new turns, preserving the team.
 - **Interrupt:** end the orchestrator turn and pause swarm scheduling.
-- **Resume / Retry:** check prerequisites and enable queued input again.
+- **Resume:** in the header; check prerequisites and enable queued input from a
+  paused or stopped swarm.
+- **Recheck harness:** retry harness setup checks after repairing installation or
+  authentication. This appears beside the orchestrator's setup error while
+  scheduling is enabled; it does not replay a failed turn.
 - **New conversation:** create a fresh session when execution is settled, keeping
   queued input, identity, checkout, and prior history. The conversation selector
   shows earlier transcripts. During an active turn the button first offers
@@ -31,8 +40,9 @@ input remains visible; transcript and reported usage replay on reconnection.
 
 Interrupted input is not replayed: send new direction explicitly. Daemon stop
 interrupts/reaps active processes and preserves queues and sessions. A restart
-marks unfinished persisted turns interrupted and holds their queue for explicit
-continuation. Following a daemon crash, clean up any surviving processes first;
+marks unfinished persisted turns interrupted, notifies the orchestrator about
+interrupted workers, and holds the queue for explicit continuation; a stopped
+swarm stays stopped. Following a daemon crash, clean up any surviving processes first;
 automatic crash-process cleanup remains outside initial scope.
 
 Ask the orchestrator to create workers with initial prompts. Workers start from
@@ -40,7 +50,8 @@ committed HEAD or an explicit committed base, each in a separate worktree and
 conversation. Worker creation can override harness, model, and effort, so a team
 can mix all three harnesses; model/effort choices must fit that harness. Their cards update as they join or leave; select a worker to
 inspect its transcript, branch, path, and execution outcome. Removed workers are
-available in the history selector. New orchestrator conversations preserve the
+available in the header's Removed workers selector; input cancelled by removal
+appears in their transcripts marked as cancelled before delivery. New orchestrator conversations preserve the
 team and provide saved runtime orientation.
 
 The Gnat MCP server exposes `list_agents`, `send_message`, and bounded

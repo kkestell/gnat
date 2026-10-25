@@ -53,7 +53,7 @@ func (s *Service) Coordinate(b Binding, kind string, c store.Command) (store.Res
 	var base string
 	var settings store.Settings
 	if kind == "create_agent" {
-		v, e := s.db.Snapshot(b.SwarmID)
+		v, e := s.db.Swarm(b.SwarmID)
 		if e != nil {
 			return store.Result{}, e
 		}
@@ -101,7 +101,7 @@ func (s *Service) provision(id string, a store.Agent) {
 		defer s.wg.Done()
 		defer e.cancel()
 		defer close(e.done)
-		v, err := s.db.Snapshot(id)
+		v, err := s.db.Swarm(id)
 		stage := a.Stage
 		set := func(next string) error {
 			if err := s.db.WorkerState(id, a.ID, "provisioning", next, ""); err != nil {
@@ -193,7 +193,7 @@ func (s *Service) remove(id string, a store.Agent) {
 		defer s.wg.Done()
 		defer e.cancel()
 		defer close(e.done)
-		v, err := s.db.Snapshot(id)
+		v, err := s.db.Swarm(id)
 		stage := "removing_worktree"
 		if a.Stage == "reserved" {
 			stage = "reserved"
@@ -254,13 +254,7 @@ func (s *Service) instructions(id string, a store.Agent) string {
 		records = append(records, identity{v.ID, v.Role, v.Name, v.Lifecycle, v.Membership, v.WorkingDir, v.Branch, v.TurnID})
 	}
 	team, _ := json.Marshal(records)
-	snapshot, _ := s.db.Snapshot(id)
-	queued := 0
-	for _, m := range snapshot.Messages {
-		if m.AgentID == a.ID && m.State == "queued" {
-			queued++
-		}
-	}
+	queued, _ := s.db.Queued(a.ID)
 	return fmt.Sprintf(`Gnat runtime facts: your immutable agent ID is %s; your role is %s. Your working directory is %s. Team records (up to 50; list_agents returns the current team): %s. You have %d additional queued messages, which will be delivered normally. read_agent can inspect prior conversations.
 Gnat coordination tools are on the gnat MCP server. All messages have an authenticated sender and recipient; accepted messages queue durably and each starts a turn when the recipient is available. A message arriving during execution waits for the next turn. A turn ending is an execution outcome. Messages are ordinary conversation; Gnat has no task registry or required reporting protocol.
 list_agents shows current execution and checkout metadata. read_agent inspects bounded history, including removed agents. send_message sends text to an agent ID. Mutation tools require a unique request_id for each deliberate operation; reuse it only to retry that same operation. Orchestrators also have create_agent, interrupt_agent (with the observed turn_id), and remove_agent. Workers cannot create or remove Gnat agents.

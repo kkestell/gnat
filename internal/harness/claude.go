@@ -23,7 +23,7 @@ func (Claude) Probe(ctx context.Context, s store.Settings) error {
 		return fmt.Errorf("%s is not handled by the Claude Code adapter", s.Harness)
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
-		return fmt.Errorf("Claude Code is missing: install claude, then choose Retry: %w", err)
+		return fmt.Errorf("Claude Code is missing: install claude, then choose Recheck harness: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -35,7 +35,7 @@ func (Claude) Probe(ctx context.Context, s store.Settings) error {
 		LoggedIn bool `json:"loggedIn"`
 	}
 	if err != nil || json.Unmarshal(out, &auth) != nil || !auth.LoggedIn {
-		return fmt.Errorf("Claude Code authentication is unavailable: run claude auth login in a terminal, then choose Retry")
+		return fmt.Errorf("Claude Code authentication is unavailable: run claude auth login in a terminal, then choose Recheck harness")
 	}
 	return nil
 }
@@ -114,8 +114,10 @@ func (Claude) Run(ctx context.Context, c *store.Claim, emit func(map[string]any)
 }
 
 type translator struct {
-	emit     func(map[string]any) error
-	partial  map[string]map[int]bool
+	emit func(map[string]any) error
+	// partial holds text streamed for each parent's content blocks until the
+	// assistant event that completes them, which may hold only some of the blocks.
+	partial  map[string]map[int]string
 	result   bool
 	session  string
 	expected string
@@ -145,24 +147,25 @@ func (t *translator) line(line []byte) error {
 		delta, _ := event["delta"].(map[string]any)
 		if delta["type"] == "text_delta" {
 			if t.partial == nil {
-				t.partial = map[string]map[int]bool{}
+				t.partial = map[string]map[int]string{}
 			}
 			if t.partial[parent] == nil {
-				t.partial[parent] = map[int]bool{}
+				t.partial[parent] = map[int]string{}
 			}
 			index, _ := event["index"].(float64)
-			t.partial[parent][int(index)] = true
+			text, _ := delta["text"].(string)
+			t.partial[parent][int(index)] += text
 			return send(map[string]any{"type": "text_delta", "text": delta["text"]})
 		}
 	case "assistant", "user":
 		m, _ := e["message"].(map[string]any)
 		content, _ := m["content"].([]any)
-		for index, item := range content {
+		for _, item := range content {
 			b, _ := item.(map[string]any)
 			var v map[string]any
 			switch b["type"] {
 			case "text":
-				if e["type"] == "assistant" && !t.partial[parent][index] {
+				if e["type"] == "assistant" && !t.streamed(parent, b["text"]) {
 					v = map[string]any{"type": "message", "text": b["text"]}
 				}
 			case "tool_use":
@@ -203,6 +206,18 @@ func (t *translator) line(line []byte) error {
 		}
 	}
 	return nil
+}
+
+// streamed reports whether a completed text block was already streamed, and
+// forgets that block's streamed text.
+func (t *translator) streamed(parent string, text any) bool {
+	for index, streamed := range t.partial[parent] {
+		if streamed == text {
+			delete(t.partial[parent], index)
+			return true
+		}
+	}
+	return false
 }
 func toolText(v any) string {
 	if s, ok := v.(string); ok {

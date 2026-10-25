@@ -31,7 +31,7 @@ func openCodeServer(ctx context.Context, dir string) (*rpcProcess, error) {
 }
 func (OpenCode) Probe(ctx context.Context, s store.Settings) error {
 	if _, err := exec.LookPath("opencode"); err != nil {
-		return fmt.Errorf("OpenCode is missing: install opencode and run opencode auth login, then choose Retry: %w", err)
+		return fmt.Errorf("OpenCode is missing: install opencode and run opencode auth login, then choose Recheck harness: %w", err)
 	}
 	p, err := openCodeServer(ctx, "")
 	if err != nil {

@@ -60,7 +60,8 @@ with ordinary Git and retry without forcing deletion.
 
 Pause holds queued input and lets turns finish. Stop interrupts all agents and
 holds input. Interrupt stops the orchestrator turn and pauses scheduling.
-Resume/Retry rechecks prerequisites and releases pending input. Interrupted input
+Resume rechecks prerequisites and releases pending input. An orchestrator
+harness setup error offers Recheck harness while scheduling is enabled. Interrupted input
 is never silently replayed; send new direction explicitly.
 
 New conversation keeps identity, checkout, team, queue and earlier history. An

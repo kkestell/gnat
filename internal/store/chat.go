@@ -59,6 +59,8 @@ type Claim struct {
 	MCPURL       string
 	MCPToken     string
 	Instructions string
+	// Start is the turn_started sequence, where merging streamed text begins.
+	Start int64
 }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -71,7 +73,8 @@ func addEvent(tx *sql.Tx, id, aid, cid, tid string, payload map[string]any) erro
 	return err
 }
 
-func fullSnapshot(tx *sql.Tx, id string) (Snapshot, error) {
+// fullSnapshot reads the swarm and its records, with its complete event history when events is set.
+func fullSnapshot(tx *sql.Tx, id string, events bool) (Snapshot, error) {
 	v, err := readSnapshot(tx, id)
 	if err != nil {
 		return v, err
@@ -89,9 +92,11 @@ func fullSnapshot(tx *sql.Tx, id string) (Snapshot, error) {
 	if err != nil {
 		return v, err
 	}
-	v.Events, err = readEvents(tx, id, 0)
-	if err != nil {
-		return v, err
+	v.Events = []Event{}
+	if events {
+		if v.Events, err = readEvents(tx, id, 0); err != nil {
+			return v, err
+		}
 	}
 	v.Messages = []Message{}
 	v.Turns = []Turn{}
@@ -269,7 +274,7 @@ func (s *Store) Mutate(id, requestID, kind, text, targetTurn string) (Result, bo
 }
 
 func (s *Store) Ready(id string, probeErr error) error {
-	v, err := s.Snapshot(id)
+	v, err := s.Swarm(id)
 	if err != nil {
 		return err
 	}
@@ -306,7 +311,7 @@ func (s *Store) ReadyAgent(id, aid string, probeErr error) error {
 	return tx.Commit()
 }
 func (s *Store) Claim(id string) (*Claim, error) {
-	v, err := s.Snapshot(id)
+	v, err := s.Swarm(id)
 	if err != nil {
 		return nil, err
 	}
@@ -351,6 +356,9 @@ func (s *Store) ClaimAgent(id, aid string) (*Claim, error) {
 		return nil, err
 	}
 	if err = addEvent(tx, id, c.Agent.ID, c.Turn.ConversationID, c.Turn.ID, map[string]any{"type": "turn_started", "message_id": mid}); err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRow(`SELECT last_insert_rowid()`).Scan(&c.Start); err != nil {
 		return nil, err
 	}
 	return c, tx.Commit()
@@ -404,6 +412,9 @@ func (s *Store) Finish(c *Claim, state, reason string) error {
 			return err
 		}
 	}
+	if err = mergeText(tx, c.SwarmID, c.Turn.ID, c.Start); err != nil {
+		return err
+	}
 	if err = addEvent(tx, c.SwarmID, c.Agent.ID, c.Turn.ConversationID, c.Turn.ID, map[string]any{"type": "turn_ended", "state": state, "error": reason}); err != nil {
 		return err
 	}
@@ -411,21 +422,25 @@ func (s *Store) Finish(c *Claim, state, reason string) error {
 }
 
 // Recover terminates persisted running turns without putting delivered input back.
+// Outcomes match Finish: stopped swarms stay stopped and interrupted workers notify the orchestrator.
 func (s *Store) Recover() error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT id,swarm_id,agent_id,conversation_id FROM turns WHERE state='running'`)
+	rows, err := tx.Query(`SELECT t.id,t.swarm_id,t.agent_id,t.conversation_id,a.role,a.name,(SELECT coalesce(min(sequence),0) FROM events WHERE swarm_id=t.swarm_id AND turn_id=t.id) FROM turns t JOIN agents a ON a.id=t.agent_id WHERE t.state='running'`)
 	if err != nil {
 		return err
 	}
-	type interrupted struct{ id, swarm, agent, conversation string }
+	type interrupted struct {
+		id, swarm, agent, conversation, role, name string
+		start                                      int64
+	}
 	var all []interrupted
 	for rows.Next() {
 		var v interrupted
-		if err = rows.Scan(&v.id, &v.swarm, &v.agent, &v.conversation); err != nil {
+		if err = rows.Scan(&v.id, &v.swarm, &v.agent, &v.conversation, &v.role, &v.name, &v.start); err != nil {
 			break
 		}
 		all = append(all, v)
@@ -433,19 +448,91 @@ func (s *Store) Recover() error {
 	if err = closeRows(rows, err); err != nil {
 		return err
 	}
+	const reason = "Daemon restarted during execution"
 	for _, v := range all {
-		if _, err = tx.Exec(`UPDATE turns SET state='interrupted',ended_at=?,error='Daemon restarted during execution' WHERE id=?`, now(), v.id); err != nil {
+		if _, err = tx.Exec(`UPDATE turns SET state='interrupted',ended_at=?,error=? WHERE id=?`, now(), reason, v.id); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`UPDATE agents SET lifecycle='interrupted',error='Daemon restarted during execution' WHERE id=?`, v.agent); err != nil {
+		if _, err = tx.Exec(`UPDATE agents SET lifecycle='interrupted',error=? WHERE id=?`, reason, v.agent); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`UPDATE swarms SET scheduling='paused' WHERE id=?`, v.swarm); err != nil {
+		if _, err = tx.Exec(`UPDATE swarms SET scheduling=CASE WHEN scheduling='stopped' THEN scheduling ELSE 'paused' END WHERE id=?`, v.swarm); err != nil {
 			return err
 		}
-		if err = addEvent(tx, v.swarm, v.agent, v.conversation, v.id, map[string]any{"type": "turn_ended", "state": "interrupted", "error": "Daemon restarted during execution"}); err != nil {
+		if v.role == "worker" {
+			if err = notify(tx, v.swarm, "Worker "+v.name+" ("+v.agent+"): interrupted: "+reason); err != nil {
+				return err
+			}
+		}
+		if err = mergeText(tx, v.swarm, v.id, v.start); err != nil {
+			return err
+		}
+		if err = addEvent(tx, v.swarm, v.agent, v.conversation, v.id, map[string]any{"type": "turn_ended", "state": "interrupted", "error": reason}); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// mergeText replaces each run of a turn's streamed text_delta events that share a
+// parent_tool_use_id with one message event at the run's first sequence.
+func mergeText(tx *sql.Tx, swarm, turn string, from int64) error {
+	rows, err := tx.Query(`SELECT sequence,payload FROM events WHERE swarm_id=? AND sequence>=? AND turn_id=? ORDER BY sequence`, swarm, from, turn)
+	if err != nil {
+		return err
+	}
+	type run struct {
+		first  int64
+		rest   []int64
+		parent string
+		text   strings.Builder
+	}
+	var runs []*run
+	var open *run
+	for rows.Next() {
+		var sequence int64
+		var raw string
+		if err = rows.Scan(&sequence, &raw); err != nil {
+			break
+		}
+		var payload map[string]any
+		if err = json.Unmarshal([]byte(raw), &payload); err != nil {
+			break
+		}
+		if payload["type"] != "text_delta" {
+			open = nil
+			continue
+		}
+		parent, _ := payload["parent_tool_use_id"].(string)
+		text, _ := payload["text"].(string)
+		if open != nil && open.parent == parent {
+			open.rest = append(open.rest, sequence)
+		} else {
+			open = &run{first: sequence, parent: parent}
+			runs = append(runs, open)
+		}
+		open.text.WriteString(text)
+	}
+	if err = closeRows(rows, err); err != nil {
+		return err
+	}
+	for _, r := range runs {
+		payload := map[string]any{"type": "message", "text": r.text.String()}
+		if r.parent != "" {
+			payload["parent_tool_use_id"] = r.parent
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE events SET payload=? WHERE sequence=?`, string(data), r.first); err != nil {
+			return err
+		}
+		for _, sequence := range r.rest {
+			if _, err = tx.Exec(`DELETE FROM events WHERE sequence=?`, sequence); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

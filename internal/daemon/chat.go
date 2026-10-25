@@ -37,7 +37,7 @@ func chatRoutes(mux *http.ServeMux, db *store.Store, service *core.Service) {
 	})
 	mux.HandleFunc("GET /api/swarms/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		if _, err := db.Snapshot(id); err != nil {
+		if _, err := db.Swarm(id); err != nil {
 			recordError(w, err)
 			return
 		}

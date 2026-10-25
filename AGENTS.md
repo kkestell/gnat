@@ -42,7 +42,7 @@ facts, not how agents must organize their work.
 The sole executable is `cmd/gnat`. Packages under `internal/`:
 
 - `entry`: workspace discovery, daemon startup and the public commands.
-- `daemon`: process lifetime, local HTTP API, embedded JavaScript/CSS UI, SSE.
+- `daemon`: process lifetime, local HTTP API, embedded browser assets, SSE.
 - `core`: neutral scheduling, controls, agent membership and coordination.
 - `store`: SQLite records, schema validation, durable events and configuration.
 - `workspace`: checkout discovery and worker branch/worktree management.
@@ -59,9 +59,10 @@ State defaults to `~/.local/state/gnat`, config to `~/.config/gnat/config.yaml`;
 ```sh
 make build                     # Native binary with embedded browser assets.
 make install                   # go install ./cmd/gnat
+make ui                        # Rebuild checked-in React/Tailwind browser assets.
 make release VERSION=v0.0.0-example # macOS arm64 archive and checksum.
 make test                      # Go packages and browser tests.
-make lint                      # go vet, staticcheck and gofmt check.
+make lint                      # Go checks and TypeScript typecheck.
 ```
 
 Before pushing, all of this must pass:
@@ -70,8 +71,13 @@ Before pushing, all of this must pass:
 go build ./... && go vet ./... && staticcheck ./... && test -z "$(gofmt -l .)" && go test ./...
 ```
 
-After changing browser code, also run `bun test internal/daemon/page.test.js`.
-Assets are embedded from `internal/daemon`; no asset generation is required.
+The React/Tailwind UI is `ui/`. After changing browser code, run `make ui` and
+`cd ui && bun test && bun run typecheck`. Include the generated assets under
+`internal/daemon/assets` in the change; native builds embed them without Bun.
+Preserve the existing palette, compact cards, Markdown and transcript inspection
+when changing browser behavior. Every agent card, including workers, expanded
+workers and the orchestrator, uses the same Transcript component and transcript
+data; roles only change controls.
 Check plugin changes with `claude plugin validate .`. The Claude Code plugin is
 `plugin/`, listed by `.claude-plugin/marketplace.json`; `.claude/skills/gnat`
 links to `plugin/skills/gnat`.

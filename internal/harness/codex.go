@@ -27,7 +27,7 @@ func codexServer(ctx context.Context, dir string) (*rpcProcess, error) {
 }
 func (Codex) Probe(ctx context.Context, s store.Settings) error {
 	if _, err := exec.LookPath("codex"); err != nil {
-		return fmt.Errorf("Codex is missing: install codex, then choose Retry: %w", err)
+		return fmt.Errorf("Codex is missing: install codex, then choose Recheck harness: %w", err)
 	}
 	p, err := codexServer(ctx, "")
 	if err != nil {
@@ -39,7 +39,7 @@ func (Codex) Probe(ctx context.Context, s store.Settings) error {
 		return err
 	}
 	if account["account"] == nil && account["requiresOpenaiAuth"] != false {
-		return fmt.Errorf("Codex authentication unavailable: run codex login, then choose Retry")
+		return fmt.Errorf("Codex authentication unavailable: run codex login, then choose Recheck harness")
 	}
 	cursor := ""
 	for {

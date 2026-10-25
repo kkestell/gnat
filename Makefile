@@ -1,8 +1,12 @@
-.PHONY: build install release test lint clean
+.PHONY: build install ui release test lint clean
 
-# Browser assets are embedded directly from internal/daemon.
+# Checked-in browser assets are embedded from internal/daemon/assets.
+# Rebuild them with make ui after editing ui/.
 build:
 	go build -o gnat ./cmd/gnat
+
+ui:
+	cd ui && bun install --frozen-lockfile && bun run build
 
 install:
 	go install ./cmd/gnat
@@ -21,12 +25,13 @@ release:
 
 test:
 	go test ./...
-	bun test internal/daemon/page.test.js
+	cd ui && bun install --frozen-lockfile && bun test
 
 lint:
 	go vet ./...
 	staticcheck ./...
 	test -z "$$(gofmt -l .)"
+	cd ui && bun install --frozen-lockfile && bun run typecheck
 
 clean:
 	rm -rf gnat dist

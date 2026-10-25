@@ -190,6 +190,28 @@ func TestTranslatorTracksStreamedBlocksPerMessage(t *testing.T) {
 	}
 }
 
+// Claude Code sends one assistant event per completed content block, so a text
+// block streamed at index 1 after a thinking block arrives alone at position 0.
+func TestTranslatorMatchesStreamedBlocksSentSeparately(t *testing.T) {
+	var got []map[string]any
+	tr := translator{emit: func(e map[string]any) error { got = append(got, e); return nil }}
+	lines := []string{
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"..."}}}`,
+		`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"..."}]}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello "}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"world"}}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world"}]}}`,
+	}
+	for _, line := range lines {
+		if err := tr.line([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 2 || got[0]["type"] != "text_delta" || got[1]["type"] != "text_delta" {
+		t.Fatal("streamed text block repeated as a message", got)
+	}
+}
+
 func TestClaudeLaunchScopedCoordination(t *testing.T) {
 	dir := installFixture(t)
 	c := fixtureClaim(dir, "initial", "")

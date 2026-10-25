@@ -72,7 +72,7 @@ unmerged branches are retained with visible errors. Resolve the refusal using
 ordinary tools and ask the orchestrator to retry removal.
 
 Pause lets active turns finish and holds queued input for the whole swarm; Stop interrupts all agents and
-holds the queue. Resume/Retry enables queued input without replaying interrupted
+holds the queue. Resume enables queued input without replaying interrupted
 prompts. Interrupt ends the orchestrator turn and pauses swarm scheduling. New conversation
 starts a fresh session at a settled boundary and keeps prior transcript history.
 Closing the browser does not stop work. Daemon shutdown interrupts/reaps managed
@@ -91,8 +91,11 @@ The native binary embeds its browser assets.
 
 `go test ./...` covers the runtime, including real detached
 subprocesses, orderly shutdown, crash recovery, reset and independent swarms on
-macOS. `bun test internal/daemon/page.test.js` checks browser reconnection and
-controls. `make test` runs both suites; `make lint` checks Go code.
+macOS. `cd ui && bun test` checks browser reconnection, durable sends, transcript
+rendering and Markdown. `make test` runs both suites; `make lint` checks Go and
+TypeScript. The React/Tailwind UI lives in `ui/`; after editing it, run `make ui`
+and include the generated `internal/daemon/assets/` files in the change. Native
+builds embed those checked-in assets without requiring Bun.
 Opt in to the mixed live matrix with authenticated local providers:
 
 ```sh

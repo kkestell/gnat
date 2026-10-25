@@ -72,13 +72,21 @@ checks authentication when the selected provider runs because ACP exposes no
 read-only credential-status operation.
 
 The daemon embeds a workspace switcher and resizable right-sidebar chat, using
-plain JavaScript/CSS. Browser
-mutations require the intended Host, same Origin, and a custom browser header;
+the React/Tailwind UI in `ui/`. Every card uses the same scrolling transcript component, Markdown renderer,
+expandable tool groups and top fade, including workers and the orchestrator.
+`make ui` builds checked-in JavaScript/CSS under `internal/daemon/assets`; native
+builds embed those assets without a frontend toolchain. Browser mutations require the intended Host, same Origin, and a custom browser header;
 CLI registration/shutdown still requires its private bearer token. Snapshots
 include transcript, queue, conversation history, and a cursor from one read
 transaction. SSE reads only committed events after that cursor, scoped by swarm;
 reconnection reloads a snapshot and subscribes after its cursor, deduplicating
-by event sequence. Initial fetch failures and failed transition refreshes retry
+by event sequence. Other state changes append their event and refresh
+`/api/swarms/{id}/state`, the snapshot without event history; a finished turn
+reloads the full snapshot. Core reads the swarm record or a queued count rather
+than a snapshot. Streamed text fragments stay durable while a turn runs; the
+turn's outcome transaction merges each run of fragments into one `message` event
+at the run's first sequence, so saved history and `read_agent` hold whole text
+blocks. Initial fetch failures and failed transition refreshes retry
 the same recovery path. Workspace links refresh on window focus without changing
 scheduling or the selected swarm. Page hide closes the stream, and restored
 browser-cache pages reconnect. Unknown metrics stay absent.
@@ -89,7 +97,8 @@ prerequisites and delivers only pending messages. The browser offers interruptio
 requires a settled turn, retains old history and queued input, and preserves the checkout.
 Daemon shutdown cancels scheduling, kills active process groups, waits for
 children and outcomes, then closes SQLite. Startup marks persisted running turns
-interrupted and pauses their swarms. Restart uses a new ephemeral listener; the
+interrupted with the same outcome rules as a normal interruption: stopped swarms
+stay stopped, others pause, and interrupted workers notify the orchestrator. Restart uses a new ephemeral listener; the
 user reopens with `gnat` to get its URL. Surviving processes after daemon crashes
 remain the user's cleanup responsibility. Worker failures enqueue system messages to the orchestrator. Missing saved paths are reported without recreating them.
 
@@ -124,12 +133,15 @@ refusals; an opt-in live test exercises the same local integration path through
 production adapters and authenticated MCP. Git inspection UI remains deferred.
 
 The embedded main area displays live worker membership, metadata, and transcript
-inspection independently of the orchestrator sidebar. Removed workers leave the
-team but remain selectable in history. All rendered text uses DOM text content;
+inspection independently of the orchestrator sidebar. Cards show membership
+while a worker is not an active member and execution lifecycle otherwise, with
+errors inline. The header shows paused or stopped scheduling with Resume.
+Removed workers leave the team but remain selectable in the header, and their
+cancelled input appears in their transcripts. All rendered text uses DOM text content;
 provider-specific messages are translated before the browser sees them.
 
 `make build` and `make install` build the native executable with embedded chat
 assets. `make release VERSION=<tag>` produces a macOS arm64 archive containing
 only that executable and an external checksum; the release workflow
 injects/verifies the tag version. `make test` runs all Go packages and the
-browser tests, and `make lint` checks Go code.
+browser tests, and `make lint` checks Go and TypeScript code.

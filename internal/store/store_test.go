@@ -53,7 +53,7 @@ func TestWorkspacePersistenceAndConcurrency(t *testing.T) {
 			t.Fatalf("duplicate identity: %+v %+v", original, v)
 		}
 	}
-	if original.Cursor != 4 || original.Orchestrator.Lifecycle != "pending" || original.Orchestrator.WorkingDir != ws.Root {
+	if original.Cursor != 4 || len(original.Events) != 0 || original.Orchestrator.Lifecycle != "pending" || original.Orchestrator.WorkingDir != ws.Root {
 		t.Fatalf("snapshot: %+v", original)
 	}
 	if err := s.Close(); err != nil {

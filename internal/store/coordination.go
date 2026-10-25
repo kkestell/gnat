@@ -39,6 +39,13 @@ func readAgents(tx *sql.Tx, swarm string, removed bool) ([]Agent, error) {
 	return out, closeRows(rows, err)
 }
 func (s *Store) Agent(swarm, aid string) (Agent, error) { return readAgent(s.db, swarm, aid) }
+
+// Queued counts the agent's input that has not been delivered.
+func (s *Store) Queued(aid string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM messages WHERE agent_id=? AND state='queued'`, aid).Scan(&n)
+	return n, err
+}
 func (s *Store) Agents(swarm string, removed bool) ([]Agent, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

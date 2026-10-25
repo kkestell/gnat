@@ -16,7 +16,7 @@ make install
 Put Go's binary directory (`go env GOBIN`, or `$(go env GOPATH)/bin` if unset) on
 PATH. `make build` creates `./gnat` instead. The native binary embeds its browser
 assets. GitHub access and Gnat-specific credential setup are unnecessary. Bun is
-used for browser development tests.
+used to rebuild the UI (`make ui`) and run browser development checks.
 
 ## Install a release
 
@@ -99,7 +99,7 @@ project instructions and native harness delegation remain available. Per-launch
 MCP configuration does not rewrite global configuration or project files.
 
 Missing harnesses, login problems and incompatible protocols appear in the
-sidebar. Repair the installation or login, then choose Retry. Delivered input
+sidebar. Repair the installation or login, then choose Recheck harness (or Resume if the swarm is paused). Delivered input
 is not replayed: send new direction if a failed turn already consumed it. Failed
 exact session resumption retains history; New conversation explicitly starts
 fresh while keeping the team and queue.
