@@ -73,7 +73,9 @@ read-only credential-status operation.
 
 The daemon embeds a workspace switcher and resizable right-sidebar chat, using
 the React/Tailwind UI in `ui/`. Every card uses the same scrolling transcript component, Markdown renderer,
-expandable tool groups and top fade, including workers and the orchestrator.
+tool groups and top fade, including workers and the orchestrator. Tool groups
+expand into individual calls only in the expanded worker; worker cards and the
+orchestrator show each group as one line.
 `make ui` builds checked-in JavaScript/CSS under `internal/daemon/assets`; native
 builds embed those assets without a frontend toolchain. Browser mutations require the intended Host, same Origin, and a custom browser header;
 CLI registration/shutdown still requires its private bearer token. Snapshots

@@ -243,24 +243,27 @@ export function setupLine(agent: Agent): string {
   return agent.settings.effort ? `${setup} (${agent.settings.effort})` : setup;
 }
 
-// The agents laid out in columns, in order, top to bottom: a column each for up to
-// three, then a grid at least as wide as it is tall, ceil(√n) columns, with any extra
-// agents in the later ones (4 is 2 and 2, 5 is 1, 2, and 2, 16 is 4 of 4).
-export function columns<T>(agents: T[]): T[][] {
+// How agents tile the main area, in order: one or two side by side, three as one
+// across the top above two, then a grid at least as wide as it is tall, ceil(√n)
+// columns, with any extra agents in the later ones (4 is 2 and 2, 5 is 1, 2, and 2,
+// 16 is 4 of 4). `rows` says whether the groups are rows rather than columns.
+export function layout<T>(agents: T[]): { rows: boolean; groups: T[][] } {
+  if (agents.length === 3)
+    return { rows: true, groups: [agents.slice(0, 1), agents.slice(1)] };
   const count =
-    agents.length <= 3
+    agents.length <= 2
       ? Math.max(1, agents.length)
       : Math.ceil(Math.sqrt(agents.length));
   const base = Math.floor(agents.length / count);
   const extra = agents.length % count;
-  const columns: T[][] = [];
+  const groups: T[][] = [];
   let next = 0;
   for (let i = 0; i < count; i++) {
     const size = base + (i >= count - extra ? 1 : 0);
-    columns.push(agents.slice(next, next + size));
+    groups.push(agents.slice(next, next + size));
     next += size;
   }
-  return columns;
+  return { rows: false, groups };
 }
 
 // How long the swarm has been up, such as "45s", "12m", "2h 14m", or "3d 4h".

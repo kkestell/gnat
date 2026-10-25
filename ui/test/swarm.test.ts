@@ -4,7 +4,7 @@ import {
   groupItems,
   agentState,
   agentStatus,
-  columns,
+  layout,
   setupLine,
   usageSummary,
 } from "../src/swarm";
@@ -111,7 +111,11 @@ test("missing metrics remain unknown and tools group in the shared transcript", 
   expect(groups.length).toBe(1);
   expect(Array.isArray(groups[0]) && groups[0].length).toBe(2);
   expect(setupLine(agent())).toBe("claude claude-opus-5-5 (high)");
-  expect(columns([1, 2, 3, 4, 5]).map((c) => c.length)).toEqual([1, 2, 2]);
+  expect(layout([1, 2, 3, 4, 5])).toEqual({
+    rows: false,
+    groups: [[1], [2, 3], [4, 5]],
+  });
+  expect(layout([1, 2, 3])).toEqual({ rows: true, groups: [[1], [2, 3]] });
 });
 
 test("membership labels a worker until it is an active member, then lifecycle does", () => {

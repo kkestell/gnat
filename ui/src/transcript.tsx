@@ -10,7 +10,7 @@ function Spinner() {
   return (
     <svg
       viewBox="0 0 16 16"
-      className="size-3.5 shrink-0 animate-spin"
+      className="mt-px mr-1.5 inline-block size-3.5 animate-spin align-top"
       fill="none"
       stroke="currentColor"
       strokeWidth="2"
@@ -27,10 +27,10 @@ export function Tools({ tools, latest }: { tools: Tool[]; latest: boolean }) {
   if (latest) {
     const tool = tools.at(-1)!;
     return (
-      <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-zinc-500">
+      <span className="text-zinc-500">
         {tool.output === undefined && <Spinner />}
         <span
-          className={`min-w-0 truncate font-mono ${tool.error ? "text-red-400" : "text-zinc-600"}`}
+          className={`font-mono ${tool.error ? "text-red-400" : "text-zinc-600"}`}
         >
           {tool.summary}
         </span>
@@ -46,12 +46,24 @@ export function Tools({ tools, latest }: { tools: Tool[]; latest: boolean }) {
   );
 }
 
-export function Items({ items }: { items: Item[] }) {
+// A compact transcript shows each run of tool calls as one line; otherwise the line
+// expands into the calls and their output.
+export function Items({
+  items,
+  compact = false,
+}: {
+  items: Item[];
+  compact?: boolean;
+}) {
   const groups = groupItems(items);
   return (
     <div className="flex flex-col gap-3">
       {groups.map((group, i) =>
-        Array.isArray(group) ? (
+        Array.isArray(group) && compact ? (
+          <div key={i} className="truncate font-mono text-xs text-zinc-500">
+            <Tools tools={group} latest={i === groups.length - 1} />
+          </div>
+        ) : Array.isArray(group) ? (
           <details
             key={i}
             className="tool-group font-mono text-xs text-zinc-500"

@@ -59,7 +59,7 @@ Docker, GitHub, a remote, and Gnat-specific credential setup are unnecessary.
 Ask the orchestrator to create workers as needed. Each has a persistent session,
 a separate managed worktree, and an immutable-ID branch starting at committed
 HEAD (or a requested base ref). The main area shows current workers and their
-transcripts; removed workers remain inspectable through the history selector.
+transcripts; removed workers remain inspectable through the header's history button.
 Agents exchange ordinary durable messages through the launch-scoped Gnat MCP
 server. Messages start recipient turns without polling. Workers can inspect and
 message teammates; only the orchestrator creates, interrupts, or removes workers.

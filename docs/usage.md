@@ -14,9 +14,10 @@ user worktrees register separately. The browser links all registered workspaces
 and keeps each selected workspace on an explicit `/swarms/{id}` route.
 The right sidebar runs the configured Claude Code, Codex, or OpenCode
 orchestrator in the original checkout with saved
-model/effort, normal local credentials, and an exact persistent session. Send
-acknowledgement means the input is committed, even if the browser closes. Queued
-input remains visible; transcript and reported usage replay on reconnection.
+model/effort, normal local credentials, and an exact persistent session. Enter
+sends a prompt and Shift+Enter inserts a new line. Send
+acknowledgement means the input is committed, even if the browser closes. The
+transcript and reported usage replay on reconnection.
 
 The header shows Paused or Stopped, with Resume, whenever the swarm is not
 scheduling new turns. Each card shows a worker's membership (provisioning,
@@ -50,7 +51,7 @@ committed HEAD or an explicit committed base, each in a separate worktree and
 conversation. Worker creation can override harness, model, and effort, so a team
 can mix all three harnesses; model/effort choices must fit that harness. Their cards update as they join or leave; select a worker to
 inspect its transcript, branch, path, and execution outcome. Removed workers are
-available in the header's Removed workers selector; input cancelled by removal
+available from the header's history button; input cancelled by removal
 appears in their transcripts marked as cancelled before delivery. New orchestrator conversations preserve the
 team and provide saved runtime orientation.
 

@@ -14,7 +14,7 @@ import {
   AgentState,
   agentState,
   agentStatus,
-  columns,
+  layout,
   dollars,
   setupLine,
   usageSummary,
@@ -75,6 +75,7 @@ export function App() {
     );
   const all = [...snapshot.workers, ...snapshot.removed_workers];
   const selected = all.find((a) => a.id === shown);
+  const tiles = layout(snapshot.workers);
   const costs = snapshot.events
     .filter(
       (e) => e.payload.type === "usage" && typeof e.payload.cost === "number",
@@ -101,22 +102,7 @@ export function App() {
         >
           {snapshot.workspace.root}
         </span>
-        {snapshot.removed_workers.length > 0 && (
-          <select
-            className="shrink-0 rounded bg-card px-2 py-1 text-xs text-zinc-400"
-            aria-label="Removed workers"
-            value=""
-            onChange={(e) => setShown(e.target.value)}
-          >
-            <option value="">Removed workers</option>
-            {snapshot.removed_workers.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        )}
-        <div className="ml-auto flex shrink-0 items-baseline gap-6 text-xs">
+        <div className="ml-auto flex shrink-0 items-center gap-6 text-xs">
           {snapshot.scheduling !== "running" && (
             <span className="flex items-baseline gap-2 text-amber-400">
               {snapshot.scheduling === "stopped" ? "Stopped" : "Paused"}
@@ -137,6 +123,9 @@ export function App() {
           {client.connection !== "Connected" && (
             <span className="text-zinc-500">{client.connection}</span>
           )}
+          {snapshot.removed_workers.length > 0 && (
+            <RemovedWorkers workers={snapshot.removed_workers} onShow={setShown} />
+          )}
         </div>
       </header>
       {document.body.dataset.locationError && (
@@ -145,7 +134,9 @@ export function App() {
         </p>
       )}
       <div className="workspace-layout flex min-h-0 flex-1 gap-4 p-4">
-        <main className="worker-area flex min-h-0 min-w-0 flex-1 gap-4">
+        <main
+          className={`worker-area flex min-h-0 min-w-0 flex-1 gap-4 ${tiles.rows && !selected ? "flex-col" : ""}`}
+        >
           {selected ? (
             <WorkerDetail
               key={selected.id}
@@ -153,13 +144,14 @@ export function App() {
               snapshot={snapshot}
               onClose={() => setShown(null)}
             />
-          ) : snapshot.workers.length ? (
-            columns(snapshot.workers).map((column, i) => (
+          ) : (
+            snapshot.workers.length > 0 &&
+            tiles.groups.map((group, i) => (
               <div
                 key={i}
-                className="flex min-h-0 min-w-0 flex-1 flex-col gap-4"
+                className={`flex min-h-0 min-w-0 flex-1 gap-4 ${tiles.rows ? "" : "flex-col"}`}
               >
-                {column.map((a) => (
+                {group.map((a) => (
                   <Card
                     key={a.id}
                     agent={a}
@@ -169,12 +161,6 @@ export function App() {
                 ))}
               </div>
             ))
-          ) : (
-            <p className="m-auto text-center text-zinc-500">
-              Your workspace is ready.
-              <br />
-              Direct the orchestrator in the chat sidebar.
-            </p>
           )}
         </main>
         <aside
@@ -226,6 +212,53 @@ function WorkspaceSwitcher({
   );
 }
 
+function RemovedWorkers({
+  workers,
+  onShow,
+}: {
+  workers: Agent[];
+  onShow: (id: string) => void;
+}) {
+  return (
+    <details className="relative shrink-0">
+      <summary
+        className="flex list-none rounded p-1 text-zinc-500 hover:bg-white/10 hover:text-zinc-100"
+        title="Removed workers"
+        aria-label="Removed workers"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="size-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M12 7v5l3 2" />
+        </svg>
+      </summary>
+      <div className="absolute right-0 top-8 z-30 max-h-80 w-56 overflow-y-auto rounded-lg border border-white/10 bg-header p-1 shadow-xl">
+        {workers.map((a) => (
+          <button
+            key={a.id}
+            className="block w-full truncate rounded px-3 py-2 text-left text-zinc-400 hover:bg-white/10 hover:text-zinc-100"
+            onClick={(e) => {
+              e.currentTarget.closest("details")?.removeAttribute("open");
+              onShow(a.id);
+            }}
+          >
+            {a.name}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function History({
   snapshot,
   agent,
@@ -263,9 +296,11 @@ function History({
 function Transcript({
   state,
   empty,
+  compact,
 }: {
   state: AgentState;
   empty?: React.ReactNode;
+  compact?: boolean;
 }) {
   const body = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
@@ -284,7 +319,11 @@ function Transcript({
             el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
         }}
       >
-        {state.items.length ? <Items items={state.items} /> : empty}
+        {state.items.length ? (
+          <Items items={state.items} compact={compact} />
+        ) : (
+          empty
+        )}
       </div>
       <TranscriptFade />
     </div>
@@ -305,9 +344,6 @@ function WorkerDetail({
   const state = useMemo(
     () => agentState(snapshot, agent, conversation),
     [snapshot, agent, conversation],
-  );
-  const queued = snapshot.messages.filter(
-    (m) => m.agent_id === agent.id && m.state === "queued",
   );
   return (
     <AgentCard
@@ -342,11 +378,6 @@ function WorkerDetail({
         state={state}
         empty={<p className="italic text-zinc-600">no activity yet</p>}
       />
-      {queued.length > 0 && (
-        <p className="border-t border-white/5 px-5 py-2 text-xs text-zinc-500">
-          {queued.length} queued: {queued.map((m) => m.text).join(" · ")}
-        </p>
-      )}
     </AgentCard>
   );
 }
@@ -365,9 +396,6 @@ function Orchestrator({
   const state = useMemo(
     () => agentState(snapshot, agent, conversation),
     [snapshot, agent, conversation],
-  );
-  const queued = snapshot.messages.filter(
-    (m) => m.agent_id === agent.id && m.state === "queued",
   );
   const running = snapshot.turns.some(
     (t) => t.agent_id === agent.id && t.state === "running",
@@ -439,18 +467,8 @@ function Orchestrator({
           />
         </div>
       )}
-      <Transcript key={conversation} state={state} />
+      <Transcript key={conversation} state={state} compact />
       <div className="shrink-0 border-t border-white/5 p-3">
-        {queued.length > 0 && (
-          <div className="mb-2 max-h-24 overflow-y-auto px-1 text-xs text-zinc-500">
-            {queued.length} queued
-            {queued.map((m) => (
-              <p key={m.id} className="mt-1 truncate" title={m.text}>
-                {m.text}
-              </p>
-            ))}
-          </div>
-        )}
         <form
           className="rounded-lg border border-white/10 bg-zinc-900/70 focus-within:border-zinc-600"
           onSubmit={(e) => {
@@ -463,24 +481,19 @@ function Orchestrator({
             id="prompt"
             rows={3}
             value={prompt}
-            className="block max-h-48 min-h-20 w-full resize-y bg-transparent px-3 pt-3 text-sm leading-6 text-zinc-200 outline-none placeholder:text-zinc-600"
+            className="block max-h-48 min-h-20 w-full resize-y bg-transparent px-3 py-3 text-sm leading-6 text-zinc-200 outline-none placeholder:text-zinc-600"
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
                 e.preventDefault();
                 e.currentTarget.form?.requestSubmit();
               }
             }}
           />
-          <div className="flex items-center justify-end px-2 pb-2 pt-1">
-            <button
-              type="submit"
-              disabled={!prompt.trim() || !!client.pending}
-              className="rounded bg-zinc-700/70 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-600 disabled:cursor-default disabled:opacity-35"
-            >
-              Send
-            </button>
-          </div>
         </form>
         {client.error && (
           <p className="mt-2 px-1 text-xs text-red-400">{client.error}</p>
@@ -525,12 +538,7 @@ function AgentCard({
         >
           {setupLine(agent)}
         </span>
-        <span
-          className="ml-auto shrink-0 text-xs text-zinc-500"
-          title={agent.working_dir}
-        >
-          {agentStatus(agent)}
-        </span>
+        <Status status={agentStatus(agent)} />
         <span
           className="shrink-0 text-xs tabular-nums text-zinc-400"
           title={usageSummary(state.usage)}
@@ -547,6 +555,41 @@ function AgentCard({
       )}
       {children}
     </section>
+  );
+}
+
+// A spinner while the agent runs and nothing when it is ready; other statuses are
+// spelled out.
+function Status({ status }: { status: string }) {
+  if (status === "running")
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        className="ml-auto size-3.5 shrink-0 animate-spin self-center text-zinc-400"
+        fill="none"
+        aria-label="running"
+      >
+        <title>running</title>
+        <circle
+          cx="12"
+          cy="12"
+          r="9"
+          stroke="currentColor"
+          strokeOpacity={0.25}
+          strokeWidth={3}
+        />
+        <path
+          d="M21 12a9 9 0 0 0-9-9"
+          stroke="currentColor"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  return (
+    <span className="ml-auto shrink-0 text-xs text-zinc-500">
+      {status === "ready" ? "" : status}
+    </span>
   );
 }
 
@@ -573,7 +616,7 @@ function Card({
         </button>
       }
     >
-      <Transcript state={state} />
+      <Transcript state={state} compact />
     </AgentCard>
   );
 }
