@@ -1,5 +1,47 @@
 # CLAUDE.md
 
+## V2 design priorities
+
+`agents/gnat-v2-spec.md` describes the first cut of v2. Kyle is its only user.
+Favor a small implementation that is easy to understand and change over
+operational robustness, generalized infrastructure, or speculative future
+requirements. Known gaps are acceptable and can be addressed in follow-up work.
+Pressure-test the ordinary workflow and internal consistency; do not repeatedly
+reopen accepted limitations as release blockers without new evidence or a user
+request.
+
+V2 supplies basic building blocks for agents to organize their own work:
+identities, worktrees, conversations, messages, and worker lifecycle tools.
+The orchestrator is the user's entry point and manages worker membership, but
+agents decide how to divide work, collaborate, integrate, and assess completion.
+Do not encode a rigid workflow, task registry, required reporting ceremony,
+fixed team topology, or mandatory review/integration sequence in Gnat.
+Built-in agent instructions explain runtime facts: available tools, where
+output goes, and how incoming messages start turns. They do not prescribe how
+agents organize their work.
+
+Accepted first-cut scope:
+
+- macOS only, with local trusted processes and ordinary user credentials.
+- Orchestrator harness, model, and effort come from required config values;
+  missing values are errors, not a setup wizard.
+- Native harness delegation stays unchanged. Agents handle development setup
+  using ordinary tools and repository instructions.
+- Stop/resume preserves the team and work. Explicit worker removal cleans up
+  its resources using ordinary Git safeguards and preserves message history.
+- After a daemon crash, the user may need to clean up surviving processes.
+  Automatic process cleanup/reconciliation is not a first-cut requirement.
+- Workspace relocation and unregistering are deferred. Git inspection UI is a
+  planned follow-up; keep checkout metadata and UI boundaries suitable for it
+  without implementing speculative abstractions now.
+
+The repository still implements v1. The documentation below and
+`agents/architecture.md` describe that implementation, not constraints to carry
+into v2. In particular, Docker, Python compatibility, profiles, GitHub proxies,
+and v1's optional orchestrator are superseded by the v2 specification.
+
+## Current v1 implementation
+
 gnat is a Go port of `swarm` (Python): run a swarm of coding agents, each in its own Docker container, on separate clones of one GitHub repository. Behavior, commands, flags, wire formats, and on-disk formats match the Python version except that everything named `swarm` that identifies the tool is `gnat` (binary, images, labels, `$XDG_STATE_HOME/gnat`, `GNAT_AGENT`, `/opt/gnat`), and harness credentials live in the system keyring (`gnat auth login`), not the environment or a `.env`. "Swarm" stays as the noun for a set of agents.
 
 `agents/architecture.md` is the shape of the system, the lines drawn between its parts, and why: where state lives, how agents are identified, and how GitHub is reached. Read it before a change that moves one of those lines, and update it when you do.
