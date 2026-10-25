@@ -8,7 +8,7 @@
     {
       "name": "gnat",
       "source": "./plugin",
-      "description": "Install and use Gnat v2 with Claude Code, Codex, and OpenCode"
+      "description": "Install and use Gnat with Claude Code, Codex, and OpenCode"
     }
   ]
 }

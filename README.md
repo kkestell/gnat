@@ -1,11 +1,9 @@
 # gnat
 
-Gnat v2 is a local application for directing coding agents through one
-persistent orchestrator. **All six v2 milestones are implemented:** workspace
-registration, durable chat, dynamic workers, harness neutrality, local integration,
-and recovery and native release paths. Claude Code, Codex, and OpenCode
-can each serve as orchestrator or worker, including mixed teams. Agents integrate
-worker commits into the original checkout with ordinary local Git.
+Gnat is a local application for directing coding agents through one persistent
+orchestrator. Claude Code, Codex, and OpenCode can each serve as orchestrator or
+worker, including mixed teams. Workers use managed Git worktrees; agents integrate
+their commits into the original checkout with ordinary local Git.
 
 ## Build and run on macOS
 
@@ -86,37 +84,32 @@ choose New conversation again. The fresh session keeps workers and queued input;
 Resume releases a paused queue. Browser reconnection retries from saved snapshots.
 After a daemon restart, run `gnat` again for the new listener URL.
 
-State lives under `~/.local/state/gnat/v2` (`$XDG_STATE_HOME/gnat/v2` when set),
-separate from v1 state. There is no automatic v1 migration. The former v1 CLI is
-not exposed by the new entry point. Legacy source packages and fixtures remain
-in the repository, but native build/install/release targets no longer build or
-ship container helpers or profiles. Release archives contain only the native
-binary with embedded UI assets. Older published releases may still be v1;
-see [installation](docs/setup.md#install-a-release) to check before installing.
+State lives under `~/.local/state/gnat` (`$XDG_STATE_HOME/gnat` when set).
+The native binary embeds its browser assets.
 
 ## Development and documentation
 
-`go test ./internal/v2/...` covers the runtime, including real detached
+`go test ./...` covers the runtime, including real detached
 subprocesses, orderly shutdown, crash recovery, reset and independent swarms on
-macOS. `bun test internal/v2/daemon/page.test.js` checks browser reconnection and
-controls. `make test` and `make lint` also include retained v1 code and UI.
+macOS. `bun test internal/daemon/page.test.js` checks browser reconnection and
+controls. `make test` runs both suites; `make lint` checks Go code.
 Opt in to the mixed live matrix with authenticated local providers:
 
 ```sh
-GNAT_LIVE_TEST=1 go test ./internal/v2/daemon -run TestLiveCoordination -v -timeout 20m
+GNAT_LIVE_TEST=1 go test ./internal/daemon -run TestLiveCoordination -v -timeout 20m
 ```
 
 This uses disposable local repositories and exercises each harness as orchestrator
 with workers on the other two, plus restart and follow-up delivery. Set
 `GNAT_LIVE_HARNESS=claude`, `codex`, or `opencode` to select one orchestrator.
-The models in `internal/v2/daemon/live_test.go` must be available locally.
+The models in `internal/daemon/live_test.go` must be available locally.
 
 A separate live integration scenario creates two workers, merges their commits,
 runs the combined Go tests in the original checkout, preserves staged/unstaged
 and untracked work, and removes the integrated workers:
 
 ```sh
-GNAT_LIVE_TEST=1 go test ./internal/v2/daemon -run '^TestLiveLocalIntegration$' -v -timeout 12m
+GNAT_LIVE_TEST=1 go test ./internal/daemon -run '^TestLiveLocalIntegration$' -v -timeout 12m
 ```
 
 Both roles default to Claude. Set `GNAT_LIVE_HARNESS` for the orchestrator and
@@ -133,13 +126,13 @@ A live conversation recovery scenario exercises exact session resumption after
 restart, reset with queued input, and delivery into a new provider session:
 
 ```sh
-GNAT_LIVE_TEST=1 go test ./internal/v2/daemon -run '^TestLiveConversationRecovery$' -v -timeout 5m
+GNAT_LIVE_TEST=1 go test ./internal/daemon -run '^TestLiveConversationRecovery$' -v -timeout 5m
 ```
 
-`make release VERSION=v2-example` builds the macOS arm64 archive and checksum
+`make release VERSION=v0.0.0-example` builds the macOS arm64 archive and checksum
 under `dist/`, with the version embedded in `gnat --version`. Tag publication
 uses the same target; it does not require Docker or install agent profiles.
 
-- [V2 specification](agents/gnat-v2-spec.md): scope and implementation milestones.
-- [Architecture](agents/architecture.md): current runtime and legacy boundaries.
+- [Specification](agents/gnat-spec.md): scope and implementation milestones.
+- [Architecture](agents/architecture.md): runtime boundaries and state ownership.
 - [Setup](docs/setup.md) and [usage](docs/usage.md): installation, controls and recovery.

@@ -1,228 +1,233 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
-	"github.com/kkestell/gnat/internal/events"
+	"github.com/kkestell/gnat/internal/store"
 )
 
-// fakeClaude stands in for claude: the message and options are its arguments.
-func fakeClaude(mode string) {
-	switch mode {
-	case "echo":
-		out, _ := json.Marshal(map[string]any{
-			"type": "result", "is_error": false, "result": strings.Join(os.Args[1:], " ")})
-		fmt.Println(string(out))
-	case "long":
-		out, _ := json.Marshal(map[string]any{"type": "result", "result": strings.Repeat("x", 1<<20)})
-		fmt.Println(string(out))
-	case "child":
-		// A child holds the output open, as a tool would.
-		_ = exec.Command("sleep", "30").Run()
-	case "sleep":
-		time.Sleep(30 * time.Second)
-	}
-}
+const fixture = `#!/usr/bin/env python3
+import json,os,sys,subprocess,time
+args=sys.argv[1:]
+if args==['--version']: print('fixture');sys.exit(0)
+if args==['auth','status']: print('{"loggedIn":true}');sys.exit(0)
+text=sys.stdin.read()
+with open(os.environ['GNAT_TEST_TRACE'],'a') as f: f.write(json.dumps({'cwd':os.getcwd(),'args':args,'text':text})+'\n')
+session=args[args.index('--resume')+1] if '--resume' in args else 'fixture-session'
+def emit(e): e['session_id']=session;print(json.dumps(e),flush=True)
+emit({'type':'system','subtype':'init'})
+if text=='block':
+ child=subprocess.Popen(['sleep','1000'])
+ with open(os.environ['GNAT_TEST_CHILD'],'w') as f:f.write(str(child.pid))
+ time.sleep(1000)
+if text=='orphan':
+ child=subprocess.Popen(['sleep','1000'])
+ with open(os.environ['GNAT_TEST_CHILD'],'w') as f:f.write(str(child.pid))
+ sys.exit(1)
+if text=='bad-resume':
+ emit({'type':'result','is_error':True,'result':'No conversation found','subtype':'error_during_execution'});sys.exit(1)
+emit({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'hello '}}})
+emit({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'world'}}})
+emit({'type':'assistant','message':{'content':[{'type':'text','text':'hello world'},{'type':'tool_use','id':'tool1','name':'Read','input':{'path':'file'}}]}})
+emit({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'tool1','content':'file contents'}]}})
+emit({'type':'assistant','parent_tool_use_id':'tool1','message':{'content':[{'type':'text','text':'nested reply'}]}})
+emit({'type':'result','is_error':False,'usage':{'input_tokens':11,'output_tokens':7},'total_cost_usd':0.01})
+`
 
-func line(kind string, fields map[string]any, content ...any) string {
-	event := map[string]any{"type": kind, "message": map[string]any{"content": content}}
-	for k, v := range fields {
-		event[k] = v
-	}
-	out, _ := json.Marshal(event)
-	return string(out)
-}
-
-func j(v any) string {
-	out, _ := json.Marshal(v)
-	return string(out)
-}
-
-type m = map[string]any
-
-// translate is the events for one line, read on its own.
-func translate(line string) []events.Event { return new(translator).line(line) }
-
-func TestClaudeTextThinkingAndToolCalls(t *testing.T) {
-	got := translate(line("assistant", nil,
-		m{"type": "thinking", "thinking": "hm", "signature": "x"},
-		m{"type": "thinking", "thinking": "", "signature": strings.Repeat("x", 1000)},
-		m{"type": "text", "text": "Let me look."},
-		m{"type": "tool_use", "id": "t1", "name": "Bash", "input": m{"command": "ls"}},
-	))
-	assertEvents(t, got, []events.Event{
-		events.NewThought("hm"), events.NewMessage("Let me look."),
-		events.NewToolCall("t1", "Bash", m{"command": "ls"}, ""),
-	})
-}
-
-func TestClaudeToolResults(t *testing.T) {
-	got := translate(line("user", nil,
-		m{"type": "tool_result", "tool_use_id": "t1", "content": "a\nb"},
-		m{"type": "tool_result", "tool_use_id": "t2", "is_error": true,
-			"content": []any{m{"type": "text", "text": "boom"}, m{"type": "image"}}},
-	))
-	assertEvents(t, got, []events.Event{
-		events.NewToolResult("t1", "a\nb", false), events.NewToolResult("t2", "boom\n[image]", true),
-	})
-}
-
-func TestClaudeSubagentEventsNameTheirToolCall(t *testing.T) {
-	got := translate(line("assistant", m{"parent_tool_use_id": "t1"}, m{"type": "text", "text": "a"}))
-	assertEvents(t, got, []events.Event{events.NewMessage("a").WithParent("t1")})
-	got = translate(line("user", m{"parent_tool_use_id": "t1"},
-		m{"type": "tool_result", "tool_use_id": "t2", "content": "x"}))
-	assertEvents(t, got, []events.Event{events.NewToolResult("t2", "x", false).WithParent("t1")})
-}
-
-func TestClaudeFinalResults(t *testing.T) {
-	ok := j(m{"type": "result", "subtype": "success", "is_error": false, "result": "Done."})
-	failed := j(m{"type": "result", "subtype": "error_during_execution", "is_error": true})
-	limited := j(m{"type": "result", "is_error": true, "result": "rate limited"})
-	assertEvents(t, translate(ok), []events.Event{events.NewTurnEnd("Done.", "")})
-	assertEvents(t, translate(failed), []events.Event{events.NewTurnEnd("", "error_during_execution")})
-	assertEvents(t, translate(limited), []events.Event{events.NewTurnEnd("", "rate limited")})
-}
-
-func TestClaudeResultsReportEveryModelsUsage(t *testing.T) {
-	result := m{"type": "result", "is_error": false, "result": "Done.", "total_cost_usd": 0.5,
-		"usage": m{"input_tokens": 1, "output_tokens": 1},
-		"modelUsage": m{
-			"opus": m{"inputTokens": 2, "cacheReadInputTokens": 100,
-				"cacheCreationInputTokens": 30, "outputTokens": 40},
-			"haiku": m{"inputTokens": 3, "cacheReadInputTokens": 10, "outputTokens": 5}}}
-	assertEvents(t, translate(j(result)), []events.Event{
-		usageEvent(n(5), n(110), n(30), n(45), ptr(0.5)),
-		events.NewTurnEnd("Done.", "")})
-	delete(result, "modelUsage")
-	result["is_error"] = true
-	assertEvents(t, translate(j(result)), []events.Event{
-		usageEvent(n(1), nil, nil, n(1), ptr(0.5)), events.NewTurnEnd("", "Done.")})
-}
-
-func TestClaudeReportsTheMainModelsContextOncePerCall(t *testing.T) {
-	var tr translator
-	call := func(id string, parent any, cacheRead int) string {
-		return j(m{"type": "assistant", "parent_tool_use_id": parent, "message": m{"id": id, "content": []any{},
-			"usage": m{"input_tokens": 2, "cache_read_input_tokens": cacheRead, "cache_creation_input_tokens": 100, "output_tokens": 9}}})
-	}
-	assertEvents(t, tr.line(j(m{"type": "system", "subtype": "init", "model": "opus"})), nil)
-	assertEvents(t, tr.line(call("m1", nil, 1000)), []events.Event{events.NewContext(1102, nil)})
-	// The same call in another line, and a subagent's call.
-	assertEvents(t, tr.line(call("m1", nil, 1000)), nil)
-	assertEvents(t, tr.line(call("m2", "t1", 50)), nil)
-	assertEvents(t, tr.line(call("m3", nil, 2000)), []events.Event{events.NewContext(2102, nil)})
-	result := m{"type": "result", "result": "Done.", "modelUsage": m{
-		"opus": m{"contextWindow": 1_000_000}, "haiku": m{"contextWindow": 200_000}}}
-	got := tr.line(j(result))
-	assertEvents(t, got[1:], []events.Event{events.NewContext(2102, ptr(int64(1_000_000))), events.NewTurnEnd("Done.", "")})
-	// The next turn knows the window from the start.
-	assertEvents(t, tr.line(call("m4", nil, 3000)), []events.Event{events.NewContext(3102, ptr(int64(1_000_000)))})
-}
-
-func TestClaudeRateLimitEventsAreTheAccountsLimits(t *testing.T) {
-	event := m{"type": "rate_limit_event", "rate_limit_info": m{"status": "allowed", "rateLimitType": "five_hour",
-		"unifiedWindows": m{
-			"five_hour": m{"utilization": 0.07, "resetsAt": 1792779600},
-			"seven_day": m{"utilization": 0.49, "resetsAt": 1792983600}}}}
-	assertEvents(t, translate(j(event)), []events.Event{events.NewLimits(map[string]events.LimitWindow{
-		"five_hour": {Used: 0.07, ResetsAt: 1792779600}, "seven_day": {Used: 0.49, ResetsAt: 1792983600}})})
-	assertEvents(t, translate(j(m{"type": "rate_limit_event", "rate_limit_info": m{"status": "allowed"}})), nil)
-}
-
-func TestClaudeOutputThatIsntAnEventIsAnError(t *testing.T) {
-	assertEvents(t, translate("Error: no auth\n"), []events.Event{events.NewError("Error: no auth")})
-	assertEvents(t, translate("\n"), nil)
-	assertEvents(t, translate(j(m{"type": "system", "subtype": "init"})), nil)
-}
-
-func fakeClaudeRunner(t *testing.T, mode string) (*claudeRunner, *collector) {
+func installFixture(t *testing.T) string {
 	t.Helper()
-	t.Setenv("GNAT_FAKE_CLAUDE", mode)
-	c := &collector{}
-	runner := newClaudeRunner("", "", c.emit)
-	runner.command = []string{os.Args[0]}
-	return runner, c
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(fixture), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GNAT_TEST_TRACE", filepath.Join(dir, "trace"))
+	t.Setenv("GNAT_TEST_CHILD", filepath.Join(dir, "child"))
+	return dir
 }
-
-func never() <-chan struct{} { return make(chan struct{}) }
-
-func TestClaudeRunsATurnContinuingTheSessionUnlessNew(t *testing.T) {
-	runner, c := fakeClaudeRunner(t, "echo")
-	for _, new := range []bool{false, true} {
-		if code, err := runner.Run("hi", new, never()); code != 0 || err != nil {
-			t.Fatalf("Run = %d, %v", code, err)
+func fixtureClaim(dir, text, session string) *store.Claim {
+	return &store.Claim{Agent: store.Agent{WorkingDir: dir, Settings: store.Settings{Harness: "claude", Model: "fixture-model", Effort: "high"}}, Text: text, SessionRef: session}
+}
+func TestClaudeLocalSessionsAndTranslation(t *testing.T) {
+	dir := installFixture(t)
+	adapter := Claude{}
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := fixtureClaim(cwd, "first", "")
+	if err := adapter.Probe(context.Background(), c.Agent.Settings); err != nil {
+		t.Fatal(err)
+	}
+	var events []map[string]any
+	emit := func(e map[string]any) error { events = append(events, e); return nil }
+	if err := adapter.Run(context.Background(), c, emit); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 7 || events[0]["type"] != "session" || events[1]["type"] != "text_delta" || events[3]["type"] != "tool_call" || events[5]["parent_tool_use_id"] != "tool1" {
+		t.Fatalf("normalized events: %+v", events)
+	}
+	if _, ok := events[6]["cache_read_input_tokens"]; ok {
+		t.Fatal("missing usage became zero")
+	}
+	c.SessionRef = "fixture-session"
+	c.Text = "second"
+	if err := adapter.Run(context.Background(), c, emit); err != nil {
+		t.Fatal(err)
+	}
+	trace, err := os.ReadFile(filepath.Join(dir, "trace"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(trace)), "\n")
+	for i, line := range lines {
+		var v struct {
+			Cwd  string
+			Args []string
+			Text string
+		}
+		if err = json.Unmarshal([]byte(line), &v); err != nil {
+			t.Fatal(err)
+		}
+		args := strings.Join(v.Args, " ")
+		if v.Cwd != c.Agent.WorkingDir || !strings.Contains(args, "--model fixture-model --effort high") || strings.Contains(args, "--continue") {
+			t.Fatal("wrong invocation", v)
+		}
+		if i == 1 && !strings.Contains(args, "--resume fixture-session") {
+			t.Fatal("did not resume exact session")
 		}
 	}
-	assertEvents(t, c.all(), []events.Event{events.NewTurnEnd("--continue hi", ""), events.NewTurnEnd("hi", "")})
-}
-
-func TestClaudeStopKillsTheTurnAndWhatItStarted(t *testing.T) {
-	runner, _ := fakeClaudeRunner(t, "child")
-	stop := make(chan struct{})
-	time.AfterFunc(200*time.Millisecond, func() { close(stop); runner.Stop() })
-	started := time.Now()
-	if code, _ := runner.Run("x", false, stop); code == 0 {
-		t.Error("a stopped turn exited 0")
+	c.Text = "bad-resume"
+	if err = adapter.Run(context.Background(), c, emit); err == nil || !strings.Contains(err.Error(), "No conversation found") {
+		t.Fatal("failed resume silently replaced session", err)
 	}
-	if time.Since(started) > 10*time.Second {
-		t.Error("the stop took too long")
+	c.Text = "callback failure"
+	if err = adapter.Run(context.Background(), c, func(map[string]any) error { return errors.New("disk failure") }); err == nil || !strings.Contains(err.Error(), "disk failure") {
+		t.Fatal("lost persistence failure", err)
 	}
 }
-
-func TestClaudeAStopBeforeTheTurnStartsEndsItAtOnce(t *testing.T) {
-	runner, _ := fakeClaudeRunner(t, "sleep")
-	stop := make(chan struct{})
-	close(stop)
-	started := time.Now()
-	if code, _ := runner.Run("x", false, stop); code == 0 {
-		t.Error("a stopped turn exited 0")
+func TestClaudeInterruptAndOrphanCleanup(t *testing.T) {
+	for _, prompt := range []string{"block", "orphan"} {
+		t.Run(prompt, func(t *testing.T) {
+			dir := installFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- (Claude{}).Run(ctx, fixtureClaim(dir, prompt, ""), func(map[string]any) error { return nil })
+			}()
+			deadline := time.Now().Add(5 * time.Second)
+			var pid int
+			for time.Now().Before(deadline) {
+				data, err := os.ReadFile(filepath.Join(dir, "child"))
+				if err == nil {
+					_, _ = fmt.Sscanf(string(data), "%d", &pid)
+					if pid > 0 {
+						break
+					}
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if pid == 0 {
+				t.Fatal("fixture child did not start")
+			}
+			if prompt == "block" {
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("expected interrupted/error result")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("process group was not reaped")
+			}
+			// A killed grandchild may briefly be a zombie before init reaps it.
+			for time.Now().Before(deadline) {
+				if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			t.Fatal("tool subprocess survived", pid)
+		})
 	}
-	if time.Since(started) > 10*time.Second {
-		t.Error("the stop took too long")
+}
+func TestTranslatorRejectsInvalidOutput(t *testing.T) {
+	tr := translator{emit: func(map[string]any) error { return nil }}
+	if err := tr.line([]byte("not json")); err == nil {
+		t.Fatal("invalid output accepted")
+	}
+	if err := (Claude{}).Probe(context.Background(), store.Settings{Harness: "codex"}); err == nil {
+		t.Fatal("unavailable adapter silently accepted")
 	}
 }
 
-func TestClaudeMissingProgram(t *testing.T) {
-	c := &collector{}
-	runner := newClaudeRunner("", "", c.emit)
-	runner.command = []string{"/nonexistent/claude"}
-	if code, _ := runner.Run("x", false, never()); code != 127 {
-		t.Errorf("exit = %d", code)
+func TestTranslatorTracksStreamedBlocksPerMessage(t *testing.T) {
+	var got []map[string]any
+	tr := translator{emit: func(e map[string]any) error { got = append(got, e); return nil }}
+	lines := []string{
+		`{"type":"stream_event","parent_tool_use_id":"nested","event":{"index":0,"delta":{"type":"text_delta","text":"streamed"}}}`,
+		`{"type":"assistant","parent_tool_use_id":"nested","message":{"content":[{"type":"text","text":"streamed"},{"type":"text","text":"complete other block"}]}}`,
+		`{"type":"assistant","parent_tool_use_id":"nested","message":{"content":[{"type":"text","text":"next message"}]}}`,
 	}
-	if c.all()[0]["type"] != "error" {
-		t.Errorf("events = %v", c.all())
+	for _, line := range lines {
+		if err := tr.line([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
 	}
-}
-
-func TestClaudeTakesItsModelAndEffortAsOptions(t *testing.T) {
-	runner := newClaudeRunner("opus", "high", func(events.Event) {})
-	got := runner.command[len(runner.command)-4:]
-	want := []string{"--model", "opus", "--effort", "high"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Errorf("options = %v", got)
+	if len(got) != 3 || got[0]["text"] != "streamed" || got[1]["text"] != "complete other block" || got[2]["text"] != "next message" {
+		t.Fatal("duplicated or dropped assistant blocks", got)
 	}
 }
 
-func TestClaudeReadsLinesLongerThanAPipeBuffer(t *testing.T) {
-	runner, c := fakeClaudeRunner(t, "long")
-	if code, err := runner.Run("x", false, never()); code != 0 || err != nil {
-		t.Fatalf("Run = %d, %v", code, err)
+func TestClaudeLaunchScopedCoordination(t *testing.T) {
+	dir := installFixture(t)
+	c := fixtureClaim(dir, "initial", "")
+	c.MCPURL = "http://127.0.0.1:9999/mcp"
+	c.MCPToken = "private-agent-binding"
+	c.Instructions = "runtime identity facts"
+	c.Sender = "sender-id"
+	if err := (Claude{}).Run(context.Background(), c, func(map[string]any) error { return nil }); err != nil {
+		t.Fatal(err)
 	}
-	assertEvents(t, c.all(), []events.Event{events.NewTurnEnd(strings.Repeat("x", 1<<20), "")})
-}
-
-func TestClaudeIsErrorIsATruthinessTest(t *testing.T) {
-	failed := j(m{"type": "result", "is_error": 1, "result": "x"})
-	assertEvents(t, translate(failed), []events.Event{events.NewTurnEnd("", "x")})
-	got := translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 1, "content": "x"}))
-	assertEvents(t, got, []events.Event{events.NewToolResult("t", "x", true)})
-	got = translate(line("user", nil, m{"type": "tool_result", "tool_use_id": "t", "is_error": 0, "content": "x"}))
-	assertEvents(t, got, []events.Event{events.NewToolResult("t", "x", false)})
+	data, err := os.ReadFile(filepath.Join(dir, "trace"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trace struct {
+		Args []string
+		Text string
+	}
+	if err = json.Unmarshal(data, &trace); err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	foundPrompt := false
+	for i, arg := range trace.Args {
+		if arg == "--mcp-config" {
+			if err = json.Unmarshal([]byte(trace.Args[i+1]), &config); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if arg == "--append-system-prompt" && trace.Args[i+1] == c.Instructions {
+			foundPrompt = true
+		}
+	}
+	if config == nil || !foundPrompt || trace.Text != "Message from sender-id:\ninitial" {
+		t.Fatal("missing launch binding", trace)
+	}
+	server := config["mcpServers"].(map[string]any)["gnat"].(map[string]any)
+	if server["type"] != "http" || server["url"] != c.MCPURL || server["headers"].(map[string]any)["Authorization"] != "Bearer "+c.MCPToken {
+		t.Fatal("incorrect MCP connection")
+	}
 }

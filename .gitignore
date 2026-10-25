@@ -2,6 +2,3 @@
 /bin/
 /dist/
 .ref/
-# Retained v1 container fixtures; native distribution targets do not build them.
-/internal/workspace/bin/*
-!/internal/workspace/bin/.gitkeep

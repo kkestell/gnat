@@ -1,72 +1,67 @@
-# CLAUDE.md
+# Gnat
 
-## V2 design priorities
+Gnat is a macOS application for directing local coding agents through one
+persistent orchestrator. `agents/gnat-spec.md` defines the product contract;
+`agents/architecture.md` records the implementation boundaries. Read the
+architecture before moving a boundary, and update it when you do.
 
-`agents/gnat-v2-spec.md` describes the first cut of v2. Kyle is its only user.
-Favor a small implementation that is easy to understand and change over
-operational robustness, generalized infrastructure, or speculative future
-requirements. Known gaps are acceptable and can be addressed in follow-up work.
-Pressure-test the ordinary workflow and internal consistency; do not repeatedly
-reopen accepted limitations as release blockers without new evidence or a user
-request.
+Kyle is the only user. Favor small implementations that are easy to understand
+and change over generalized infrastructure or speculative requirements. Known
+gaps can be addressed in follow-up work. Pressure-test the ordinary workflow and
+internal consistency without reopening accepted limitations as release blockers.
 
-V2 supplies basic building blocks for agents to organize their own work:
-identities, worktrees, conversations, messages, and worker lifecycle tools.
-The orchestrator is the user's entry point and manages worker membership, but
-agents decide how to divide work, collaborate, integrate, and assess completion.
-Do not encode a rigid workflow, task registry, required reporting ceremony,
-fixed team topology, or mandatory review/integration sequence in Gnat.
-Built-in agent instructions explain runtime facts: available tools, where
-output goes, and how incoming messages start turns. They do not prescribe how
-agents organize their work.
+## Runtime and product boundaries
 
-Accepted first-cut scope:
+The public command surface is `gnat`, `gnat --no-open`, `gnat --help`,
+`gnat --version`, and `gnat daemon stop`. A detached per-user daemon serves all
+registered workspaces. The orchestrator uses the original checkout; workers use
+managed Git worktrees. Claude Code, Codex, and OpenCode can run either role,
+including mixed teams. Agents integrate commits using ordinary local Git.
 
-- macOS only, with local trusted processes and ordinary user credentials.
-- Orchestrator harness, model, and effort come from required config values;
-  missing values are errors, not a setup wizard.
-- Native harness delegation stays unchanged. Agents handle development setup
+Gnat supplies identities, worktrees, conversations, messages, and lifecycle tools.
+The orchestrator is the user's entry point and manages worker membership. Agents
+decide how to divide work, collaborate, integrate, and assess completion. Do not
+add a task registry, rigid workflow, fixed topology, required reporting ceremony,
+or mandatory review/integration sequence. Built-in instructions explain runtime
+facts, not how agents must organize their work.
+
+- macOS only, trusted local processes and ordinary user credentials.
+- Harness, model and effort are required orchestrator config values; missing
+  values are errors, not a setup wizard.
+- Leave native harness delegation unchanged. Agents handle development setup
   using ordinary tools and repository instructions.
-- Stop/resume preserves the team and work. Explicit worker removal cleans up
-  its resources using ordinary Git safeguards and preserves message history.
-- After a daemon crash, the user may need to clean up surviving processes.
-  Automatic process cleanup/reconciliation is not a first-cut requirement.
-- Workspace relocation and unregistering are deferred. Git inspection UI is a
-  planned follow-up; keep checkout metadata and UI boundaries suitable for it
-  without implementing speculative abstractions now.
+- Stop/resume preserves the team and work. Worker removal uses ordinary Git
+  safeguards and preserves message history.
+- After a daemon crash, users may need to clean up surviving processes.
+  Automatic process cleanup/reconciliation is outside current scope.
+- Workspace relocation and unregistering are deferred. Git inspection UI remains
+  a follow-up; retain checkout metadata and independent main/sidebar UI boundaries.
 
-The default `cmd/gnat` entry point implements all six v2 milestones:
-local workspace registration, versioned SQLite records, a detached daemon, and
-right-sidebar chat with a persistent local orchestrator. Claude Code, Codex, and
-OpenCode can each run the orchestrator or workers, including mixed teams. Input,
-transcripts, and exact sessions persist; controls handle interruption and restart.
-Workers use separate worktrees and coordinate over authenticated MCP; agents
-integrate their commits into the original checkout using ordinary local Git. New code
-lives under `internal/v2/`; build it directly with `go build -o gnat ./cmd/gnat`.
+## Packages
 
-V1 source packages, the legacy container entry point, and fixtures remain for
-package tests. Native build/install/release targets build and ship only v2;
-they do not build container helpers or install profiles. The documentation below
-describes that legacy implementation,
-not constraints to carry into v2. In particular, Docker, Python compatibility,
-profiles, GitHub proxies, and v1's optional orchestrator are superseded by the v2
-specification.
+The sole executable is `cmd/gnat`. Packages under `internal/`:
 
-## Retained v1 implementation
+- `entry`: workspace discovery, daemon startup and the public commands.
+- `daemon`: process lifetime, local HTTP API, embedded JavaScript/CSS UI, SSE.
+- `core`: neutral scheduling, controls, agent membership and coordination.
+- `store`: SQLite records, schema validation, durable events and configuration.
+- `workspace`: checkout discovery and worker branch/worktree management.
+- `harness`: Claude, Codex app-server and OpenCode ACP adapters.
+- `mcp`: authenticated, agent-bound coordination tools over loopback HTTP.
 
-gnat is a Go port of `swarm` (Python): run a swarm of coding agents, each in its own Docker container, on separate clones of one GitHub repository. Behavior, commands, flags, wire formats, and on-disk formats match the Python version except that everything named `swarm` that identifies the tool is `gnat` (binary, images, labels, `$XDG_STATE_HOME/gnat`, `GNAT_AGENT`, `/opt/gnat`), and harness credentials live in the system keyring (`gnat auth login`), not the environment or a `.env`. "Swarm" stays as the noun for a set of agents.
+Core code must not depend on concrete harness adapters. Translate provider events
+before they reach the core or browser. SQLite is `modernc.org/sqlite` (pure Go).
+State defaults to `~/.local/state/gnat`, config to `~/.config/gnat/config.yaml`;
+`XDG_STATE_HOME` and `XDG_CONFIG_HOME` override their parent directories.
 
-`agents/architecture.md` is the shape of the system, the lines drawn between its parts, and why: where state lives, how agents are identified, and how GitHub is reached. Read it before a change that moves one of those lines, and update it when you do.
-
-## Commands
+## Commands and validation
 
 ```sh
-make build     # native v2 binary with embedded browser assets
-make install   # native go install ./cmd/gnat
-make ui        # build the web UI (ui/) into internal/web/dist; commit the result
-make release VERSION=v2-example # macOS arm64 binary-only archive and checksum
-make test      # Go packages, v2 browser tests, retained v1 UI tests
-make lint      # go vet, staticcheck, gofmt check, tsc
+make build                     # Native binary with embedded browser assets.
+make install                   # go install ./cmd/gnat
+make release VERSION=v0.0.0-example # macOS arm64 archive and checksum.
+make test                      # Go packages and browser tests.
+make lint                      # go vet, staticcheck and gofmt check.
 ```
 
 Before pushing, all of this must pass:
@@ -75,54 +70,15 @@ Before pushing, all of this must pass:
 go build ./... && go vet ./... && staticcheck ./... && test -z "$(gofmt -l .)" && go test ./...
 ```
 
-After changing `ui/`, also `make ui`, `cd ui && bun test && bun run typecheck`, and commit `internal/web/dist`.
+After changing browser code, also run `bun test internal/daemon/page.test.js`.
+Assets are embedded from `internal/daemon`; no asset generation is required.
+Check plugin changes with `claude plugin validate .`. The Claude Code plugin is
+`plugin/`, listed by `.claude-plugin/marketplace.json`; `.claude/skills/gnat`
+links to `plugin/skills/gnat`.
 
-The retained v1 sources use a separate binary, `gnat-container` (`cmd/gnat-container`, a static linux build at `/opt/gnat/gnat-container`, embedded in `gnat` and copied in by `gnat up`); what ran as Python modules there are its subcommands, `gnat-container control|agent|hook|send` (`layout.Command`). For the retained v1 packages, the two binaries share no code beyond the small packages below: `gnat` must not link `control`, `agent`, or `hook`, and `gnat-container` must not link `cli`, `keyring`, or `workspace`. Check with `go list -deps ./cmd/gnat` and `go list -deps ./cmd/gnat-container`. The host reads `control.db` through `recorded`, never `control`. SQLite is `modernc.org/sqlite` (pure Go).
-
-## Threat model
-
-Agents are cooperative, not adversarial. The goal is that an agent's mistake, or instructions it picks up from something it reads, can't do broad damage: no GitHub credential in agent containers, only the swarm's repository, only the agent's own branches, merging only when granted, and no glaring holes. Defending against an agent that deliberately attacks the control plane or its teammates over the swarm network is out of scope: no web UI authentication, no per-agent networks, no encryption on the bridge. When a simpler option meets the goal, take it; don't add hardening beyond this without asking.
-
-gnat also doesn't assume a team structure. A swarm needn't have an orchestrator or a reviewer; it may be all coders driven by an operator from a terminal. What gnat tells every agent is facts (commands, rules, what's refused); roles and workflow belong in profiles.
-
-## Testing v2 recovery and installation
-
-Use `go test ./internal/v2/...` and
-`bun test internal/v2/daemon/page.test.js`. Detached subprocess tests run on
-macOS and cover shutdown, crash recovery, queues and independent swarms. Opt in
-to real-provider reset/restart coverage with
-`GNAT_LIVE_TEST=1 go test ./internal/v2/daemon -run '^TestLiveConversationRecovery$' -v -timeout 5m`.
-Use disposable local repositories and isolated state/install directories for
-installation smoke checks; no GitHub push is needed. After daemon restart,
-reopen with `gnat` to obtain the new listener URL. Codex's earlier Homebrew helper
-failure was resolved using OpenAI's standalone installation; live MCP checks
-passed for both Codex roles in the milestone-four session.
-
-## Testing retained v1 code with a live swarm
-
-Use `kkestell/gnat-sandbox`, a private throwaway repository with a tiny Python library (`wordtools.py`, tests via `python3 -m unittest`), for end-to-end runs: agents may push, open pull requests, and merge there. The active `gh` account may not be `kkestell`, so run gnat with `GH_TOKEN=$(gh auth token --user kkestell)`. Close leftover pull requests and delete their branches before a fresh run, and `gnat delete` the swarm afterwards.
-
-## Packages
-
-Two binaries, `cmd/gnat` (the host's commands) and `cmd/gnat-container` (what runs in containers); everything else is under `internal/`.
-
-- `events`: the event format every harness is translated into (`Event` maps, constructors, `UsageTotals`).
-- `protocol`: wire types (`Request`, `Response`, `Line`) and the one-shot request client (`Call`).
-- `state`: swarm definitions as JSON under `$XDG_STATE_HOME/gnat/swarms`; names and workspace paths.
-- `render`: events to readable log lines, and `UsageSummary`.
-- `layout`: container paths and identities (workspace, home, UID, binary, files dir, log dir, ports) and `Command`; also `wait`'s timeout status and the hook's timeout.
-- `recorded`: reads `control.db`, which `control` writes and the host reads for `gnat status` while a swarm is down.
-- `control`: the control plane (mailboxes, status, usage, logs, `control.db`), the GitHub requests agents make with their secrets, every agent request, which must carry the agent's secret (`secrets.go`: who is asking is whoever's secret it is, never what the request says; the operator's commands come in over a Unix socket in the container instead), and the git proxy (`git.go`: a bare mirror served by `git http-backend`, with a pre-receive hook that enforces the push rules and pushes on to GitHub).
-- `web`: serves the web UI (embedded from `internal/web/dist`), `/agents`, and the `/events` stream.
-- `harness`: the programs an agent runs turns with (Claude, Codex, ACP, Ox).
-- `agent`: the agent daemon, the container's main process.
-- `hook`: the PostToolUse hook that delivers `--now` messages, and `gnat-container send`.
-- `workspace`: cloning, files, instructions, and archives for containers.
-- `keyring`: harness credentials in the system keyring (macOS `security`, `secret-tool` elsewhere).
-- `cli`: the host's command line (`cli.Run`).
-
-The web UI is `ui/`, a Bun + React + Tailwind app: `swarm.ts` turns events into each agent's transcript, usage, and latest entries; `markdown.js` is a hand-written, DOM-building Markdown renderer (no HTML parsing, http(s)/mailto links only). `bun dev` in `ui/` runs it with hot reloading on http://localhost:5180 against a pretend swarm (`ui/mock/swarm.ts`); with `GNAT_URL=$(gnat web SWARM --no-open)`, against a running one.
-
-The Claude Code plugin is `plugin/` (skills `install` and `gnat`), listed by the marketplace in `.claude-plugin/marketplace.json`; `.claude/skills/gnat` links to `plugin/skills/gnat`. Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes `make release`'s archive, the one `/gnat:install` downloads. Check the plugin with `claude plugin validate .`.
-
-Go that writes JSON Python wrote with `json.dumps` uses an `Encoder` with `SetEscapeHTML(false)` (`protocol.Encode`).
+Detached subprocess tests run on macOS and cover shutdown, crash recovery,
+queues and independent swarms. Opt in to provider recovery coverage with
+`GNAT_LIVE_TEST=1 go test ./internal/daemon -run '^TestLiveConversationRecovery$' -v -timeout 5m`.
+Other live scenarios are documented in README. Use disposable local repositories
+and isolated state/config/install directories for smoke checks. After daemon
+restart, reopen with `gnat` to obtain the new listener URL.

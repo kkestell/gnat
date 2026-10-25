@@ -1,2 +1,0 @@
-# Retained v1 development fixture; unused by the native v2 build or release.
-FROM gnat-agent

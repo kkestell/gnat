@@ -1,6 +1,6 @@
 # Setup
 
-Gnat v2 supports macOS. Install Git and at least one supported harness, and
+Gnat supports macOS. Install Git and at least one supported harness, and
 complete its normal login in a terminal: `claude auth login`, `codex login`, or
 `opencode auth login`. Gnat uses your existing credentials and configuration.
 
@@ -15,8 +15,8 @@ make install
 
 Put Go's binary directory (`go env GOBIN`, or `$(go env GOPATH)/bin` if unset) on
 PATH. `make build` creates `./gnat` instead. The native binary embeds its browser
-assets; no Docker, Linux helper, Bun, profiles, GitHub account, or Gnat-specific
-credential setup is needed to build or run it. Bun is used for development tests.
+assets. GitHub access and Gnat-specific credential setup are unnecessary. Bun is
+used for browser development tests.
 
 ## Install a release
 
@@ -37,10 +37,7 @@ tar -xzf gnat-darwin-arm64.tar.gz
 gnat-darwin-arm64/gnat --help
 ```
 
-Older published releases may still be v1: verify that help shows `--no-open`
-and `daemon`; if it instead exposes
-`create` and `up`, use the source install above for v2. The v2 archive contains
-only the native executable. Install it with:
+The archive contains only the native executable. Install it with:
 
 ```sh
 mkdir -p ~/.local/bin
@@ -54,7 +51,7 @@ wins when both source and release copies exist. The Claude Code plugin's
 Before updating, stop the old daemon with `gnat daemon stop`; it preserves the
 team, queues, worktrees and sessions. Install the replacement, then run `gnat`
 from a saved checkout. A running daemon keeps using its old executable until
-stopped. There is no automatic v1 migration or deletion of old state.
+stopped.
 
 ## Configuration
 
@@ -79,7 +76,7 @@ Supported harness names are `claude`, `codex`, and `opencode`. Model and effort
 must fit the selected harness. Codex validates its account's advertised models
 and efforts. OpenCode uses `provider/model` IDs and ACP config variants; use
 `default` effort for a model with no variant. Changing harness typically requires
-changing model and effort too. No Ox adapter is included in v2 selection.
+changing model and effort too.
 
 Codex uses its native app-server protocol, with live MCP checks passing for
 codex-cli 0.164.0 in both agent roles. An earlier Homebrew helper timeout was
@@ -107,8 +104,8 @@ is not replayed: send new direction if a failed turn already consumed it. Failed
 exact session resumption retains history; New conversation explicitly starts
 fresh while keeping the team and queue.
 
-State is under `$XDG_STATE_HOME/gnat/v2`, defaulting to
-`~/.local/state/gnat/v2`. Runtime diagnostics are in `runtime/daemon.log` there;
+State is under `$XDG_STATE_HOME/gnat`, defaulting to
+`~/.local/state/gnat`. Runtime diagnostics are in `runtime/daemon.log` there;
 the SQLite database, provider-owned sessions and worker worktrees together hold
 the saved work. Do not edit the database or delete state to repair a login error.
 Missing saved checkout paths are reported without relocation or recreation.

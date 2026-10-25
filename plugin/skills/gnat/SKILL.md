@@ -1,11 +1,11 @@
 ---
 name: gnat
-description: Open and operate Gnat v2 local coding-agent workspaces through a persistent browser orchestrator, with Claude Code, Codex, or OpenCode workers in managed Git worktrees. Use when the user wants to direct a local swarm, inspect workers, integrate their work, or recover a saved workspace.
+description: Open and operate Gnat local coding-agent workspaces through a persistent browser orchestrator, with Claude Code, Codex, or OpenCode workers in managed Git worktrees. Use when the user wants to direct a local swarm, inspect workers, integrate their work, or recover a saved workspace.
 ---
 
 # Operating Gnat
 
-Gnat v2 is a native macOS application. The user directs a persistent orchestrator
+Gnat is a native macOS application. The user directs a persistent orchestrator
 in the browser's right sidebar. The orchestrator runs in the original checkout,
 creates/removes workers through Gnat MCP tools, and chooses how to collaborate.
 Workers have separate managed worktrees and independent persistent sessions.
@@ -14,8 +14,6 @@ Docker, GitHub, a remote and Gnat-specific credentials are unnecessary.
 ## Open the workspace
 
 Check `command -v gnat` and `gnat --help`. If missing, use `/gnat:install`.
-If help exposes the old `create`/`up` command surface instead of `--no-open`, it
-is v1; install v2 before following this skill. Do not use v1 commands or profiles.
 
 From the requested local Git checkout with an initial commit, run `gnat` to
 open its browser UI, or `gnat --no-open` to return the URL. Required new-swarm
@@ -74,4 +72,4 @@ Closing the browser/terminal leaves work running. `gnat daemon stop` interrupts
 managed execution across all swarms, reaps processes and preserves saved work.
 After updating, reopen with `gnat` for the new listener URL. After a crash, the
 user cleans up surviving processes before resuming; automatic crash cleanup,
-workspace relocation and unregistering are outside the initial v2 scope.
+workspace relocation and unregistering are outside the current scope.

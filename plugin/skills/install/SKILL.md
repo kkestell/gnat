@@ -1,11 +1,11 @@
 ---
 name: install
-description: Install or update the native Gnat v2 application on macOS, verify its command surface, and explain required orchestrator configuration and normal harness login. Use when the user wants to install, update, or set up Gnat, or when gnat is missing from PATH.
+description: Install or update the native Gnat application on macOS, verify its command surface, and explain required orchestrator configuration and normal harness login. Use when the user wants to install, update, or set up Gnat, or when gnat is missing from PATH.
 ---
 
 # Installing Gnat
 
-Gnat v2 ships one native executable with embedded browser assets. It requires
+Gnat ships one native executable with embedded browser assets. It requires
 Git and an authenticated Claude Code, Codex, or OpenCode installation. It uses
 normal local credentials; do not copy tokens, install profiles, set up Docker,
 or require GitHub access for runtime work.
@@ -13,9 +13,9 @@ or require GitHub access for runtime work.
 ## Check and install
 
 Run `uname -sm`. Release archives support `Darwin arm64`; other macOS
-architectures use a source build. Linux/Windows are outside initial v2 support.
+architectures use a source build. Linux/Windows are outside support.
 Check `command -v gnat` and existing `gnat --help`/`--version` before updating.
-Stop an existing v2 daemon with that installed binary's `gnat daemon stop`
+Stop an existing daemon with that installed binary's `gnat daemon stop`
 before replacing it; saved work is retained.
 
 Download the native release into a new temporary directory:
@@ -37,16 +37,7 @@ gnat-darwin-arm64/gnat --help
 gnat-darwin-arm64/gnat --version
 ```
 
-Older published releases may still be v1. Help must expose `--no-open` and
-`daemon`, rather than `create` and `up`. If the downloaded release is v1, do not
-install it as v2; use a source checkout and Go 1.26 or newer:
-
-```sh
-make install
-```
-
-Source installs use Go's configured binary directory. A verified v2 release
-installs with:
+Install the verified executable with:
 
 ```sh
 mkdir -p ~/.local/bin
@@ -84,5 +75,5 @@ Report the installed path/version and anything still required. To start, run
 `gnat` from a committed local checkout, or `gnat --no-open` to print its URL.
 The browser's orchestrator sidebar is the normal entry point for directing
 workers. `gnat daemon stop` preserves work; restart with `gnat` after updates to
-obtain the new local URL. Refer to `docs/setup.md` for recovery and compatibility
+obtain the new local URL. Refer to `docs/setup.md` for configuration and recovery
 notes. Do not create a swarm or send agent work unless the user requested it.

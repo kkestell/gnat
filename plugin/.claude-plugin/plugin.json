@@ -1,6 +1,6 @@
 {
   "name": "gnat",
-  "description": "Install and use Gnat v2: a local orchestrator with Claude Code, Codex, and OpenCode workers",
+  "description": "Install and use Gnat: a local orchestrator with Claude Code, Codex, and OpenCode workers",
   "author": {
     "name": "Kyle Kestell"
   },

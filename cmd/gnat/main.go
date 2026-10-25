@@ -1,4 +1,4 @@
-// Command gnat opens a local v2 workspace through the per-user daemon.
+// Command gnat opens a local workspace through the per-user daemon.
 package main
 
 import (
@@ -6,15 +6,15 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/kkestell/gnat/internal/v2/daemon"
-	"github.com/kkestell/gnat/internal/v2/entry"
-	"github.com/kkestell/gnat/internal/v2/store"
+	"github.com/kkestell/gnat/internal/daemon"
+	"github.com/kkestell/gnat/internal/entry"
+	"github.com/kkestell/gnat/internal/store"
 )
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--internal-daemon-run" {
 		if runtime.GOOS != "darwin" {
-			fmt.Fprintln(os.Stderr, "Gnat v2 currently supports macOS only")
+			fmt.Fprintln(os.Stderr, "Gnat currently supports macOS only")
 			os.Exit(1)
 		}
 		dir, err := store.StateDir()
