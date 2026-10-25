@@ -2,6 +2,6 @@
 /bin/
 /dist/
 .ref/
-# Linux gnat-container binaries `make linux` builds and embeds in the host binary.
+# Retained v1 container fixtures; native distribution targets do not build them.
 /internal/workspace/bin/*
 !/internal/workspace/bin/.gitkeep

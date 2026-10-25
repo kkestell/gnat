@@ -1,6 +1,6 @@
 {
   "name": "gnat",
-  "description": "Run a swarm of coding agents, each in its own Docker container on its own clone of a GitHub repository",
+  "description": "Local coding-agent workspaces with a persistent orchestrator and managed worker worktrees",
   "owner": {
     "name": "Kyle Kestell"
   },
@@ -8,7 +8,7 @@
     {
       "name": "gnat",
       "source": "./plugin",
-      "description": "Install gnat, and operate swarms of Claude Code and Ox agents with it"
+      "description": "Install and use Gnat v2 with Claude Code, Codex, and OpenCode"
     }
   ]
 }

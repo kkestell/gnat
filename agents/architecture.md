@@ -77,15 +77,20 @@ mutations require the intended Host, same Origin, and a custom browser header;
 CLI registration/shutdown still requires its private bearer token. Snapshots
 include transcript, queue, conversation history, and a cursor from one read
 transaction. SSE reads only committed events after that cursor, scoped by swarm;
-reconnection uses event IDs to deduplicate. Unknown metrics stay absent.
+reconnection reloads a snapshot and subscribes after its cursor, deduplicating
+by event sequence. Initial fetch failures and failed transition refreshes retry
+the same recovery path. Workspace links refresh on window focus without changing
+scheduling or the selected swarm. Page hide closes the stream, and restored
+browser-cache pages reconnect. Unknown metrics stay absent.
 
 Pause holds queued input; stop/interrupt cancel execution and hold scheduling.
 Failures and interruptions never requeue delivered input. Resume/retry rechecks
-prerequisites and delivers only pending messages. New conversation requires a
-settled turn, retains old history and queued input, and preserves the checkout.
+prerequisites and delivers only pending messages. The browser offers interruption before an active conversation reset; the reset
+requires a settled turn, retains old history and queued input, and preserves the checkout.
 Daemon shutdown cancels scheduling, kills active process groups, waits for
 children and outcomes, then closes SQLite. Startup marks persisted running turns
-interrupted and pauses their swarms. Surviving processes after daemon crashes
+interrupted and pauses their swarms. Restart uses a new ephemeral listener; the
+user reopens with `gnat` to get its URL. Surviving processes after daemon crashes
 remain the user's cleanup responsibility. Worker failures enqueue system messages to the orchestrator. Missing saved paths are reported without recreating them.
 
 Workers carry a separate membership state and durable provisioning stage, base
@@ -125,8 +130,12 @@ provider-specific messages are translated before the browser sees them.
 
 The rest of this document describes the retained v1 packages. Their Docker,
 profile, credential proxy, and compatibility constraints do not apply to v2.
-The old distribution/build targets remain pending milestone-six cleanup; source
-builds can use `go build -o gnat ./cmd/gnat` directly.
+`make build` and `make install` build only the native v2 executable, whose chat
+assets are embedded directly. `make release VERSION=<tag>` produces a macOS arm64
+archive containing only that executable and an external checksum; the release
+workflow injects/verifies the tag version. Legacy source fixtures remain for
+package tests but no container helpers or profiles are built or installed by
+these targets.
 
 ## Legacy v1 shape
 

@@ -43,6 +43,7 @@ type liveTeam struct {
 	db      *store.Store
 	swarm   store.Snapshot
 	send    func(string)
+	control func(string)
 	wait    func(string, func(store.Snapshot) bool) store.Snapshot
 	restart func()
 	stop    func()
@@ -96,9 +97,9 @@ func newLiveTeam(t *testing.T, settings store.Settings) *liveTeam {
 	}
 	start()
 	t.Cleanup(func() { server.Close(); service.Close(); db.Close() })
-	send := func(text string) {
+	mutate := func(action, text string) {
 		t.Helper()
-		body, _ := json.Marshal(map[string]string{"action": "send", "request_id": store.NewID(), "text": text})
+		body, _ := json.Marshal(map[string]string{"action": action, "request_id": store.NewID(), "text": text})
 		req, _ := http.NewRequest("POST", desc.URL+"/api/swarms/"+v.ID+"/actions", strings.NewReader(string(body)))
 		req.Header.Set("Origin", desc.URL)
 		req.Header.Set("X-Gnat-Browser", "1")
@@ -151,7 +152,7 @@ func newLiveTeam(t *testing.T, settings store.Settings) *liveTeam {
 		t.Fatalf("timed out: %s", label)
 		return current
 	}
-	return &liveTeam{root: root, db: db, swarm: v, send: send, wait: wait, restart: func() { server.Close(); service.Close(); start() }, stop: func() { service.Close() }}
+	return &liveTeam{root: root, db: db, swarm: v, send: func(text string) { mutate("send", text) }, control: func(action string) { mutate(action, "") }, wait: wait, restart: func() { server.Close(); service.Close(); start() }, stop: func() { service.Close() }}
 }
 
 func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Settings) {

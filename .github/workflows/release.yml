@@ -15,7 +15,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make release
+      - run: make release VERSION="$GITHUB_REF_NAME"
+      - run: |
+          if [ "$(uname -m)" = arm64 ]; then
+            test "$(dist/gnat-darwin-arm64/gnat --version)" = "gnat version $GITHUB_REF_NAME"
+          fi
+          test "$(tar -tzf dist/gnat-darwin-arm64.tar.gz | wc -l | tr -d ' ')" = 2
+          cd dist
+          shasum -a 256 -c gnat-darwin-arm64.tar.gz.sha256
       - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes dist/gnat-darwin-arm64.tar.gz dist/gnat-darwin-arm64.tar.gz.sha256
         env:
           GH_TOKEN: ${{ github.token }}

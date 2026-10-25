@@ -413,3 +413,73 @@ func TestWorkerDirectionWaitsForInterruptionToSettle(t *testing.T) {
 		t.Fatal("retried direction duplicated input", count)
 	}
 }
+
+func TestConversationResetPreservesTeamAndQueuedInput(t *testing.T) {
+	root := repository(t)
+	dir := t.TempDir()
+	db, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	v := newWorkspace(t, db, root)
+	f := &fake{runs: make(chan *run, 20)}
+	s, err := New(db, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ready(t, db, v.ID, "ready")
+	b := Binding{v.ID, v.Orchestrator.ID}
+	worker := coordinate(t, s, b, "create_agent", store.Command{Name: "kept", Prompt: "worker work"})
+	wr := next(t, f)
+	workerSession := wr.claim.Agent.ConversationID
+	// The worker remains active across the orchestrator's settled reset.
+	call(t, s, v.ID, "send", "original conversation")
+	original := next(t, f)
+	original.done <- nil
+	ready(t, db, v.ID, "ready")
+	call(t, s, v.ID, "pause", "")
+	queued := call(t, s, v.ID, "send", "queued before reset")
+	before, err := db.Snapshot(v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := call(t, s, v.ID, "reset", "")
+	after := ready(t, db, v.ID, "ready")
+	if after.ID != before.ID || after.Orchestrator.ID != before.Orchestrator.ID || after.Orchestrator.WorkingDir != root || len(after.Workers) != 1 || after.Workers[0].ID != worker.AgentID || after.Workers[0].WorkingDir != before.Workers[0].WorkingDir || after.Workers[0].ConversationID != workerSession || after.Workers[0].Lifecycle != "running" {
+		t.Fatal("reset changed team", after)
+	}
+	if len(after.Conversations) != 3 || after.Orchestrator.ConversationID != reset.ConversationID || after.Conversations[0].SessionRef == "" {
+		t.Fatal("reset lost old session/history", after.Conversations)
+	}
+	if _, err := os.Stat(after.Workers[0].WorkingDir); err != nil {
+		t.Fatal(err)
+	}
+	call(t, s, v.ID, "resume", "")
+	fresh := next(t, f)
+	if fresh.claim.Turn.MessageID != queued.MessageID || fresh.claim.SessionRef != "" || fresh.claim.Turn.ConversationID != reset.ConversationID {
+		t.Fatal("queued input entered wrong conversation", fresh.claim)
+	}
+	for _, fact := range []string{worker.AgentID, after.Workers[0].WorkingDir, "kept", "running", "queued messages", "read_agent"} {
+		if !strings.Contains(fresh.claim.Instructions, fact) {
+			t.Fatalf("orientation lacks %q: %s", fact, fresh.claim.Instructions)
+		}
+	}
+	fresh.done <- nil
+	wr.done <- nil
+	ready(t, db, v.ID, "ready")
+	s.Close()
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	saved, err := db.Snapshot(v.ID)
+	if err != nil || len(saved.Conversations) != 3 || saved.Orchestrator.ConversationID != reset.ConversationID || len(saved.Workers) != 1 || len(saved.Turns) != 3 {
+		t.Fatal("disk reopen lost reset/team", saved, err)
+	}
+}

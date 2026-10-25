@@ -20,7 +20,7 @@ import (
 var Version = "v2-dev"
 
 func Run(args []string, out, errs io.Writer) int {
-	root := &cobra.Command{Use: "gnat", Short: "Open a local coding-agent workspace (v2 foundation)", SilenceUsage: true, SilenceErrors: true, Args: cobra.NoArgs, Version: Version}
+	root := &cobra.Command{Use: "gnat", Short: "Open a local coding-agent workspace", SilenceUsage: true, SilenceErrors: true, Args: cobra.NoArgs, Version: Version}
 	root.CompletionOptions.DisableDefaultCmd = true
 	var noOpen bool
 	root.Flags().BoolVar(&noOpen, "no-open", false, "print the workspace URL without opening a browser")

@@ -5,6 +5,7 @@ const byId = id => document.getElementById(id);
 let snapshot, source, selectedConversation, pendingRequest, selectedWorker, workerConversation;
 let updates = Promise.resolve();
 let cursor = 0;
+let reconnectTimer, hidden = false, connectionAttempt = 0;
 const events = new Map();
 function appendEntry(log, text, kind = '', parent = '') {
   const el = document.createElement('div');
@@ -54,6 +55,8 @@ function render() {
   const a = snapshot.orchestrator;
   byId('state').textContent = `${a.lifecycle} · scheduling ${snapshot.scheduling}`;
   byId('agent-error').textContent = a.error || '';
+  const running = snapshot.turns.some(t => t.agent_id === a.id && t.state === 'running');
+  document.querySelector('[data-action=reset]').textContent = running ? 'Interrupt before new conversation' : 'New conversation';
   const select = byId('conversation');
   select.replaceChildren();
   snapshot.conversations.filter(c => c.agent_id === a.id).forEach((c, i) => {
@@ -105,33 +108,64 @@ async function refresh() {
   cursor = snapshot.cursor;
   render();
 }
+async function refreshWorkspaces() {
+  const response = await fetch('/api/swarms');
+  if (!response.ok) throw new Error(await response.text());
+  const nav = document.querySelector('nav');
+  nav.replaceChildren();
+  for (const workspace of await response.json()) {
+    const link = document.createElement('a');
+    link.href = `/swarms/${workspace.id}`;
+    link.textContent = workspace.workspace.name;
+    if (workspace.id === swarm) link.setAttribute('aria-current', 'page');
+    nav.append(link);
+  }
+}
+function reconnect() {
+  connectionAttempt++;
+  source?.close();
+  clearTimeout(reconnectTimer);
+  byId('connection').textContent = 'Disconnected · reconnecting…';
+  if (!hidden) reconnectTimer = setTimeout(connect, 1000);
+}
 async function connect() {
+  const attempt = ++connectionAttempt;
+  source?.close();
+  clearTimeout(reconnectTimer);
+  updates = Promise.resolve();
   try {
     await refresh();
+    if (hidden || attempt !== connectionAttempt) return;
     source = new EventSource(`${base}/events?after=${cursor}`);
-    source.onopen = () => { byId('connection').textContent = 'Connected'; };
-    source.onerror = () => { byId('connection').textContent = 'Disconnected · reconnecting…'; };
+    source.onopen = () => { if (attempt === connectionAttempt) byId('connection').textContent = 'Connected'; };
+    source.onerror = () => { if (attempt === connectionAttempt) reconnect(); };
     source.onmessage = message => {
       updates = updates.then(async () => {
+      if (hidden || attempt !== connectionAttempt) return;
       const e = JSON.parse(message.data);
       if (e.swarm_id !== swarm || e.sequence <= cursor) return;
       // Refresh transitions atomically, so queue and execution state agree with history.
       if (['message_accepted', 'turn_started', 'turn_ended', 'agent_state', 'scheduling_changed', 'conversation_created', 'agent_created', 'agent_removing', 'message_cancelled'].includes(e.payload.type)) {
-        try { await refresh(); } catch (error) { byId('request-error').textContent = error.message; }
+        await refresh();
       } else {
         if (e.sequence <= cursor) return;
         events.set(e.sequence, e); cursor = e.sequence; render();
       }
-      }).catch(error => { byId('request-error').textContent = error.message; });
+      }).catch(error => {
+        if (hidden || attempt !== connectionAttempt) return;
+        byId('request-error').textContent = error.message; reconnect();
+      });
     };
   } catch (error) {
-    byId('connection').textContent = 'Unable to connect';
+    if (hidden || attempt !== connectionAttempt) return;
     byId('request-error').textContent = error.message;
+    reconnect();
   }
 }
 async function submit(action, text = '') {
   if (pendingRequest) return;
   const turn = snapshot?.turns.find(t => t.agent_id === snapshot.orchestrator.id && t.state === 'running');
+  if (action === 'reset' && turn) action = 'interrupt';
   pendingRequest = { request_id: crypto.randomUUID(), action, text, turn_id: action === 'interrupt' ? turn?.id || '' : '' };
   await deliver();
 }
@@ -165,5 +199,7 @@ byId('prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.me
 byId('conversation').addEventListener('change', e => { selectedConversation = e.target.value; render(); });
 byId('retry-request').addEventListener('click', deliver);
 for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', () => submit(button.dataset.action));
-window.addEventListener('pagehide', () => source?.close());
+window.addEventListener('focus', () => refreshWorkspaces().catch(error => { byId('request-error').textContent = error.message; }));
+window.addEventListener('pagehide', () => { hidden = true; connectionAttempt++; clearTimeout(reconnectTimer); source?.close(); });
+window.addEventListener('pageshow', event => { if (event.persisted) { hidden = false; connect(); } });
 connect();

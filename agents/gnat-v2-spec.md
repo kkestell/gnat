@@ -1,6 +1,9 @@
 # Gnat v2 design and specification
 
-Status: milestones one through five implemented; Codex live tool-use validation is limited by an installed helper timeout. Milestone six remains a design specification.
+Status: all six implementation milestones implemented. Recovery, reset, replay,
+independent swarms and native installation have deterministic macOS coverage;
+Claude session recovery has live coverage. Full Codex live tool-use validation
+remains limited by an installed helper timeout.
 
 This document defines Gnat v2: a local application for directing a dynamic team
 of coding agents through one persistent orchestrator. It records the product
@@ -10,11 +13,12 @@ other implementation details are the proposed defaults for implementation and
 review, rather than claims about behavior already present in the repository.
 
 `agents/architecture.md` describes the landed v2 foundation and retained v1
-packages. The default entry point implements milestones one through five: durable chat,
+packages. The default entry point implements all six milestones: durable chat,
 dynamic workers in managed worktrees, authenticated MCP coordination, and Claude
 Code, Codex, and OpenCode adapters for both roles, including mixed teams.
 Agents integrate worker commits in the original checkout with ordinary local
-Git; this workflow has deterministic and live integration coverage.
+Git; this workflow has deterministic and live integration coverage. Native
+build/install/release targets ship only the v2 executable with embedded assets.
 
 ## 1. Product contract
 
