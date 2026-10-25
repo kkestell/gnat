@@ -3,26 +3,39 @@
 ## V2 local swarm (current source build)
 
 On macOS, run `go build -o gnat ./cmd/gnat` or `go install ./cmd/gnat`.
-Install Claude Code and authenticate normally with `claude auth login`. No
+Install and authenticate at least one of Claude Code (`claude auth login`),
+Codex (`codex login`), or OpenCode (`opencode auth login`). No
 Docker, GitHub, profiles, or Gnat-specific credential setup is needed.
 Set the required `orchestrator.harness`, `orchestrator.model`, and
 `orchestrator.effort` in `~/.config/gnat/config.yaml` (under
 `$XDG_CONFIG_HOME/gnat` when set), as shown in the [README](../README.md).
-The browser provides right-sidebar chat with one local Claude Code orchestrator.
-Configured names remain `claude`, `codex`, and `opencode`; only `claude` runs in
-milestones one through three. Missing installation/authentication and unavailable adapters show
+The browser provides right-sidebar chat with the configured local orchestrator.
+Supported harness names are `claude`, `codex`, and `opencode` for both roles.
+Missing installation/authentication and incompatible protocols show
 actionable errors in the sidebar. Repair the local installation/login and use
 Retry without losing the swarm or queued input. Existing swarms retain their
 resolved settings.
 
-Gnat uses the normal local Claude configuration, credentials, project
-instructions, and native delegation. It does not rewrite them. Execution uses
-`--dangerously-skip-permissions` for unattended operation with ordinary user
-privileges; the orchestrator works directly in the original checkout and workers
+Gnat uses the normal local harness configuration, credentials, project
+instructions, and native delegation. It does not rewrite them. Execution permits
+unattended operations with ordinary user privileges (Claude permission bypass,
+Codex never-approve/full access, ACP allow_once); the orchestrator works directly
+in the original checkout and workers
 use separate managed Git worktrees. Gnat injects an agent-specific MCP connection
 for each launch without writing global MCP configuration or project files.
 Optional `workers` harness/model/effort defaults inherit missing values from the
 orchestrator and are saved for each new swarm; existing agents keep their settings.
+
+Codex needs the native app-server initialize/account/model/thread/turn protocol
+(protocol checked with codex-cli 0.164.0; see the README for its live tool-use
+limitation). OpenCode needs ACP 1 with HTTP MCP, session/resume,
+and session config options for model and effort, as documented for OpenCode 2;
+compatibility is checked by protocol capabilities rather than the executable's
+major version. Models use OpenCode's `provider/model` IDs; select effort from
+its variants or use `default` when there is no effort option. ACP has no read-only
+authentication-status operation, so selected-provider authentication errors appear
+when a prompt runs; repair login and send new direction if input was delivered.
+Gnat does not change global configuration or copy provider credentials.
 
 The native binary embeds its chat page and JavaScript/CSS assets. `gnat` starts the daemon
 automatically; `gnat daemon stop` interrupts managed turns, waits for subprocess cleanup, and preserves SQLite state. Runtime files are

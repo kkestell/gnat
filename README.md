@@ -1,15 +1,15 @@
 # gnat
 
 Gnat v2 is becoming a local application for directing coding agents through one
-persistent orchestrator. **Milestones one through three are implemented:** workspace
+persistent orchestrator. **Milestones one through four are implemented:** workspace
 registration, SQLite records, a detached per-user daemon, right-sidebar chat,
-and dynamic Claude Code workers coordinated through MCP. Other harness adapters
-remain milestone four.
+and dynamic workers coordinated through MCP. Claude Code, Codex, and OpenCode
+can each serve as orchestrator or worker, including mixed teams.
 
 ## Build and run on macOS
 
-Requires macOS, Go 1.26 or newer, Git, and installed/authenticated Claude Code
-(`claude auth login`). Build directly from this checkout:
+Requires macOS, Go 1.26 or newer, Git, and at least one installed/authenticated harness
+(`claude auth login`, `codex login`, or `opencode auth login`). Build directly from this checkout:
 
 ```sh
 go build -o gnat ./cmd/gnat
@@ -31,8 +31,11 @@ workers:
 ```
 
 All three values are required for a new swarm. Harness choices are `claude`,
-`codex`, and `opencode`; this milestone runs `claude`. Other selections show an
-unavailable-adapter error. Reopening a swarm uses its saved settings.
+`codex`, and `opencode`. Reopening a swarm uses its saved settings. Model and
+effort are provider-specific: Codex validates its advertised model/effort catalog;
+OpenCode uses `provider/model` IDs and its ACP config options (`default` effort
+for a model without variants). Changing worker harness usually also requires
+setting its model and effort, either in `workers` or in the creation request.
 
 In any local Git checkout with an initial commit:
 
@@ -48,7 +51,7 @@ have separate swarms served by the same daemon. The browser shows saved checkout
 metadata and a resizable orchestrator chat. Prompts are durably queued and turns
 stream text, tool activity, and reported usage. The orchestrator edits the
 original checkout with normal local credentials and trusted process privileges;
-Claude is launched with permission checks bypassed for unattended tool use.
+harness permissions allow unattended tool use with normal user privileges.
 Docker, GitHub, a remote, and Gnat-specific credential setup are unnecessary.
 
 Ask the orchestrator to create workers as needed. Each has a persistent session,
@@ -81,6 +84,23 @@ use the direct source build above for this implementation.
 
 `go test ./internal/v2/...` covers the runtime, including real detached
 subprocesses on macOS. `make test` and `make lint` include retained v1 code and UI.
+Opt in to the mixed live matrix with authenticated local providers:
+
+```sh
+GNAT_LIVE_TEST=1 go test ./internal/v2/daemon -run TestLiveCoordination -v -timeout 20m
+```
+
+This uses disposable local repositories and exercises each harness as orchestrator
+with workers on the other two, plus restart and follow-up delivery. Set
+`GNAT_LIVE_HARNESS=claude`, `codex`, or `opencode` to select one orchestrator.
+The models in `internal/v2/daemon/live_test.go` must be available locally.
+
+The local Codex 0.164.0 live run currently fails tool discovery with
+“timed out negotiating with the code-mode host,” although its HTTP MCP
+initialization succeeds. Gnat uses the documented app-server protocol and does
+not manage or work around Codex's internal helper. Protocol fixtures cover the
+adapter; the full live three-provider matrix remains unverified.
+
 The old `make build`, `make install`, and release targets still build container
 helpers; direct native Go builds avoid those obsolete prerequisites.
 

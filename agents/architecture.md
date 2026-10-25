@@ -43,15 +43,33 @@ identities, settings, sessions, and messages. Sender and recipient IDs persist
 with each message; caller-scoped request IDs make deliberate duplicate messages
 distinct while transport retries reuse results.
 
-`internal/v2/harness` currently implements Claude Code. It probes the local
-installation/authentication, runs `claude -p` in each agent's saved checkout, and
-translates stream-json text, tools, nested activity, and reported usage. Normal
-local credentials/configuration and native delegation remain intact. Launch-only
-permission bypass enables unattended trusted execution. The provider session ID
-is saved before its output and later turns use exact `--resume`, never
-`--continue`. A failed resume is an error; only explicit conversation reset
-starts fresh. Session creation is lazy on first input after prerequisite checks.
-Other harness adapters remain milestone four.
+`internal/v2/harness.Registry` selects Claude Code, Codex app-server, or
+OpenCode ACP from each agent's saved settings. The core depends only on Probe/Run.
+Each turn owns a subprocess group in the agent's saved checkout; closing it reaps
+children. Normal local credentials/configuration and native delegation remain
+intact. The provider session ID commits before output, and later turns resume
+that exact identity. A failed resume is an error; only explicit conversation
+reset starts fresh. Session creation is lazy after prerequisite checks.
+
+Claude runs `claude -p` with stream-json, append-system-prompt, and launch-only
+MCP configuration. Codex uses app-server initialize/account/model discovery,
+thread/start or thread/resume with developer instructions and per-thread MCP
+config, then turn/start. OpenCode uses ACP 1 initialize with HTTP MCP and resume
+capabilities, session/new or session/resume with session MCP, config options for
+model/effort, and assistant-context instructions on session/prompt. Providers own
+their normal session files; SQLite holds the neutral session reference. No
+second Gnat session file or empty HOME is used.
+
+Trusted unattended execution uses Claude's permission bypass, Codex's never
+approval policy and full local access, and ACP allow_once permission responses.
+Codex and OpenCode share bounded JSON-RPC transport/process supervision but keep
+provider behavior separate. Cancellation targets the exact turn/session, then
+process-group cleanup bounds shutdown. Output translates before reaching the
+store/browser; native child activity stays in the parent's transcript. Codex
+usage derives a turn delta from provider totals; OpenCode emits end-prompt token
+usage and omits cumulative session cost. Unknown metrics stay absent. OpenCode
+checks authentication when the selected provider runs because ACP exposes no
+read-only credential-status operation.
 
 The daemon embeds a workspace switcher and resizable right-sidebar chat, using
 plain JavaScript/CSS independently of the retained v1 React dashboard. Browser
@@ -86,8 +104,8 @@ JSON-response Streamable HTTP at `/mcp`. Random in-memory bearer bindings resolv
 the agent and swarm; arguments cannot select the caller or another swarm.
 Discovery and execution enforce orchestrator-only membership management. Host
 and Origin checks cover MCP as well as browser routes; agent credentials do not
-grant CLI or browser mutation authority. Each Claude launch receives its MCP
-connection and factual runtime instructions through command-line configuration,
+grant CLI or browser mutation authority. Each adapter launch receives its MCP
+connection and factual runtime instructions through provider-supported overrides,
 without rewriting global or project settings. New launches refresh ephemeral
 bindings after restart. Optional `workers` defaults are resolved and saved when
 a swarm is registered; creation overrides apply only to the new worker.

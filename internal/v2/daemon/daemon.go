@@ -68,7 +68,7 @@ func Run(dir string) error {
 	}
 	defer listener.Close()
 	desc := Descriptor{PID: os.Getpid(), URL: "http://" + listener.Addr().String(), Generation: store.NewID(), Token: store.NewID()}
-	service, err := core.New(db, harness.Claude{}, desc.URL+"/mcp")
+	service, err := core.New(db, harness.Registry{}, desc.URL+"/mcp")
 	if err != nil {
 		return err
 	}

@@ -62,10 +62,8 @@ func LoadSettings() (Settings, error) {
 			return Settings{}, fmt.Errorf("configuration %s: missing orchestrator.%s", path, field.name)
 		}
 	}
-	switch s.Harness {
-	case "claude", "codex", "opencode":
-	default:
-		return Settings{}, fmt.Errorf("configuration %s: unsupported orchestrator.harness %q (use claude, codex, or opencode)", path, s.Harness)
+	if err := s.Validate(); err != nil {
+		return Settings{}, fmt.Errorf("configuration %s: %w", path, err)
 	}
 	return s, nil
 }
@@ -82,4 +80,17 @@ func ResolveSettings(base, override Settings) Settings {
 	}
 	base.Workers = nil
 	return base
+}
+
+// Validate checks neutral required settings; adapters validate provider choices.
+func (s Settings) Validate() error {
+	switch s.Harness {
+	case "claude", "codex", "opencode":
+	default:
+		return fmt.Errorf("unsupported harness %q (use claude, codex, or opencode)", s.Harness)
+	}
+	if strings.TrimSpace(s.Model) == "" || strings.TrimSpace(s.Effort) == "" {
+		return fmt.Errorf("harness model and effort are required")
+	}
+	return nil
 }

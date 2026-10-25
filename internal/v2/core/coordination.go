@@ -62,8 +62,8 @@ func (s *Service) Coordinate(b Binding, kind string, c store.Command) (store.Res
 			return store.Result{}, err
 		}
 		settings = store.ResolveSettings(v.WorkerDefaults, store.Settings{Harness: c.Harness, Model: c.Model, Effort: c.Effort})
-		if settings.Harness != "claude" {
-			return store.Result{}, fmt.Errorf("harness %q is unavailable; other adapters arrive in milestone four", settings.Harness)
+		if err := settings.Validate(); err != nil {
+			return store.Result{}, err
 		}
 	}
 	r, _, err := s.db.Coordinate(b.SwarmID, b.AgentID, kind, c, base, settings)

@@ -7,15 +7,16 @@ description: Operate `gnat`, which runs coding agents (Claude Code, Codex, or Ox
 
 ## Source-build v2 status
 
-The current source entry point implements v2 milestones one through three, with a
-detached local daemon and right-sidebar chat using one local Claude Code
-orchestrator. Install/authenticate Claude normally (`claude auth login`);
+The current source entry point implements v2 milestones one through four, with a
+detached local daemon and right-sidebar chat using a persistent local orchestrator.
+Claude Code, Codex, and OpenCode can each run either role, including mixed teams.
+Install/authenticate the selected harness normally (`claude auth login`,
+`codex login`, or `opencode auth login`);
 Gnat uses local credentials and trusted execution in the original checkout.
 Workers run in separate managed worktrees and coordinate through authenticated
 MCP tools; the orchestrator creates/removes them and workers can inspect/message
 teammates. The browser shows dynamic membership and retained worker history.
-Other harness adapters remain milestone four. For a v2
-source build, follow the repository README: native `go install ./cmd/gnat`,
+For a v2 source build, follow the repository README: native `go install ./cmd/gnat`,
 required orchestrator settings in `~/.config/gnat/config.yaml`, then `gnat` or
 `gnat --no-open` in a committed checkout. Stop it with `gnat daemon stop`.
 Do not apply the Docker, profile, or auth instructions below to v2.

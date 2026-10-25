@@ -11,7 +11,8 @@ Closing the terminal or browser leaves the daemon running.
 A checkout root, subdirectory, and symlink alias reuse one swarm. Separate linked
 user worktrees register separately. The browser links all registered workspaces
 and keeps each selected workspace on an explicit `/swarms/{id}` route.
-The right sidebar runs Claude Code in the original checkout with saved
+The right sidebar runs the configured Claude Code, Codex, or OpenCode
+orchestrator in the original checkout with saved
 model/effort, normal local credentials, and an exact persistent session. Send
 acknowledgement means the input is committed, even if the browser closes. Queued
 input remains visible; transcript and reported usage replay on reconnection.
@@ -32,7 +33,8 @@ automatic crash-process cleanup remains outside initial scope.
 
 Ask the orchestrator to create workers with initial prompts. Workers start from
 committed HEAD or an explicit committed base, each in a separate worktree and
-conversation. Their cards update as they join or leave; select a worker to
+conversation. Worker creation can override harness, model, and effort, so a team
+can mix all three harnesses; model/effort choices must fit that harness. Their cards update as they join or leave; select a worker to
 inspect its transcript, branch, path, and execution outcome. Removed workers are
 available in the history selector. New orchestrator conversations preserve the
 team and provide saved runtime orientation.

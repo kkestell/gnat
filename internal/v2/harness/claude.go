@@ -20,7 +20,7 @@ type Claude struct{}
 
 func (Claude) Probe(ctx context.Context, s store.Settings) error {
 	if s.Harness != "claude" {
-		return fmt.Errorf("%s execution is not available yet; create a workspace configured with claude (other adapters arrive in milestone four)", s.Harness)
+		return fmt.Errorf("%s is not handled by the Claude Code adapter", s.Harness)
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		return fmt.Errorf("Claude Code is missing: install claude, then choose Retry: %w", err)
@@ -81,7 +81,7 @@ func (Claude) Run(ctx context.Context, c *store.Claim, emit func(map[string]any)
 	writer.Close()
 	waited := make(chan error, 1)
 	go func() { err := cmd.Wait(); _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); waited <- err }()
-	decoder := translator{emit: emit}
+	decoder := translator{emit: emit, expected: c.SessionRef}
 	scanner := bufio.NewScanner(out)
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
 	var streamErr error
@@ -114,10 +114,11 @@ func (Claude) Run(ctx context.Context, c *store.Claim, emit func(map[string]any)
 }
 
 type translator struct {
-	emit    func(map[string]any) error
-	partial map[string]map[int]bool
-	result  bool
-	session string
+	emit     func(map[string]any) error
+	partial  map[string]map[int]bool
+	result   bool
+	session  string
+	expected string
 }
 
 func (t *translator) line(line []byte) error {
@@ -133,7 +134,7 @@ func (t *translator) line(line []byte) error {
 		return t.emit(v)
 	}
 	if ref, _ := e["session_id"].(string); ref != "" && t.session == "" {
-		if err := t.emit(map[string]any{"type": "session", "session_ref": ref}); err != nil {
+		if err := session(ref, t.expected, t.emit); err != nil {
 			return err
 		}
 		t.session = ref
