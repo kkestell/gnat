@@ -2,26 +2,26 @@
 const swarm = document.body.dataset.swarm;
 const base = `/api/swarms/${swarm}`;
 const byId = id => document.getElementById(id);
-let snapshot, source, selectedConversation, pendingRequest;
+let snapshot, source, selectedConversation, pendingRequest, selectedWorker, workerConversation;
 let updates = Promise.resolve();
 let cursor = 0;
 const events = new Map();
-function entry(text, kind = '', parent = '') {
+function appendEntry(log, text, kind = '', parent = '') {
   const el = document.createElement('div');
   el.className = `entry ${kind}${parent ? ' nested' : ''}`;
   el.textContent = text;
-  byId('transcript').append(el);
+  log.append(el);
   return el;
 }
-function render() {
-  const log = byId('transcript');
+function renderHistory(log, conversation) {
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
   log.replaceChildren();
+  const entry = (...args) => appendEntry(log, ...args);
   const messages = new Map(snapshot.messages.map(m => [m.id, m]));
   let lastDelta, lastTurn, lastParent;
   for (const e of events.values()) {
     const p = e.payload;
-    if (e.conversation_id !== selectedConversation) continue;
+    if (e.conversation_id !== conversation) continue;
     const parent = p.parent_tool_use_id || '';
     if (p.type === 'text_delta') {
       if (!lastDelta || lastTurn !== e.turn_id || lastParent !== parent) lastDelta = entry('', '', parent);
@@ -32,7 +32,7 @@ function render() {
     lastDelta = null;
     if (p.type === 'turn_started') {
       const m = messages.get(p.message_id);
-      if (m) entry(m.text, 'user');
+      if (m) entry(`${m.sender === 'user' ? 'You' : m.sender}:\n${m.text}`, 'user');
     } else if (p.type === 'message') entry(p.text || '', '', parent);
     else if (p.type === 'tool_call') entry(`${p.name || 'Tool'}\n${JSON.stringify(p.input || {}, null, 2)}`, 'activity', parent);
     else if (p.type === 'tool_result') entry(p.output || '(no output)', `activity${p.error ? ' error' : ''}`, parent);
@@ -44,22 +44,54 @@ function render() {
       if (values.length) entry(values.join(' · '), 'activity');
     }
   }
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+function render() {
+  renderHistory(byId('transcript'), selectedConversation);
   // Queue is independent of the selected historic conversation.
-  const queued = snapshot.messages.filter(m => m.state === 'queued');
+  const queued = snapshot.messages.filter(m => m.agent_id === snapshot.orchestrator.id && m.state === 'queued');
   byId('queued').textContent = queued.length ? `${queued.length} queued: ${queued.map(m => m.text).join(' · ')}` : '';
   const a = snapshot.orchestrator;
   byId('state').textContent = `${a.lifecycle} · scheduling ${snapshot.scheduling}`;
   byId('agent-error').textContent = a.error || '';
   const select = byId('conversation');
   select.replaceChildren();
-  snapshot.conversations.forEach((c, i) => {
+  snapshot.conversations.filter(c => c.agent_id === a.id).forEach((c, i) => {
     const option = document.createElement('option');
     option.value = c.id;
     option.textContent = `${i + 1} · ${c.created_at.replace('T', ' ').slice(0, 19)}${c.id === a.conversation_id ? ' (current)' : ''}`;
     option.selected = c.id === selectedConversation;
     select.append(option);
   });
-  if (atBottom) log.scrollTop = log.scrollHeight;
+  renderWorkers();
+}
+function renderWorkers() {
+  const team = snapshot.workers || [];
+  const all = [...team, ...(snapshot.removed_workers || [])];
+  byId('empty-team').hidden = team.length > 0;
+  const cards = byId('workers'); cards.replaceChildren();
+  for (const a of team) {
+    const card = document.createElement('article'); card.className = 'worker-card';
+    const title = document.createElement('button'); title.textContent = a.name;
+    title.addEventListener('click', () => { selectedWorker = a.id; workerConversation = a.conversation_id; renderWorkers(); });
+    const state = document.createElement('p'); state.textContent = `${a.membership} · ${a.lifecycle} · ${a.settings.harness} / ${a.settings.model}`;
+    const metadata = document.createElement('p'); metadata.className = 'muted'; metadata.textContent = `${a.working_dir}\n${a.branch || ''}${a.membership === 'active' ? '' : `\n${(a.stage || '').replaceAll('_', ' ')}`}`;
+    const error = document.createElement('p'); error.className = 'error'; error.textContent = a.error || '';
+    card.append(title, state, metadata, error); cards.append(card);
+  }
+  const history = byId('worker-history'); history.replaceChildren(new Option('Select a worker', ''));
+  for (const a of all) history.append(new Option(`${a.name}${a.membership === 'removed' ? ' (removed)' : ''}`, a.id, false, a.id === selectedWorker));
+  const a = all.find(a => a.id === selectedWorker);
+  byId('worker-detail').hidden = !a; if (!a) return;
+  byId('worker-name').textContent = a.name;
+  byId('worker-metadata').textContent = `${a.membership} · ${a.lifecycle} · ${a.working_dir} · ${a.branch || ''}`;
+  const conversations = snapshot.conversations.filter(c => c.agent_id === a.id);
+  if (!conversations.some(c => c.id === workerConversation)) workerConversation = a.conversation_id;
+  const select = byId('worker-conversation'); select.replaceChildren();
+  conversations.forEach((c, i) => select.append(new Option(`${i + 1} · ${c.created_at.replace('T', ' ').slice(0, 19)}`, c.id, false, c.id === workerConversation)));
+  renderHistory(byId('worker-transcript'), workerConversation);
+  const queued = snapshot.messages.filter(m => m.agent_id === a.id && m.state === 'queued');
+  if (queued.length) appendEntry(byId('worker-transcript'), `Queued: ${queued.map(m => m.text).join(' · ')}`, 'activity');
 }
 async function refresh() {
   const response = await fetch(base);
@@ -84,7 +116,7 @@ async function connect() {
       const e = JSON.parse(message.data);
       if (e.swarm_id !== swarm || e.sequence <= cursor) return;
       // Refresh transitions atomically, so queue and execution state agree with history.
-      if (['message_accepted', 'turn_started', 'turn_ended', 'agent_state', 'scheduling_changed', 'conversation_created'].includes(e.payload.type)) {
+      if (['message_accepted', 'turn_started', 'turn_ended', 'agent_state', 'scheduling_changed', 'conversation_created', 'agent_created', 'agent_removing', 'message_cancelled'].includes(e.payload.type)) {
         try { await refresh(); } catch (error) { byId('request-error').textContent = error.message; }
       } else {
         if (e.sequence <= cursor) return;
@@ -99,7 +131,7 @@ async function connect() {
 }
 async function submit(action, text = '') {
   if (pendingRequest) return;
-  const turn = snapshot?.turns.find(t => t.state === 'running');
+  const turn = snapshot?.turns.find(t => t.agent_id === snapshot.orchestrator.id && t.state === 'running');
   pendingRequest = { request_id: crypto.randomUUID(), action, text, turn_id: action === 'interrupt' ? turn?.id || '' : '' };
   await deliver();
 }
@@ -126,6 +158,8 @@ async function deliver() {
     byId('retry-request').hidden = !pendingRequest;
   } finally { byId('send').disabled = !!pendingRequest; }
 }
+byId('worker-history').addEventListener('change', e => { selectedWorker = e.target.value; workerConversation = null; renderWorkers(); });
+byId('worker-conversation').addEventListener('change', e => { workerConversation = e.target.value; renderWorkers(); });
 byId('chat').addEventListener('submit', e => { e.preventDefault(); if (byId('prompt').value.trim()) submit('send', byId('prompt').value); });
 byId('prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); byId('chat').requestSubmit(); } });
 byId('conversation').addEventListener('change', e => { selectedConversation = e.target.value; render(); });

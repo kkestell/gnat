@@ -1,6 +1,6 @@
 # Gnat v2 design and specification
 
-Status: milestones one and two implemented; remaining milestones are design specifications.
+Status: milestones one through three implemented; remaining milestones are design specifications.
 
 This document defines Gnat v2: a local application for directing a dynamic team
 of coding agents through one persistent orchestrator. It records the product
@@ -10,9 +10,9 @@ other implementation details are the proposed defaults for implementation and
 review, rather than claims about behavior already present in the repository.
 
 `agents/architecture.md` describes the landed v2 foundation and retained v1
-packages. The default entry point now implements milestones one and two, including one
-local Claude Code orchestrator, durable chat, and interruption/restart. Other
-harness adapters and dynamic workers remain later milestones.
+packages. The default entry point now implements milestones one through three, including a local Claude Code
+orchestrator, durable chat, dynamic workers in managed worktrees, and authenticated
+MCP coordination. Other harness adapters remain milestone four.
 
 ## 1. Product contract
 

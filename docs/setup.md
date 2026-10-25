@@ -1,6 +1,6 @@
 # Setup
 
-## V2 orchestrator (current source build)
+## V2 local swarm (current source build)
 
 On macOS, run `go build -o gnat ./cmd/gnat` or `go install ./cmd/gnat`.
 Install Claude Code and authenticate normally with `claude auth login`. No
@@ -10,7 +10,7 @@ Set the required `orchestrator.harness`, `orchestrator.model`, and
 `$XDG_CONFIG_HOME/gnat` when set), as shown in the [README](../README.md).
 The browser provides right-sidebar chat with one local Claude Code orchestrator.
 Configured names remain `claude`, `codex`, and `opencode`; only `claude` runs in
-milestone two. Missing installation/authentication and unavailable adapters show
+milestones one through three. Missing installation/authentication and unavailable adapters show
 actionable errors in the sidebar. Repair the local installation/login and use
 Retry without losing the swarm or queued input. Existing swarms retain their
 resolved settings.
@@ -18,7 +18,11 @@ resolved settings.
 Gnat uses the normal local Claude configuration, credentials, project
 instructions, and native delegation. It does not rewrite them. Execution uses
 `--dangerously-skip-permissions` for unattended operation with ordinary user
-privileges; the orchestrator works directly in the original checkout.
+privileges; the orchestrator works directly in the original checkout and workers
+use separate managed Git worktrees. Gnat injects an agent-specific MCP connection
+for each launch without writing global MCP configuration or project files.
+Optional `workers` harness/model/effort defaults inherit missing values from the
+orchestrator and are saved for each new swarm; existing agents keep their settings.
 
 The native binary embeds its chat page and JavaScript/CSS assets. `gnat` starts the daemon
 automatically; `gnat daemon stop` interrupts managed turns, waits for subprocess cleanup, and preserves SQLite state. Runtime files are

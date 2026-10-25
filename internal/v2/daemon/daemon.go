@@ -62,17 +62,17 @@ func Run(dir string) error {
 		return err
 	}
 	defer db.Close()
-	service, err := core.New(db, harness.Claude{})
-	if err != nil {
-		return err
-	}
-	defer service.Close()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
 	desc := Descriptor{PID: os.Getpid(), URL: "http://" + listener.Addr().String(), Generation: store.NewID(), Token: store.NewID()}
+	service, err := core.New(db, harness.Claude{}, desc.URL+"/mcp")
+	if err != nil {
+		return err
+	}
+	defer service.Close()
 	stop := make(chan struct{}, 1)
 	serveCtx, cancelServe := context.WithCancel(context.Background())
 	defer cancelServe()

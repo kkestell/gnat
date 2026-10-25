@@ -29,12 +29,15 @@ type Event struct {
 	Payload        map[string]any `json:"payload"`
 }
 type Message struct {
+	AgentID    string `json:"agent_id"`
+	Sender     string `json:"sender"`
 	ID         string `json:"id"`
 	Text       string `json:"text"`
 	State      string `json:"state"`
 	AcceptedAt string `json:"accepted_at"`
 }
 type Turn struct {
+	AgentID        string `json:"agent_id"`
 	ID             string `json:"id"`
 	ConversationID string `json:"conversation_id"`
 	MessageID      string `json:"message_id"`
@@ -42,21 +45,30 @@ type Turn struct {
 	Error          string `json:"error"`
 }
 type Conversation struct {
+	AgentID    string `json:"agent_id"`
 	ID         string `json:"id"`
 	SessionRef string `json:"session_ref"`
 	CreatedAt  string `json:"created_at"`
 }
 type Result struct {
+	WorkingDir     string `json:"working_dir,omitempty"`
+	Branch         string `json:"branch,omitempty"`
+	Membership     string `json:"membership,omitempty"`
+	AgentID        string `json:"agent_id,omitempty"`
 	OK             bool   `json:"ok"`
 	MessageID      string `json:"message_id,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 }
 type Claim struct {
-	SwarmID    string
-	Agent      Agent
-	Turn       Turn
-	Text       string
-	SessionRef string
+	SwarmID      string
+	Agent        Agent
+	Turn         Turn
+	Text         string
+	SessionRef   string
+	Sender       string
+	MCPURL       string
+	MCPToken     string
+	Instructions string
 }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -74,6 +86,19 @@ func fullSnapshot(tx *sql.Tx, id string) (Snapshot, error) {
 	if err != nil {
 		return v, err
 	}
+	all, err := readAgents(tx, id, true)
+	v.Workers = []Agent{}
+	v.RemovedWorkers = []Agent{}
+	for _, a := range all {
+		if a.Membership == "removed" {
+			v.RemovedWorkers = append(v.RemovedWorkers, a)
+		} else {
+			v.Workers = append(v.Workers, a)
+		}
+	}
+	if err != nil {
+		return v, err
+	}
 	v.Events, err = readEvents(tx, id, 0)
 	if err != nil {
 		return v, err
@@ -81,13 +106,13 @@ func fullSnapshot(tx *sql.Tx, id string) (Snapshot, error) {
 	v.Messages = []Message{}
 	v.Turns = []Turn{}
 	v.Conversations = []Conversation{}
-	rows, err := tx.Query(`SELECT id,text,state,accepted_at FROM messages WHERE swarm_id=? ORDER BY acceptance_order`, id)
+	rows, err := tx.Query(`SELECT id,text,state,accepted_at,agent_id,sender FROM messages WHERE swarm_id=? ORDER BY acceptance_order`, id)
 	if err != nil {
 		return v, err
 	}
 	for rows.Next() {
 		var m Message
-		if err = rows.Scan(&m.ID, &m.Text, &m.State, &m.AcceptedAt); err != nil {
+		if err = rows.Scan(&m.ID, &m.Text, &m.State, &m.AcceptedAt, &m.AgentID, &m.Sender); err != nil {
 			break
 		}
 		v.Messages = append(v.Messages, m)
@@ -95,13 +120,13 @@ func fullSnapshot(tx *sql.Tx, id string) (Snapshot, error) {
 	if err = closeRows(rows, err); err != nil {
 		return v, err
 	}
-	rows, err = tx.Query(`SELECT id,conversation_id,message_id,state,error FROM turns WHERE swarm_id=? ORDER BY started_at,id`, id)
+	rows, err = tx.Query(`SELECT id,conversation_id,message_id,state,error,agent_id FROM turns WHERE swarm_id=? ORDER BY started_at,id`, id)
 	if err != nil {
 		return v, err
 	}
 	for rows.Next() {
 		var t Turn
-		if err = rows.Scan(&t.ID, &t.ConversationID, &t.MessageID, &t.State, &t.Error); err != nil {
+		if err = rows.Scan(&t.ID, &t.ConversationID, &t.MessageID, &t.State, &t.Error, &t.AgentID); err != nil {
 			break
 		}
 		v.Turns = append(v.Turns, t)
@@ -109,13 +134,13 @@ func fullSnapshot(tx *sql.Tx, id string) (Snapshot, error) {
 	if err = closeRows(rows, err); err != nil {
 		return v, err
 	}
-	rows, err = tx.Query(`SELECT id,coalesce(session_ref,''),created_at FROM conversations WHERE agent_id=? ORDER BY created_at,id`, v.Orchestrator.ID)
+	rows, err = tx.Query(`SELECT id,coalesce(session_ref,''),created_at,agent_id FROM conversations WHERE agent_id IN (SELECT id FROM agents WHERE swarm_id=?) ORDER BY created_at,id`, id)
 	if err != nil {
 		return v, err
 	}
 	for rows.Next() {
 		var c Conversation
-		if err = rows.Scan(&c.ID, &c.SessionRef, &c.CreatedAt); err != nil {
+		if err = rows.Scan(&c.ID, &c.SessionRef, &c.CreatedAt, &c.AgentID); err != nil {
 			break
 		}
 		v.Conversations = append(v.Conversations, c)
@@ -199,11 +224,11 @@ func (s *Store) Mutate(id, requestID, kind, text, targetTurn string) (Result, bo
 			return Result{}, false, fmt.Errorf("text is required")
 		}
 		result.MessageID = NewID()
-		_, err = tx.Exec(`INSERT INTO messages VALUES(?,?,?,?,?,?,(SELECT coalesce(max(acceptance_order),0)+1 FROM messages))`, result.MessageID, id, a.ID, text, "queued", now())
+		_, err = tx.Exec(`INSERT INTO messages(id,swarm_id,agent_id,text,state,accepted_at,acceptance_order) VALUES(?,?,?,?,?,?,(SELECT coalesce(max(acceptance_order),0)+1 FROM messages))`, result.MessageID, id, a.ID, text, "queued", now())
 		payload = map[string]any{"type": "message_accepted", "message_id": result.MessageID, "text": text, "sender": "user"}
 	case "interrupt":
 		var activeTurn string
-		err = tx.QueryRow(`SELECT id FROM turns WHERE swarm_id=? AND state='running'`, id).Scan(&activeTurn)
+		err = tx.QueryRow(`SELECT id FROM turns WHERE agent_id=? AND state='running'`, a.ID).Scan(&activeTurn)
 		if targetTurn == "" || err == sql.ErrNoRows || (err == nil && activeTurn != targetTurn) {
 			return Result{}, false, fmt.Errorf("the targeted turn is no longer running")
 		}
@@ -254,28 +279,50 @@ func (s *Store) Mutate(id, requestID, kind, text, targetTurn string) (Result, bo
 }
 
 func (s *Store) Ready(id string, probeErr error) error {
+	v, err := s.Snapshot(id)
+	if err != nil {
+		return err
+	}
+	return s.ReadyAgent(id, v.Orchestrator.ID, probeErr)
+}
+func (s *Store) ReadyAgent(id, aid string, probeErr error) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	v, err := readSnapshot(tx, id)
+	a, err := readAgent(tx, id, aid)
 	if err != nil {
 		return err
+	}
+	if a.Membership != "active" {
+		return fmt.Errorf("agent is not active")
 	}
 	lifecycle, reason := "ready", ""
 	if probeErr != nil {
 		lifecycle, reason = "error", probeErr.Error()
 	}
-	if _, err = tx.Exec(`UPDATE agents SET lifecycle=?,error=? WHERE id=?`, lifecycle, reason, v.Orchestrator.ID); err != nil {
+	if _, err = tx.Exec(`UPDATE agents SET lifecycle=?,error=? WHERE id=?`, lifecycle, reason, a.ID); err != nil {
 		return err
 	}
-	if err = addEvent(tx, id, v.Orchestrator.ID, v.Orchestrator.ConversationID, "", map[string]any{"type": "agent_state", "lifecycle": lifecycle, "error": reason}); err != nil {
+	if err = addEvent(tx, id, a.ID, a.ConversationID, "", map[string]any{"type": "agent_state", "lifecycle": lifecycle, "error": reason}); err != nil {
 		return err
+	}
+	if a.Role == "worker" && probeErr != nil {
+		if err = notify(tx, id, "Worker "+a.Name+" ("+a.ID+"): "+reason); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
 func (s *Store) Claim(id string) (*Claim, error) {
+	v, err := s.Snapshot(id)
+	if err != nil {
+		return nil, err
+	}
+	return s.ClaimAgent(id, v.Orchestrator.ID)
+}
+func (s *Store) ClaimAgent(id, aid string) (*Claim, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -285,18 +332,22 @@ func (s *Store) Claim(id string) (*Claim, error) {
 	if err != nil {
 		return nil, err
 	}
-	if v.Scheduling != "running" || v.Orchestrator.Lifecycle != "ready" {
+	a, err := readAgent(tx, id, aid)
+	if err != nil {
+		return nil, err
+	}
+	if v.Scheduling != "running" || a.Lifecycle != "ready" || a.Membership != "active" {
 		return nil, nil
 	}
-	var mid, text string
-	err = tx.QueryRow(`SELECT id,text FROM messages WHERE swarm_id=? AND state='queued' ORDER BY acceptance_order LIMIT 1`, id).Scan(&mid, &text)
+	var mid, text, sender string
+	err = tx.QueryRow(`SELECT id,text,sender FROM messages WHERE agent_id=? AND state='queued' ORDER BY acceptance_order LIMIT 1`, aid).Scan(&mid, &text, &sender)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	c := &Claim{SwarmID: id, Agent: v.Orchestrator, Turn: Turn{ID: NewID(), ConversationID: v.Orchestrator.ConversationID, MessageID: mid, State: "running"}, Text: text}
+	c := &Claim{SwarmID: id, Agent: a, Turn: Turn{AgentID: a.ID, ID: NewID(), ConversationID: a.ConversationID, MessageID: mid, State: "running"}, Text: text, Sender: sender}
 	if err = tx.QueryRow(`SELECT coalesce(session_ref,'') FROM conversations WHERE id=?`, c.Turn.ConversationID).Scan(&c.SessionRef); err != nil {
 		return nil, err
 	}
@@ -349,12 +400,19 @@ func (s *Store) Finish(c *Claim, state, reason string) error {
 	lifecycle := "ready"
 	if state != "completed" {
 		lifecycle = state
-		if _, err = tx.Exec(`UPDATE swarms SET scheduling=CASE WHEN scheduling='stopped' THEN scheduling ELSE 'paused' END WHERE id=?`, c.SwarmID); err != nil {
-			return err
+		if c.Agent.Role == "orchestrator" {
+			if _, err = tx.Exec(`UPDATE swarms SET scheduling=CASE WHEN scheduling='stopped' THEN scheduling ELSE 'paused' END WHERE id=?`, c.SwarmID); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err = tx.Exec(`UPDATE agents SET lifecycle=?,error=? WHERE id=?`, lifecycle, reason, c.Agent.ID); err != nil {
 		return err
+	}
+	if c.Agent.Role == "worker" && state != "completed" {
+		if err := notify(tx, c.SwarmID, "Worker "+c.Agent.Name+" ("+c.Agent.ID+"): "+state+": "+reason); err != nil {
+			return err
+		}
 	}
 	if err = addEvent(tx, c.SwarmID, c.Agent.ID, c.Turn.ConversationID, c.Turn.ID, map[string]any{"type": "turn_ended", "state": state, "error": reason}); err != nil {
 		return err

@@ -189,3 +189,45 @@ func TestTranslatorTracksStreamedBlocksPerMessage(t *testing.T) {
 		t.Fatal("duplicated or dropped assistant blocks", got)
 	}
 }
+
+func TestClaudeLaunchScopedCoordination(t *testing.T) {
+	dir := installFixture(t)
+	c := fixtureClaim(dir, "initial", "")
+	c.MCPURL = "http://127.0.0.1:9999/mcp"
+	c.MCPToken = "private-agent-binding"
+	c.Instructions = "runtime identity facts"
+	c.Sender = "sender-id"
+	if err := (Claude{}).Run(context.Background(), c, func(map[string]any) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "trace"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trace struct {
+		Args []string
+		Text string
+	}
+	if err = json.Unmarshal(data, &trace); err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	foundPrompt := false
+	for i, arg := range trace.Args {
+		if arg == "--mcp-config" {
+			if err = json.Unmarshal([]byte(trace.Args[i+1]), &config); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if arg == "--append-system-prompt" && trace.Args[i+1] == c.Instructions {
+			foundPrompt = true
+		}
+	}
+	if config == nil || !foundPrompt || trace.Text != "Message from sender-id:\ninitial" {
+		t.Fatal("missing launch binding", trace)
+	}
+	server := config["mcpServers"].(map[string]any)["gnat"].(map[string]any)
+	if server["type"] != "http" || server["url"] != c.MCPURL || server["headers"].(map[string]any)["Authorization"] != "Bearer "+c.MCPToken {
+		t.Fatal("incorrect MCP connection")
+	}
+}

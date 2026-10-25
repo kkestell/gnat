@@ -1,10 +1,10 @@
 # gnat
 
 Gnat v2 is becoming a local application for directing coding agents through one
-persistent orchestrator. **Milestones one and two are implemented:** workspace
-registration, SQLite records, a detached per-user daemon, and right-sidebar chat
-with one local Claude Code orchestrator. Dynamic workers and the other harness
-adapters are upcoming milestones.
+persistent orchestrator. **Milestones one through three are implemented:** workspace
+registration, SQLite records, a detached per-user daemon, right-sidebar chat,
+and dynamic Claude Code workers coordinated through MCP. Other harness adapters
+remain milestone four.
 
 ## Build and run on macOS
 
@@ -22,6 +22,10 @@ Create `~/.config/gnat/config.yaml` (or `$XDG_CONFIG_HOME/gnat/config.yaml`):
 ```yaml
 orchestrator:
   harness: claude
+  model: sonnet
+  effort: high
+# Optional defaults for new workers (omitted values inherit the orchestrator):
+workers:
   model: sonnet
   effort: high
 ```
@@ -47,9 +51,21 @@ original checkout with normal local credentials and trusted process privileges;
 Claude is launched with permission checks bypassed for unattended tool use.
 Docker, GitHub, a remote, and Gnat-specific credential setup are unnecessary.
 
-Pause lets an active turn finish and holds queued input; Stop interrupts and
+Ask the orchestrator to create workers as needed. Each has a persistent session,
+a separate managed worktree, and an immutable-ID branch starting at committed
+HEAD (or a requested base ref). The main area shows current workers and their
+transcripts; removed workers remain inspectable through the history selector.
+Agents exchange ordinary durable messages through the launch-scoped Gnat MCP
+server. Messages start recipient turns without polling. Workers can inspect and
+message teammates; only the orchestrator creates, interrupts, or removes workers.
+Worker commits are available for local Git integration in the original checkout.
+Removal stops execution and uses ordinary Git safeguards: dirty worktrees and
+unmerged branches are retained with visible errors. Resolve the refusal using
+ordinary tools and ask the orchestrator to retry removal.
+
+Pause lets active turns finish and holds queued input for the whole swarm; Stop interrupts all agents and
 holds the queue. Resume/Retry enables queued input without replaying interrupted
-prompts. Interrupt ends the active turn and pauses scheduling. New conversation
+prompts. Interrupt ends the orchestrator turn and pauses swarm scheduling. New conversation
 starts a fresh session at a settled boundary and keeps prior transcript history.
 Closing the browser does not stop work. Daemon shutdown interrupts/reaps managed
 processes and retains their session references; after a crash, clean up any

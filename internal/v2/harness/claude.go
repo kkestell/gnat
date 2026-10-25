@@ -20,7 +20,7 @@ type Claude struct{}
 
 func (Claude) Probe(ctx context.Context, s store.Settings) error {
 	if s.Harness != "claude" {
-		return fmt.Errorf("%s execution is not available in milestone two; create a workspace configured with claude (other adapters arrive in milestone four)", s.Harness)
+		return fmt.Errorf("%s execution is not available yet; create a workspace configured with claude (other adapters arrive in milestone four)", s.Harness)
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		return fmt.Errorf("Claude Code is missing: install claude, then choose Retry: %w", err)
@@ -44,9 +44,23 @@ func (Claude) Run(ctx context.Context, c *store.Claim, emit func(map[string]any)
 	if c.SessionRef != "" {
 		args = append(args, "--resume", c.SessionRef)
 	}
+	if c.MCPURL != "" {
+		config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"gnat": map[string]any{"type": "http", "url": c.MCPURL, "headers": map[string]string{"Authorization": "Bearer " + c.MCPToken}}}})
+		if err != nil {
+			return err
+		}
+		args = append(args, "--mcp-config", string(config))
+	}
+	if c.Instructions != "" {
+		args = append(args, "--append-system-prompt", c.Instructions)
+	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = c.Agent.WorkingDir
-	cmd.Stdin = strings.NewReader(c.Text)
+	input := c.Text
+	if c.Sender != "" && c.Sender != "user" {
+		input = "Message from " + c.Sender + ":\n" + input
+	}
+	cmd.Stdin = strings.NewReader(input)
 	// Inherit local configuration, credentials, and native delegation unchanged.
 	cmd.Env = os.Environ()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -25,20 +25,26 @@ CREATE TABLE events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, schema_version 
 PRAGMA user_version = 1;
 `
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db  *sql.DB
+	Dir string
+}
 
 type Snapshot struct {
-	ID            string              `json:"id"`
-	WorkspaceID   string              `json:"workspace_id"`
-	Workspace     workspace.Workspace `json:"workspace"`
-	Orchestrator  Agent               `json:"orchestrator"`
-	Scheduling    string              `json:"scheduling"`
-	CreatedAt     string              `json:"created_at"`
-	Cursor        int64               `json:"cursor"`
-	Messages      []Message           `json:"messages"`
-	Turns         []Turn              `json:"turns"`
-	Events        []Event             `json:"events"`
-	Conversations []Conversation      `json:"conversations"`
+	ID             string              `json:"id"`
+	WorkspaceID    string              `json:"workspace_id"`
+	Workspace      workspace.Workspace `json:"workspace"`
+	RemovedWorkers []Agent             `json:"removed_workers"`
+	Workers        []Agent             `json:"workers"`
+	WorkerDefaults Settings            `json:"worker_defaults"`
+	Orchestrator   Agent               `json:"orchestrator"`
+	Scheduling     string              `json:"scheduling"`
+	CreatedAt      string              `json:"created_at"`
+	Cursor         int64               `json:"cursor"`
+	Messages       []Message           `json:"messages"`
+	Turns          []Turn              `json:"turns"`
+	Events         []Event             `json:"events"`
+	Conversations  []Conversation      `json:"conversations"`
 }
 
 type Agent struct {
@@ -51,6 +57,10 @@ type Agent struct {
 	Branch         *string  `json:"branch"`
 	ConversationID string   `json:"conversation_id"`
 	Error          string   `json:"error"`
+	TurnID         string   `json:"turn_id,omitempty"`
+	Membership     string   `json:"membership"`
+	Stage          string   `json:"stage"`
+	BaseCommit     string   `json:"base_commit"`
 }
 
 func NewID() string {
@@ -65,6 +75,11 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
+	canonical, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	dir = canonical
 	path := filepath.Join(dir, "gnat.db")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -78,7 +93,7 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db}
+	s := &Store{db: db, Dir: dir}
 	if err := s.initialize(); err != nil {
 		db.Close()
 		return nil, err
@@ -112,12 +127,17 @@ func (s *Store) initialize() error {
 			return err
 		}
 	case 1:
-	case 2:
+	case 2, 3:
 	default:
 		return fmt.Errorf("unsupported v2 database schema version %d", version)
 	}
 	if version < 2 {
 		if _, err := tx.Exec(migration2); err != nil {
+			return err
+		}
+	}
+	if version < 3 {
+		if _, err := tx.Exec(migration3); err != nil {
 			return err
 		}
 	}
@@ -153,7 +173,7 @@ func (s *Store) OpenWorkspace(w workspace.Workspace, load func() (Settings, erro
 			args  []any
 		}{
 			{`INSERT INTO workspaces VALUES (?,?,?,?,?)`, []any{wid, w.Root, w.CommonDir, w.Name, now}},
-			{`INSERT INTO swarms VALUES (?,?,?,?,?)`, []any{id, wid, aid, "running", now}},
+			{`INSERT INTO swarms(id,workspace_id,orchestrator_id,scheduling,created_at) VALUES (?,?,?,?,?)`, []any{id, wid, aid, "running", now}},
 			{`INSERT INTO agents(id,swarm_id,role,name,harness,model,effort,lifecycle,working_dir,branch,conversation_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, []any{aid, id, "orchestrator", "orchestrator", settings.Harness, settings.Model, settings.Effort, "pending", w.Root, nil, cid}},
 			{`INSERT INTO conversations VALUES (?,?,?,?,?,?)`, []any{cid, aid, settings.Harness, nil, now, nil}},
 		}
@@ -161,6 +181,15 @@ func (s *Store) OpenWorkspace(w workspace.Workspace, load func() (Settings, erro
 			if _, err := tx.Exec(stmt.query, stmt.args...); err != nil {
 				return Snapshot{}, err
 			}
+		}
+		defaults := settings
+		if settings.Workers != nil {
+			defaults = ResolveSettings(settings, *settings.Workers)
+		}
+		defaults.Workers = nil
+		data, _ := json.Marshal(defaults)
+		if _, err := tx.Exec(`UPDATE swarms SET worker_defaults=? WHERE id=?`, string(data), id); err != nil {
+			return Snapshot{}, err
 		}
 		for _, kind := range []string{"workspace_registered", "swarm_created", "agent_created", "conversation_created"} {
 			payload, _ := json.Marshal(map[string]string{"type": kind})
@@ -183,7 +212,14 @@ type queryer interface{ QueryRow(string, ...any) *sql.Row }
 
 func readSnapshot(q queryer, id string) (Snapshot, error) {
 	var v Snapshot
-	err := q.QueryRow(`SELECT s.id,w.id,w.root,w.common_dir,w.name,s.scheduling,s.created_at,a.id,a.role,a.name,a.harness,a.model,a.effort,a.lifecycle,a.working_dir,a.branch,a.conversation_id,a.error,(SELECT coalesce(max(sequence),0) FROM events) FROM swarms s JOIN workspaces w ON w.id=s.workspace_id JOIN agents a ON a.id=s.orchestrator_id WHERE s.id=?`, id).Scan(&v.ID, &v.WorkspaceID, &v.Workspace.Root, &v.Workspace.CommonDir, &v.Workspace.Name, &v.Scheduling, &v.CreatedAt, &v.Orchestrator.ID, &v.Orchestrator.Role, &v.Orchestrator.Name, &v.Orchestrator.Settings.Harness, &v.Orchestrator.Settings.Model, &v.Orchestrator.Settings.Effort, &v.Orchestrator.Lifecycle, &v.Orchestrator.WorkingDir, &v.Orchestrator.Branch, &v.Orchestrator.ConversationID, &v.Orchestrator.Error, &v.Cursor)
+	var defaults string
+	err := q.QueryRow(`SELECT s.id,w.id,w.root,w.common_dir,w.name,s.scheduling,s.created_at,a.id,a.role,a.name,a.harness,a.model,a.effort,a.lifecycle,a.working_dir,a.branch,a.conversation_id,a.error,a.membership,a.stage,a.base_commit,s.worker_defaults,(SELECT coalesce(max(sequence),0) FROM events) FROM swarms s JOIN workspaces w ON w.id=s.workspace_id JOIN agents a ON a.id=s.orchestrator_id WHERE s.id=?`, id).Scan(&v.ID, &v.WorkspaceID, &v.Workspace.Root, &v.Workspace.CommonDir, &v.Workspace.Name, &v.Scheduling, &v.CreatedAt, &v.Orchestrator.ID, &v.Orchestrator.Role, &v.Orchestrator.Name, &v.Orchestrator.Settings.Harness, &v.Orchestrator.Settings.Model, &v.Orchestrator.Settings.Effort, &v.Orchestrator.Lifecycle, &v.Orchestrator.WorkingDir, &v.Orchestrator.Branch, &v.Orchestrator.ConversationID, &v.Orchestrator.Error, &v.Orchestrator.Membership, &v.Orchestrator.Stage, &v.Orchestrator.BaseCommit, &defaults, &v.Cursor)
+	if err == nil {
+		err = json.Unmarshal([]byte(defaults), &v.WorkerDefaults)
+		if v.WorkerDefaults.Harness == "" {
+			v.WorkerDefaults = v.Orchestrator.Settings
+		}
+	}
 	return v, err
 }
 

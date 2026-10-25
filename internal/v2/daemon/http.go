@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/kkestell/gnat/internal/v2/core"
+	"github.com/kkestell/gnat/internal/v2/mcp"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ var page = template.Must(template.ParseFS(pageFS, "page.html"))
 func Handler(db *store.Store, service *core.Service, desc Descriptor, stop func()) http.Handler {
 	mux := http.NewServeMux()
 	chatRoutes(mux, db, service)
+	mcpHandler := mcp.Handler(db, service)
 	mux.HandleFunc("GET /assets/{file}", func(w http.ResponseWriter, r *http.Request) {
 		switch r.PathValue("file") {
 		case "page.js", "page.css":
@@ -119,6 +121,10 @@ func Handler(db *store.Store, service *core.Service, desc Descriptor, stop func(
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != desc.URL {
 			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == "/mcp" {
+			mcpHandler.ServeHTTP(w, r)
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" || r.URL.Path == "/api/ready" {

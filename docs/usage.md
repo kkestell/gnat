@@ -1,6 +1,6 @@
 # Usage
 
-## V2 orchestrator (current source build)
+## V2 local swarm (current source build)
 
 Run `gnat` from a committed local Git checkout to start/reuse the per-user daemon
 and open that workspace in the browser. `gnat --no-open` prints its URL without
@@ -16,9 +16,9 @@ model/effort, normal local credentials, and an exact persistent session. Send
 acknowledgement means the input is committed, even if the browser closes. Queued
 input remains visible; transcript and reported usage replay on reconnection.
 
-- **Pause:** prevent new turns while the active turn finishes.
-- **Stop:** interrupt active execution and prevent new turns.
-- **Interrupt:** end the current turn and pause scheduling.
+- **Pause:** prevent new turns across the swarm while active turns finish.
+- **Stop:** interrupt every agent and prevent new turns, preserving the team.
+- **Interrupt:** end the orchestrator turn and pause swarm scheduling.
 - **Resume / Retry:** check prerequisites and enable queued input again.
 - **New conversation:** create a fresh session when execution is settled, keeping
   queued input, identity, checkout, and prior history. The conversation selector
@@ -29,6 +29,29 @@ interrupts/reaps active processes and preserves queues and sessions. A restart
 marks unfinished persisted turns interrupted and holds their queue for explicit
 continuation. Following a daemon crash, clean up any surviving processes first;
 automatic crash-process cleanup remains outside initial scope.
+
+Ask the orchestrator to create workers with initial prompts. Workers start from
+committed HEAD or an explicit committed base, each in a separate worktree and
+conversation. Their cards update as they join or leave; select a worker to
+inspect its transcript, branch, path, and execution outcome. Removed workers are
+available in the history selector. New orchestrator conversations preserve the
+team and provide saved runtime orientation.
+
+The Gnat MCP server exposes `list_agents`, `send_message`, and bounded
+`read_agent` to all agents. Only the orchestrator can call `create_agent`,
+`interrupt_agent`, and `remove_agent`. All mutations require unique request IDs
+(reuse an ID only for transport retries). `interrupt_agent` also requires the
+observed running turn ID. Messages queue during active execution and each starts
+a later turn without requiring polling; agents decide how to coordinate and
+communicate results. Successful turn endings do not establish task completion.
+
+Creation returns a stable ID before provisioning finishes. Failed provisioning
+is visible; retrying the same creation request reuses the identity. Removal
+interrupts execution, cancels queued input, and removes the managed worktree and
+branch with ordinary Git safeguards. Dirty worktrees or unmerged branches can
+refuse removal: repair/integrate the remaining work using ordinary Git, then
+retry the removal request. Nothing forces deletion. Worker commits are already
+in the local repository for ordinary integration into the original checkout.
 
 ## Historical v1 command reference
 

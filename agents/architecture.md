@@ -9,7 +9,7 @@ local checkout, starts or reuses a detached per-user daemon, registers or opens
 its swarm, and prints/opens `/swarms/{id}`. The public surface is `gnat`,
 `--no-open`, `--help`, `--version`, and `gnat daemon stop`.
 
-`internal/v2/workspace` only reads Git. Canonical checkout roots identify
+`internal/v2/workspace` discovers checkouts and manages worker Git resources. Canonical checkout roots identify
 workspaces; the canonical Git common directory is separate metadata. User
 worktrees sharing a common directory have distinct swarms. Saved agent working
 directories identify managed checkouts explicitly. Nothing contacts GitHub or
@@ -35,14 +35,16 @@ Origin checks protect the local HTTP destination. PID values are diagnostic;
 shutdown uses the authenticated endpoint, never a signal to a saved PID.
 
 `internal/v2/core` owns scheduling and controls through a neutral adapter
-interface. Each orchestrator has at most one active turn; different swarms run
+interface. Each agent has at most one active turn; workers and different swarms run
 independently. Accepted messages, atomic dequeue/turn creation, outcomes, and
 normalized correlated events commit to SQLite together. Durable request IDs
-return the original mutation result on retry. Schema version two migrates the
-milestone-one records in place, retaining their identities and settings.
+return the original mutation result on retry. Schema version three migrates earlier milestone records in place, retaining
+identities, settings, sessions, and messages. Sender and recipient IDs persist
+with each message; caller-scoped request IDs make deliberate duplicate messages
+distinct while transport retries reuse results.
 
 `internal/v2/harness` currently implements Claude Code. It probes the local
-installation/authentication, runs `claude -p` in the original checkout, and
+installation/authentication, runs `claude -p` in each agent's saved checkout, and
 translates stream-json text, tools, nested activity, and reported usage. Normal
 local credentials/configuration and native delegation remain intact. Launch-only
 permission bypass enables unattended trusted execution. The provider session ID
@@ -66,8 +68,34 @@ settled turn, retains old history and queued input, and preserves the checkout.
 Daemon shutdown cancels scheduling, kills active process groups, waits for
 children and outcomes, then closes SQLite. Startup marks persisted running turns
 interrupted and pauses their swarms. Surviving processes after daemon crashes
-remain the user's cleanup responsibility. Worker creation and MCP are milestone
-three. Missing saved paths are reported without recreating them.
+remain the user's cleanup responsibility. Worker failures enqueue system messages to the orchestrator. Missing saved paths are reported without recreating them.
+
+Workers carry a separate membership state and durable provisioning stage, base
+commit, branch, and path under `v2/swarms/<swarm>/agents/<agent>/worktree`.
+Creation reserves an identity and initial message before allocating Git resources
+asynchronously. Stages reconcile interrupted provisioning at startup; collisions
+and changed resources are reported without resets. Removal cancels queued input,
+stops execution, removes the worktree without force, and deletes the branch with
+`git branch -d`. Refusals keep a visible removing record for repair/retry; removed
+identities and attributed history remain in SQLite. Stop/resume keeps workers,
+worktrees, sessions, and queues. New orchestrator conversations get bounded saved
+team/queue orientation and tools to inspect earlier history.
+
+`internal/v2/mcp` exposes the six coordination tools through stateless
+JSON-response Streamable HTTP at `/mcp`. Random in-memory bearer bindings resolve
+the agent and swarm; arguments cannot select the caller or another swarm.
+Discovery and execution enforce orchestrator-only membership management. Host
+and Origin checks cover MCP as well as browser routes; agent credentials do not
+grant CLI or browser mutation authority. Each Claude launch receives its MCP
+connection and factual runtime instructions through command-line configuration,
+without rewriting global or project settings. New launches refresh ephemeral
+bindings after restart. Optional `workers` defaults are resolved and saved when
+a swarm is registered; creation overrides apply only to the new worker.
+
+The embedded main area displays live worker membership, metadata, and transcript
+inspection independently of the orchestrator sidebar. Removed workers leave the
+team but remain selectable in history. All rendered text uses DOM text content;
+provider-specific messages are translated before the browser sees them.
 
 The rest of this document describes the retained v1 packages. Their Docker,
 profile, credential proxy, and compatibility constraints do not apply to v2.
