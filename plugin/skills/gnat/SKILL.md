@@ -5,6 +5,19 @@ description: Operate `gnat`, which runs coding agents (Claude Code, Codex, or Ox
 
 # Operating gnat
 
+## Source-build v2 status
+
+The current source entry point implements v2 milestone one, with a detached
+local daemon and workspace browser but no harness execution or chat. For a v2
+source build, follow the repository README: native `go install ./cmd/gnat`,
+required orchestrator settings in `~/.config/gnat/config.yaml`, then `gnat` or
+`gnat --no-open` in a committed checkout. Stop it with `gnat daemon stop`.
+Do not apply the Docker, profile, or auth instructions below to v2.
+
+The remainder applies to older v1 releases. Published releases may still be v1;
+check `gnat --help` to identify the installed command surface before proceeding.
+
+
 `gnat` runs a set of coding agents, one Docker container each, on separate clones of one GitHub repository. Each agent runs Claude Code, Codex, or Ox (`--harness`), and a swarm can mix them. You drive it from the developer's machine; the agents commit, push, and open pull requests. Assume `gnat` is on PATH; if it isn't, or the user wants to update it, use the `install` skill (`/gnat:install`). `gnat COMMAND -h` is authoritative on flags; <https://github.com/kkestell/gnat/tree/main/docs> has the full reference.
 
 gnat is in active development, and every run is also a test of it. When you finish using it on a repository owned by `kkestell`, file a feedback report as a GitHub issue (see [Feedback](#feedback)).

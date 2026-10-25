@@ -35,10 +35,16 @@ Accepted first-cut scope:
   planned follow-up; keep checkout metadata and UI boundaries suitable for it
   without implementing speculative abstractions now.
 
-The repository still implements v1. The documentation below and
-`agents/architecture.md` describe that implementation, not constraints to carry
-into v2. In particular, Docker, Python compatibility, profiles, GitHub proxies,
-and v1's optional orchestrator are superseded by the v2 specification.
+The default `cmd/gnat` entry point implements v2 milestone one: local workspace
+registration, versioned SQLite records, detached daemon startup, and browser
+routing. It does not run harnesses or provide chat yet. New code lives under
+`internal/v2/`; build it directly with `go build -o gnat ./cmd/gnat`.
+
+The v1 packages, container entry point, and distribution targets remain until
+later milestones. The documentation below describes that legacy implementation,
+not constraints to carry into v2. In particular, Docker, Python compatibility,
+profiles, GitHub proxies, and v1's optional orchestrator are superseded by the v2
+specification.
 
 ## Current v1 implementation
 
@@ -66,7 +72,7 @@ go build ./... && go vet ./... && staticcheck ./... && test -z "$(gofmt -l .)" &
 
 After changing `ui/`, also `make ui`, `cd ui && bun test && bun run typecheck`, and commit `internal/web/dist`.
 
-Containers run a separate binary, `gnat-container` (`cmd/gnat-container`, a static linux build at `/opt/gnat/gnat-container`, embedded in `gnat` and copied in by `gnat up`); what ran as Python modules there are its subcommands, `gnat-container control|agent|hook|send` (`layout.Command`). The two binaries share no code beyond the small packages below: `gnat` must not link `control`, `agent`, or `hook`, and `gnat-container` must not link `cli`, `keyring`, or `workspace`. Check with `go list -deps ./cmd/gnat` and `go list -deps ./cmd/gnat-container`. The host reads `control.db` through `recorded`, never `control`. SQLite is `modernc.org/sqlite` (pure Go).
+Containers run a separate binary, `gnat-container` (`cmd/gnat-container`, a static linux build at `/opt/gnat/gnat-container`, embedded in `gnat` and copied in by `gnat up`); what ran as Python modules there are its subcommands, `gnat-container control|agent|hook|send` (`layout.Command`). For the retained v1 packages, the two binaries share no code beyond the small packages below: `gnat` must not link `control`, `agent`, or `hook`, and `gnat-container` must not link `cli`, `keyring`, or `workspace`. Check with `go list -deps ./cmd/gnat` and `go list -deps ./cmd/gnat-container`. The host reads `control.db` through `recorded`, never `control`. SQLite is `modernc.org/sqlite` (pure Go).
 
 ## Threat model
 

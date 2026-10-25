@@ -1,56 +1,60 @@
 # gnat
 
-Run a swarm of coding agents, each in its own Docker container on its own clone of a GitHub repository. Agents run [Claude Code](https://code.claude.com), [Codex](https://developers.openai.com/codex/cli), or [Ox](https://github.com/kkestell/ox), commit, push, and open pull requests.
+Gnat v2 is becoming a local application for directing coding agents through one
+persistent orchestrator. **Milestone one is implemented:** workspace registration,
+SQLite records, a detached per-user daemon, and a browser workspace switcher.
+Harness execution, chat, and dynamic workers are upcoming milestones.
 
-## Install
+## Build and run on macOS
 
-Requires Docker and the [GitHub CLI](https://cli.github.com/), logged in.
-
-On a Mac with Apple silicon, install the Claude Code plugin and let Claude install gnat and save your credentials:
-
-```
-/plugin install gnat --marketplace kkestell/gnat
-/gnat:install
-```
-
-The plugin also teaches Claude to operate gnat (`/gnat:gnat`). `/gnat:install` downloads the latest [release](https://github.com/kkestell/gnat/releases) into `~/.local/bin` and installs the bundled profiles; rerun it to update.
-
-To build from source instead, with Go 1.26:
+Requires Go 1.26 or newer and Git. Build directly from this checkout:
 
 ```sh
-make install
+go build -o gnat ./cmd/gnat
+# Or install the native entry point:
+go install ./cmd/gnat
 ```
 
-Save a credential for each harness your agents use: `gnat auth login claude` (paste the token from `claude setup-token`), `gnat auth login codex` (ChatGPT browser sign-in through the installed Codex CLI), or `gnat auth login ox` (an OpenRouter API key). Only the control container uses `GH_TOKEN` (or else `gh auth token`): agents have no GitHub credential, and clone, fetch, push, and use pull requests through it, limited to the swarm's repository and their own branches. See [docs/setup.md](docs/setup.md).
+Create `~/.config/gnat/config.yaml` (or `$XDG_CONFIG_HOME/gnat/config.yaml`):
 
-## Usage
+```yaml
+orchestrator:
+  harness: claude
+  model: your-model-id
+  effort: high
+```
+
+All three values are required for a new swarm. Harness choices are `claude`,
+`codex`, and `opencode`; this milestone records settings without launching or
+validating an installed harness. Reopening a swarm uses its saved settings.
+
+In any local Git checkout with an initial commit:
 
 ```sh
-gnat create demo --repo OWNER/NAME
-gnat agent create demo alpha --instructions "You review code."
-gnat up demo
-gnat send demo alpha --wait -m "Summarize the README in one line"
-gnat logs demo -f
-gnat down demo
+cd ~/src/my-project
+gnat                 # Print the URL and open the default browser.
+gnat --no-open       # Print the same workspace URL without opening a browser.
+gnat daemon stop     # Stop the daemon; keep saved swarms.
 ```
 
-`gnat COMMAND -h` lists each command's flags.
+Subdirectories and symlink aliases select the same swarm. Separate user worktrees
+have separate swarms served by the same daemon. The browser shows saved checkout
+metadata and a pending orchestrator; it cannot accept prompts yet. Docker,
+GitHub, a remote, and harness credentials are unnecessary for this milestone.
 
-For reusable agent settings, save `instructions`, `harness`, `model`, and
-`effort` in `~/.config/gnat/profiles/agents/coder.yaml`, then run
-`gnat agent create demo alpha --profile coder`. Explicit flags override profile
-settings, for example `--profile coder --effort max`. `--profile` also takes a
-profile file's path. `gnat profiles list` lists available names; see
-[agent profiles](docs/usage.md#agent-profiles) for the format. A [swarm profile](docs/usage.md#swarm-profiles) in
-`~/.config/gnat/profiles/swarms/small.yaml` lists a swarm's agents, each from an
-agent profile with its own settings, so
-`gnat create demo --repo OWNER/NAME --profile small` creates them all.
+State lives under `~/.local/state/gnat/v2` (`$XDG_STATE_HOME/gnat/v2` when set),
+separate from v1 state. There is no automatic v1 migration. The former v1 CLI is
+not exposed by the new entry point; its packages and distribution targets remain
+in the repository until later v2 cleanup. Published releases may still be v1;
+use the direct source build above for this foundation.
 
-## Docs
+## Development and documentation
 
-- [docs/setup.md](docs/setup.md): installing, credentials, images and Dockerfiles, files outside source control, Codex and Ox agents, and the Claude Code plugin.
-- [docs/usage.md](docs/usage.md): commands, how messages are delivered, state and logs, and worked examples.
+`go test ./internal/v2/...` covers the foundation, including real detached
+subprocesses on macOS. `make test` and `make lint` include retained v1 code and UI.
+The old `make build`, `make install`, and release targets still build container
+helpers; direct native Go builds avoid those obsolete prerequisites.
 
-## Development
-
-`make build` writes `./gnat`, `make test` runs the tests, and `make lint` runs `go vet`, `staticcheck`, and a `gofmt` check. Pushing a `v*` tag builds the macOS arm64 release (`make release`) and publishes it.
+- [V2 specification](agents/gnat-v2-spec.md): scope and implementation milestones.
+- [Architecture](agents/architecture.md): current foundation and legacy boundaries.
+- [Setup](docs/setup.md) and [usage](docs/usage.md): v2 entry and historical v1 reference.

@@ -1,5 +1,24 @@
 # Usage
 
+## V2 foundation (current source build)
+
+Run `gnat` from a committed local Git checkout to start/reuse the per-user daemon
+and open that workspace in the browser. `gnat --no-open` prints its URL without
+opening a browser. `gnat --help` and `gnat --version` are available.
+`gnat daemon stop` shuts down the daemon while retaining all saved records.
+Closing the terminal or browser leaves the daemon running.
+
+A checkout root, subdirectory, and symlink alias reuse one swarm. Separate linked
+user worktrees register separately. The browser links all registered workspaces
+and keeps each selected workspace on an explicit `/swarms/{id}` route.
+The pending orchestrator has saved harness settings and an initial conversation
+identity; no harness runs and chat is not yet available.
+
+## Historical v1 command reference
+
+The commands below describe retained v1 code and older releases. They are not
+available through the current v2 source entry point.
+
 Commands for a swarm take its name first. Commands that address agents take their names next, and address every agent when none are given. `gnat COMMAND -h` lists flags.
 
 ## Commands

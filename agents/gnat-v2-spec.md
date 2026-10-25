@@ -1,6 +1,6 @@
 # Gnat v2 design and specification
 
-Status: design specification, before implementation.
+Status: milestone one implemented; remaining milestones are design specifications.
 
 This document defines Gnat v2: a local application for directing a dynamic team
 of coding agents through one persistent orchestrator. It records the product
@@ -9,8 +9,9 @@ for them. Sections explicitly marked as open require further design decisions;
 other implementation details are the proposed defaults for implementation and
 review, rather than claims about behavior already present in the repository.
 
-`agents/architecture.md` describes the current v1 implementation. This document
-describes its v2 replacement; the repository still implements v1.
+`agents/architecture.md` describes the landed v2 foundation and retained v1
+packages. The default entry point now implements milestone one; harness execution
+and chat begin in milestone two.
 
 ## 1. Product contract
 

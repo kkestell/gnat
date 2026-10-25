@@ -2,7 +2,51 @@
 
 This is what the code can't say: the shape of the system, the lines drawn between its parts, and the reasons for them. The packages are listed in `CLAUDE.md`; the commands and formats in `usage.md` and `setup.md`. A change that keeps these lines where they are shouldn't need to change this file.
 
-## Shape
+## Current v2 foundation
+
+`cmd/gnat` now uses `internal/v2/entry`. A normal invocation discovers a committed
+local checkout, starts or reuses a detached per-user daemon, registers or opens
+its swarm, and prints/opens `/swarms/{id}`. The public surface is `gnat`,
+`--no-open`, `--help`, `--version`, and `gnat daemon stop`.
+
+`internal/v2/workspace` only reads Git. Canonical checkout roots identify
+workspaces; the canonical Git common directory is separate metadata. User
+worktrees sharing a common directory have distinct swarms. Saved agent working
+directories identify managed checkouts explicitly. Nothing contacts GitHub or
+modifies the original checkout during registration.
+
+`internal/v2/store` owns `$XDG_STATE_HOME/gnat/v2/gnat.db`, defaulting to
+`~/.local/state/gnat/v2/gnat.db`. SQLite `user_version` identifies the schema;
+unknown versions and nonempty unversioned databases are refused. Workspace,
+swarm, pending orchestrator, initial conversation, and ordered versioned creation
+events commit together. A unique canonical root and unique workspace-to-swarm
+relationship prevent duplicate identities. A single database connection
+serializes registration within the daemon; snapshots include a sequence cursor.
+New swarms resolve the required orchestrator harness/model/effort from
+`$XDG_CONFIG_HOME/gnat/config.yaml`, defaulting to `~/.config/gnat/config.yaml`.
+Reopening uses saved settings. No v1 records are read, converted, or removed.
+
+`internal/v2/daemon` holds an advisory lock throughout its lifetime. A private
+`v2/runtime/daemon.json` records the ephemeral loopback address, PID, generation,
+and CLI token. A readiness handshake verifies generation before reuse. Startup
+runs a detached copy of the executable; it survives the launching terminal.
+Authenticated CLI mutations register workspaces and stop the daemon. Host and
+Origin checks protect the local HTTP destination. PID values are diagnostic;
+shutdown uses the authenticated endpoint, never a signal to a saved PID.
+
+The daemon embeds a read-only HTML workspace switcher with a distinct
+orchestrator sidebar. It reads the same SQLite snapshots as the HTTP API and
+reports missing saved paths without recreating them. Harness execution, chat,
+message scheduling, worker creation, event streaming, and recovery of running
+turns are later milestones. There are currently no harness processes to stop.
+The retained v1 React dashboard is not served by v2.
+
+The rest of this document describes the retained v1 packages. Their Docker,
+profile, credential proxy, and compatibility constraints do not apply to v2.
+The old distribution/build targets remain pending milestone-six cleanup; source
+builds can use `go build -o gnat ./cmd/gnat` directly.
+
+## Legacy v1 shape
 
 A running swarm is one Docker network with one control container and one container per agent. The host runs `gnat`, which does three things and no more: edits swarm definitions on disk, drives Docker, and runs commands inside the control container. Everything that happens while a swarm is up happens in the containers, in `gnat-container`, a static linux binary embedded in `gnat` and copied into every container at `gnat up`. Images carry tools, never gnat: a gnat change needs no image rebuild, and the binary in a container is always the same build as the `gnat` that started it.
 

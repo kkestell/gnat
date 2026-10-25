@@ -1,5 +1,28 @@
 # Setup
 
+## V2 foundation (current source build)
+
+On macOS, run `go build -o gnat ./cmd/gnat` or `go install ./cmd/gnat`.
+No Docker, GitHub, profiles, or credential setup is needed for milestone one.
+Set the required `orchestrator.harness`, `orchestrator.model`, and
+`orchestrator.effort` in `~/.config/gnat/config.yaml` (under
+`$XDG_CONFIG_HOME/gnat` when set), as shown in the [README](../README.md).
+The browser displays registered workspaces; harness execution and chat are not
+implemented yet. Supported configured harness names are `claude`, `codex`, and
+`opencode`. Existing swarms retain their resolved settings.
+
+The native binary embeds its foundation HTML page. `gnat` starts the daemon
+automatically; `gnat daemon stop` preserves SQLite state. Runtime files are
+private under `$XDG_STATE_HOME/gnat/v2/runtime` (default
+`~/.local/state/gnat/v2/runtime`); startup failures identify `daemon.log` there.
+V1 state is preserved separately and is not migrated. Missing saved checkout
+paths are reported in the browser, with no relocation or automatic recreation.
+
+## Historical v1 installation
+
+The remainder describes v1 releases and retained distribution targets, not the
+current source entry point. Published releases may still be v1.
+
 ## Installing
 
 On a Mac with Apple silicon, the Claude Code plugin installs gnat from the latest [release](https://github.com/kkestell/gnat/releases): `/plugin install gnat --marketplace kkestell/gnat`, then `/gnat:install`. It puts `gnat` in `~/.local/bin`, installs the bundled profiles (keeping any you have), checks Docker and `gh`, and helps save the credentials below. Rerun it to update. The release archive, `gnat-darwin-arm64.tar.gz`, holds the `gnat` binary and the `profiles` directory, with a SHA-256 checksum beside it; pushing a `v*` tag builds it (`make release`) and publishes it.
