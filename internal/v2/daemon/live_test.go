@@ -36,7 +36,20 @@ func TestLiveCoordination(t *testing.T) {
 		t.Run(s.Harness, func(t *testing.T) { liveCoordination(t, s, settings[(i+1)%3], settings[(i+2)%3]) })
 	}
 }
-func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Settings) {
+
+// liveTeam uses production adapters, browser mutations, and authenticated MCP.
+type liveTeam struct {
+	root    string
+	db      *store.Store
+	swarm   store.Snapshot
+	send    func(string)
+	wait    func(string, func(store.Snapshot) bool) store.Snapshot
+	restart func()
+	stop    func()
+}
+
+func newLiveTeam(t *testing.T, settings store.Settings) *liveTeam {
+	t.Helper()
 	root := t.TempDir()
 	git := func(args ...string) {
 		t.Helper()
@@ -57,13 +70,13 @@ func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 	v, err := db.OpenWorkspace(ws, func() (store.Settings, error) {
 		return settings, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	root = ws.Root
 	var desc Descriptor
 	var service *core.Service
 	var server *http.Server
@@ -82,7 +95,7 @@ func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Se
 		go server.Serve(listener)
 	}
 	start()
-	defer func() { server.Close(); service.Close() }()
+	t.Cleanup(func() { server.Close(); service.Close(); db.Close() })
 	send := func(text string) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]string{"action": "send", "request_id": store.NewID(), "text": text})
@@ -138,6 +151,13 @@ func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Se
 		t.Fatalf("timed out: %s", label)
 		return current
 	}
+	return &liveTeam{root: root, db: db, swarm: v, send: send, wait: wait, restart: func() { server.Close(); service.Close(); start() }, stop: func() { service.Close() }}
+}
+
+func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Settings) {
+	team := newLiveTeam(t, settings)
+	root, db, v := team.root, team.db, team.swarm
+	send, wait := team.send, team.wait
 	send(fmt.Sprintf(`Use only the gnat MCP tools for this coordination smoke test. Create exactly two Gnat workers named one and two. Worker one must use harness %s, model %s, effort %s; worker two must use harness %s, model %s, effort %s. Their respective initial prompts are: "Use gnat list_agents to find the orchestrator, send it the message ready-one [or ready-two, respectively] using gnat send_message, then end your turn. Do not edit files. If you later receive a follow-up, send follow-up-ok to the orchestrator and end." After creating both workers, end your turn. On subsequent ready or follow-up-ok messages just acknowledge and end; do not send replies or create more workers. Do not use native subagents.`, firstWorker.Harness, firstWorker.Model, firstWorker.Effort, secondWorker.Harness, secondWorker.Model, secondWorker.Effort))
 	current := wait("two workers replied", func(v store.Snapshot) bool {
 		ready := map[string]bool{}
@@ -152,7 +172,7 @@ func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Se
 		}
 		return len(v.Workers) == 2 && len(ready) == 2 && settled(v)
 	})
-	if current.Workers[0].WorkingDir == ws.Root || current.Workers[1].WorkingDir == ws.Root {
+	if current.Workers[0].WorkingDir == root || current.Workers[1].WorkingDir == root {
 		t.Fatal("worker used original checkout")
 	}
 	var workerOne string
@@ -173,9 +193,7 @@ func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Se
 		sessions[c.AgentID] = c.SessionRef
 	}
 	// Orderly restart renews MCP bindings while preserving exact provider sessions.
-	server.Close()
-	service.Close()
-	start()
+	team.restart()
 	send("Send an ordinary gnat message to worker one asking for the follow-up-ok reply, then end. Do not create any workers.")
 	wait("follow-up delivered", func(v store.Snapshot) bool {
 		for _, m := range v.Messages {
@@ -203,7 +221,7 @@ func liveCoordination(t *testing.T, settings, firstWorker, secondWorker store.Se
 		t.Fatal("surviving worktree unavailable", err)
 	}
 	// TempDir cleanup must not leave linked-worktree metadata in the disposable repo.
-	service.Close()
+	team.stop()
 	for _, a := range final.Workers {
 		_ = exec.Command("git", "-C", root, "worktree", "remove", a.WorkingDir).Run()
 	}

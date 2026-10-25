@@ -55,6 +55,32 @@ refuse removal: repair/integrate the remaining work using ordinary Git, then
 retry the removal request. Nothing forces deletion. Worker commits are already
 in the local repository for ordinary integration into the original checkout.
 
+### Integrating local work
+
+Workers commit on their assigned branches. Their commits and branches are
+immediately available in the original checkout because the worktrees share the
+same Git repository. Ask the orchestrator to inspect and merge the desired
+worker commits and run the project's checks there. For example:
+
+> Have two workers implement the parser and its tests. Integrate their commits
+> into this checkout with ordinary Git, preserve my local edits, and run the
+> parser tests. Remove the workers after their work is integrated.
+
+The orchestrator can use the branch from `list_agents` or a commit SHA received
+in an ordinary message, then run `git merge --no-edit <worker-branch>` from the
+original checkout. No push, remote, GitHub, or Gnat delivery command is needed.
+These are ordinary Git operations chosen by the agents, not a required Gnat
+workflow.
+
+Git merges that create a merge commit require a clean index. When local changes
+need to be set aside, ordinary `git stash push --include-untracked` and
+`git stash pop --index` can preserve staged and unstaged work; inspect any
+conflicts on restoration as usual. A failed merge can be resolved or aborted
+with `git merge --abort`. Worker removal uses `git branch -d`, so merging the
+worker branch with its ancestry allows normal cleanup; cherry-picking or
+squashing may leave Git refusing branch deletion as unmerged. Refusals preserve
+the branch and report the error for repair using ordinary tools.
+
 ## Historical v1 command reference
 
 The commands below describe retained v1 code and older releases. They are not

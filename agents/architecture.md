@@ -110,6 +110,14 @@ without rewriting global or project settings. New launches refresh ephemeral
 bindings after restart. Optional `workers` defaults are resolved and saved when
 a swarm is registered; creation overrides apply only to the new worker.
 
+Worker worktrees share Git objects and refs with the original checkout. Agents
+integrate worker commits there through ordinary Git and verify the combined
+result with repository tools. Gnat adds no delivery operation or integration
+state. Deterministic tests exercise divergent merges, preservation of staged and
+unstaged local work through stash/restore, conflict abort, and branch removal
+refusals; an opt-in live test exercises the same local integration path through
+production adapters and authenticated MCP. Git inspection UI remains deferred.
+
 The embedded main area displays live worker membership, metadata, and transcript
 inspection independently of the orchestrator sidebar. Removed workers leave the
 team but remain selectable in history. All rendered text uses DOM text content;

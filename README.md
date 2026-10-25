@@ -1,10 +1,11 @@
 # gnat
 
 Gnat v2 is becoming a local application for directing coding agents through one
-persistent orchestrator. **Milestones one through four are implemented:** workspace
+persistent orchestrator. **Milestones one through five are implemented:** workspace
 registration, SQLite records, a detached per-user daemon, right-sidebar chat,
 and dynamic workers coordinated through MCP. Claude Code, Codex, and OpenCode
-can each serve as orchestrator or worker, including mixed teams.
+can each serve as orchestrator or worker, including mixed teams. Agents integrate
+worker commits into the original checkout with ordinary local Git.
 
 ## Build and run on macOS
 
@@ -62,6 +63,9 @@ Agents exchange ordinary durable messages through the launch-scoped Gnat MCP
 server. Messages start recipient turns without polling. Workers can inspect and
 message teammates; only the orchestrator creates, interrupts, or removes workers.
 Worker commits are available for local Git integration in the original checkout.
+Ask the orchestrator to merge the worker branches and run the project checks; no
+push or separate delivery command is needed. See [local integration](docs/usage.md#integrating-local-work)
+for preserving local edits, resolving conflicts, and cleaning up merged workers.
 Removal stops execution and uses ordinary Git safeguards: dirty worktrees and
 unmerged branches are retained with visible errors. Resolve the refusal using
 ordinary tools and ask the orchestrator to retry removal.
@@ -94,6 +98,19 @@ This uses disposable local repositories and exercises each harness as orchestrat
 with workers on the other two, plus restart and follow-up delivery. Set
 `GNAT_LIVE_HARNESS=claude`, `codex`, or `opencode` to select one orchestrator.
 The models in `internal/v2/daemon/live_test.go` must be available locally.
+
+A separate live integration scenario creates two workers, merges their commits,
+runs the combined Go tests in the original checkout, preserves staged/unstaged
+and untracked work, and removes the integrated workers:
+
+```sh
+GNAT_LIVE_TEST=1 go test ./internal/v2/daemon -run '^TestLiveLocalIntegration$' -v -timeout 12m
+```
+
+Both roles default to Claude. Set `GNAT_LIVE_HARNESS` for the orchestrator and
+`GNAT_LIVE_WORKER` for both workers (`claude`, `codex`, or `opencode`).
+Deterministic coverage also checks merge conflicts, abort, and unmerged-branch
+removal refusal without calling a provider.
 
 The local Codex 0.164.0 live run currently fails tool discovery with
 “timed out negotiating with the code-mode host,” although its HTTP MCP

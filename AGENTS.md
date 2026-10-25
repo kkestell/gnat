@@ -35,12 +35,13 @@ Accepted first-cut scope:
   planned follow-up; keep checkout metadata and UI boundaries suitable for it
   without implementing speculative abstractions now.
 
-The default `cmd/gnat` entry point implements v2 milestones one through four:
+The default `cmd/gnat` entry point implements v2 milestones one through five:
 local workspace registration, versioned SQLite records, a detached daemon, and
 right-sidebar chat with a persistent local orchestrator. Claude Code, Codex, and
 OpenCode can each run the orchestrator or workers, including mixed teams. Input,
 transcripts, and exact sessions persist; controls handle interruption and restart.
-Workers use separate worktrees and coordinate over authenticated MCP. New code
+Workers use separate worktrees and coordinate over authenticated MCP; agents
+integrate their commits into the original checkout using ordinary local Git. New code
 lives under `internal/v2/`; build it directly with `go build -o gnat ./cmd/gnat`.
 
 The v1 packages, container entry point, and distribution targets remain until
