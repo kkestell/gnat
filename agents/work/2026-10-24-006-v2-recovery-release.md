@@ -84,11 +84,13 @@ temporary-directory removal. No user install or real swarm was replaced.
 
 ## Follow-up work
 
-The previously recorded Codex code-mode helper timeout still limits the full
-live three-provider matrix. This milestone adds no workaround and does not
-claim that matrix passed. No release was published. Workspace relocation,
-unregistering, Git UI and automatic surviving-process cleanup after daemon
-crashes remain outside the agreed first-cut scope.
+Correction after consulting the milestone-four session: its later installation
+repair resolved the Codex helper timeout, and live MCP checks passed for both
+Codex roles. The original milestone-six plan, work log and completion response
+incorrectly carried forward stale notes from before that repair. The full live
+mixed-provider matrix was not rerun for milestone six. No release was published.
+Workspace relocation, unregistering, Git UI and automatic surviving-process
+cleanup after daemon crashes remain outside the agreed first-cut scope.
 
 ## Review
 

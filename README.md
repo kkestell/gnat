@@ -124,11 +124,10 @@ Both roles default to Claude. Set `GNAT_LIVE_HARNESS` for the orchestrator and
 Deterministic coverage also checks merge conflicts, abort, and unmerged-branch
 removal refusal without calling a provider.
 
-The local Codex 0.164.0 live run currently fails tool discovery with
-“timed out negotiating with the code-mode host,” although its HTTP MCP
-initialization succeeds. Gnat uses the documented app-server protocol and does
-not manage or work around Codex's internal helper. Protocol fixtures cover the
-adapter; the full live three-provider matrix remains unverified.
+Live MCP checks passed for Claude Code, Codex, and OpenCode as both orchestrator
+and worker. Codex 0.164.0 passed after replacing the broken Homebrew installation
+with OpenAI's standalone package; the earlier helper timeout was resolved in the
+milestone-four session.
 
 A live conversation recovery scenario exercises exact session resumption after
 restart, reset with queued input, and delivery into a new provider session:

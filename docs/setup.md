@@ -81,9 +81,10 @@ and efforts. OpenCode uses `provider/model` IDs and ACP config variants; use
 `default` effort for a model with no variant. Changing harness typically requires
 changing model and effort too. No Ox adapter is included in v2 selection.
 
-Codex uses its native app-server protocol (fixtures checked with codex-cli
-0.164.0). Its local live tool-discovery limitation is documented in the
-[README](../README.md). OpenCode requires ACP 1 with HTTP MCP, session/resume,
+Codex uses its native app-server protocol, with live MCP checks passing for
+codex-cli 0.164.0 in both agent roles. An earlier Homebrew helper timeout was
+resolved by replacing that installation with OpenAI's standalone package.
+OpenCode requires ACP 1 with HTTP MCP, session/resume,
 and model/effort config options, checked through protocol capabilities. ACP has
 no read-only authentication-status operation, so selected-provider authentication
 errors appear when a prompt runs.

@@ -2,8 +2,9 @@
 
 Status: all six implementation milestones implemented. Recovery, reset, replay,
 independent swarms and native installation have deterministic macOS coverage;
-Claude session recovery has live coverage. Full Codex live tool-use validation
-remains limited by an installed helper timeout.
+Claude session recovery has live coverage. Live MCP checks passed for Claude,
+Codex, and OpenCode in both agent roles; Codex's earlier installation-related
+helper timeout was resolved in the milestone-four session.
 
 This document defines Gnat v2: a local application for directing a dynamic team
 of coding agents through one persistent orchestrator. It records the product

@@ -67,3 +67,13 @@ the reviewer did not modify or stage implementation files.
 The milestone-five implementation fits the approved architecture and adds no
 unnecessary runtime machinery. The parent fixed the single low-severity finding
 F1; no behavioral defect was confirmed.
+
+## Correction to the carried-forward Codex validation status
+
+The milestone-four session's later turns replaced the broken Homebrew Codex
+installation with OpenAI's standalone 0.164.0 package. Live MCP checks then passed
+for Codex as orchestrator and worker in 15.15 seconds. Earlier references in this
+review to an unresolved helper failure describe stale repository notes, not the
+final session outcome. See the follow-up validation in
+`agents/work/2026-10-24-004-v2-harness-neutrality.md`. This correction changes no
+code-review finding and does not claim a rerun of the full mixed-provider matrix.

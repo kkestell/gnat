@@ -94,8 +94,9 @@ to real-provider reset/restart coverage with
 `GNAT_LIVE_TEST=1 go test ./internal/v2/daemon -run '^TestLiveConversationRecovery$' -v -timeout 5m`.
 Use disposable local repositories and isolated state/install directories for
 installation smoke checks; no GitHub push is needed. After daemon restart,
-reopen with `gnat` to obtain the new listener URL. Known Codex live helper
-limitations are recorded in the README.
+reopen with `gnat` to obtain the new listener URL. Codex's earlier Homebrew helper
+failure was resolved using OpenAI's standalone installation; live MCP checks
+passed for both Codex roles in the milestone-four session.
 
 ## Testing retained v1 code with a live swarm
 

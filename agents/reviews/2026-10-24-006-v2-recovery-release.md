@@ -17,7 +17,8 @@ Gaps:
   browser.
 - Did not rerun the provider-backed scenarios, broad Go validation, isolated
   installation smoke checks or release build; the implementation work log
-  records those results. The documented Codex live helper limitation remains.
+  records those results. The original review carried forward a stale Codex
+  helper limitation; the correction below records the resolved installation.
 - Automatic crash-process cleanup, relocation, unregistering and Git inspection
   UI remain outside the accepted first-cut scope. Retained v1 source fixtures
   are not part of the native distribution.
@@ -79,3 +80,13 @@ the user's explicit kauto implementation authorization.
 One confirmed medium finding, F1, was corrected and verified. No remaining
 findings in the reviewed milestone scope. The implementation meets the plan's
 goal within its documented live-validation limits.
+
+## Correction to the carried-forward Codex validation status
+
+The milestone-four session's later turns replaced the broken Homebrew Codex
+installation with OpenAI's standalone 0.164.0 package. Live MCP checks then passed
+for Codex as orchestrator and worker in 15.15 seconds. Earlier references in this
+review to an unresolved helper failure describe stale repository notes, not the
+final session outcome. See the follow-up validation in
+`agents/work/2026-10-24-004-v2-harness-neutrality.md`. This correction changes no
+code-review finding and does not claim a rerun of the full mixed-provider matrix.

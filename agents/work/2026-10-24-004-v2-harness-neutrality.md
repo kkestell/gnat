@@ -10,9 +10,10 @@ Added per-agent adapter dispatch, native Codex app-server and OpenCode ACP
 integrations, normalized output, exact session continuation, launch-scoped MCP,
 and bounded cancellation/process ownership. The deterministic mixed-team matrix
 covers every harness as orchestrator, both other harnesses as workers, and restart.
-Live MCP checks passed for Claude and OpenCode in both roles.
-Live Codex tool use is limited by the installed Code Mode host timing out during
-tool discovery despite successful HTTP MCP initialization.
+Live MCP checks passed for Claude, Codex, and OpenCode in both roles. Codex's
+initial Homebrew Code Mode host timeout was resolved after the milestone commit,
+in the same session, by replacing the installation with OpenAI's standalone
+package at the same version. See the follow-up validation below.
 
 ## Departures from the plan
 
@@ -49,7 +50,9 @@ tool discovery despite successful HTTP MCP initialization.
 - Live mixed matrix and isolated Codex MCP check — Codex 0.164.0 completed
   without calling the configured tools, reporting an internal Code Mode host
   negotiation timeout. MCP initialization and tool discovery requests succeed
-  at the HTTP layer. This is a live validation limit, not a passed matrix. No helper workaround or environment filtering remains.
+  at the HTTP layer. This initial failure preceded the successful installation
+  repair and role checks recorded below; no helper workaround or environment
+  filtering remains in Gnat.
 
 ## Protocol references
 
@@ -76,3 +79,20 @@ The live tests use disposable repositories and normal local provider credentials
 `agents/reviews/2026-10-24-004-v2-harness-neutrality.md` fixed one medium finding:
 Codex and OpenCode now preserve available usage even when a turn ends with an
 error or token limit, matching Claude. No new architecture decisions were needed.
+
+## Follow-up validation after the milestone commit
+
+The later turns in `Implement Fourth V2 Milestone` resolved the installation
+failure. Homebrew's Codex 0.164.0 helper hung even on `--help`; OpenAI's standalone
+installation at `~/.local/bin/codex`, also 0.164.0, started its helper normally.
+The session then ran:
+
+```sh
+GNAT_LIVE_TEST=1 go test ./internal/v2/harness -run 'TestLiveAdapterMCP/codex' -v -timeout 5m
+```
+
+Both live subtests passed: orchestrator in 8.27 seconds and worker in 6.88
+seconds (15.15 seconds total). This validates actual configured MCP tool calls
+for both Codex roles. The complete mixed-provider coordination matrix was not
+rerun by that command. These results were verified from the session transcript;
+no provider test was rerun for this documentation correction.

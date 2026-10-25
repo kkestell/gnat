@@ -56,9 +56,10 @@ history remained available.
 Uses a disposable local repository, a Claude orchestrator, two OpenCode workers,
 and ordinary provider credentials. The test checks merged commit ancestry,
 functional Go tests, staged/unstaged/untracked local work, retained result
-messages, and safe worker-resource removal. Codex's previously documented live
-helper limitation remains outside this milestone; no new full harness matrix
-was required.
+messages, and safe worker-resource removal. No new full harness matrix was
+required. Correction: the earlier Codex helper failure had already been resolved
+in the milestone-four session, where live MCP checks passed for both Codex roles;
+the original repository notes had omitted that follow-up.
 
 ## Review
 

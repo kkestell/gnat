@@ -34,8 +34,8 @@ release paths and operating documentation matching the current runtime.
   the host architecture. Do not publish a release or replace the user's install
   while validating: use an isolated install directory and disposable state.
 - Use deterministic subprocess adapters for repeatable recovery coverage and a
-  small real-provider reset/restart exercise; retain the documented Codex helper
-  limitation rather than claiming the full live matrix passed.
+  small real-provider reset/restart exercise; distinguish individual live role
+  checks from the complete mixed-provider coordination matrix.
 
 ## Test plan
 

@@ -71,3 +71,13 @@ This follows the existing Claude behavior and required no new design decision.
 F1 is fixed and covered by a regression. No other confirmed code findings remain
 in the reviewed scope. Live Codex tool discovery and the full mixed-provider
 workflow retain the coverage limit described above.
+
+## Correction to the carried-forward Codex validation status
+
+The milestone-four session's later turns replaced the broken Homebrew Codex
+installation with OpenAI's standalone 0.164.0 package. Live MCP checks then passed
+for Codex as orchestrator and worker in 15.15 seconds. Earlier references in this
+review to an unresolved helper failure describe stale repository notes, not the
+final session outcome. See the follow-up validation in
+`agents/work/2026-10-24-004-v2-harness-neutrality.md`. This correction changes no
+code-review finding and does not claim a rerun of the full mixed-provider matrix.
